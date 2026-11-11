@@ -5,7 +5,28 @@
   "description": "Status display, notifications, terminal UI, and themes for Calliopi.",
   "type": "module",
   "pi": {
-    "extensions": ["./extensions"],
-    "themes": ["./themes"]
+    "extensions": [
+      "./extensions"
+    ],
+    "themes": [
+      "./themes"
+    ]
+  },
+  "scripts": {
+    "postinstall": "node scripts/prepare-pty.mjs",
+    "test": "node --test test/*.test.mjs",
+    "smoke": "node scripts/smoke-picker.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true }
+  },
+  "dependencies": {
+    "@xterm/headless": "^6.0.0",
+    "node-pty": "^1.1.0"
   }
 }
