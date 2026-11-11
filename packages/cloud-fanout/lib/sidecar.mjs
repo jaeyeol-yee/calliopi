@@ -27,7 +27,7 @@ export function detach(dir, token) {
 }
 export function enqueue(dir, payload) {
   const target = owner(dir);
-  if (!target) throw new Error('No live fan-out session. Run /fanout attach in the side session.');
+  if (!target) throw new Error('No live fan-out session. Run /calliopi-fanout attach in the side session.');
   const id = randomUUID();
   const queue = path.join(dir, 'mailbox');
   fs.mkdirSync(queue, { recursive: true, mode: 0o700 });

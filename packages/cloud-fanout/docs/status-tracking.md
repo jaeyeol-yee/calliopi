@@ -104,10 +104,10 @@ GitHub의 primary/secondary 제한, 조건부 요청, 공용 예산 정책은 [G
 - 기본 탭은 진행. 검토 대기, 병합/보관 분류는 별도 선택.
 - 행 클릭은 해당 작업과 산출물을 선택한 상세/리뷰 창으로 연결한다.
 - 키보드 탐색은 명시적으로 목록에 진입했을 때만. 평소 편집창의 입력을 가로채지 않는다.
-- 하단 status와 widget은 기본 숨김. regular 모드는 `/fanout inbox`를 fallback으로 유지한다.
+- 하단 status와 widget은 기본 숨김. regular 모드는 `/calliopi-fanout inbox`를 fallback으로 유지한다.
 - 승인 대기는 로컬 승인 수명주기로 표시하고 Cursor 상태에서 추측하지 않는다.
 - PR 병합 확인 기능이 구현되기 전에는 병합됨 표시를 만들어내지 않는다.
 
 ## 구현 반영
 
-우측 상단 floating 목록, 5행 스크롤, 분류별 색상, 상세 진입 시 PR 재검증, PR 없는 완료 결과의 명시적 확인/보관을 구현했다. GitHub 자동 확인은 Cursor 실행 데몬과 별도이며, PR별 캐시·ETag·공유 예산을 적용한다. `/fanout reviews off|on`으로 자동 확인을 제어한다. PR 자동 발견, PR 없는 직접 병합 감지, webhook, 다중 산출물 diff 선택은 아직 미구현이다.
+우측 상단 floating 목록, 5행 스크롤, 분류별 색상, 상세 진입 시 PR 재검증, PR 없는 완료 결과의 명시적 확인/보관을 구현했다. GitHub 자동 확인은 Cursor 실행 데몬과 별도이며, PR별 캐시·ETag·공유 예산을 적용한다. `/calliopi-fanout reviews off|on`으로 자동 확인을 제어한다. PR 자동 발견, PR 없는 직접 병합 감지, webhook, 다중 산출물 diff 선택은 아직 미구현이다.

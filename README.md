@@ -35,7 +35,7 @@ calliopi/
     └── cloud-fanout/         # Cursor Cloud Agents 팬아웃·추적 (Pi 확장·rex 레이어 포함)
 ```
 
-`cloud-fanout`은 Pi manifest에 등록된 확장으로 `/fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/cloud-fanout/README.md](packages/cloud-fanout/README.md)를 보세요.
+`cloud-fanout`은 Pi manifest에 등록된 확장으로 `/calliopi-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/cloud-fanout/README.md](packages/cloud-fanout/README.md)를 보세요.
 
 `core`, `context`, `ui`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
 

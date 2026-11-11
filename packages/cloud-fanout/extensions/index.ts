@@ -332,7 +332,7 @@ export default function (pi: ExtensionAPI) {
 				const md = truncateHead(toMarkdown(agg), { maxLines: 300, maxBytes: 20_000 }).content;
 				if (!owner(sideDir(ctx)) || isOwner(ctx)) {
 					pi.sendMessage({ customType: "cloud-fanout", content: md, display: true, details: { batch } }, { deliverAs: "nextTurn" });
-				} else ctx.ui.notify(`☁ ${batch} 완료 · /fanout inbox로 결과 확인`, "info");
+				} else ctx.ui.notify(`☁ ${batch} 완료 · /calliopi-fanout inbox로 결과 확인`, "info");
 			}
 		}
 	}
@@ -368,7 +368,7 @@ export default function (pi: ExtensionAPI) {
 			if (!registration || !ctx.isIdle() || inspectorOpen) return;
 			try { drain(sideDir(ctx), registration.token, (payload: any) => {
 				if (payload.action === "inspect") { void inspect(ctx); return; }
-				pi.sendMessage({ customType: "cloud-fanout-plan", content: payload.spec ? `Call cloud_fanout_launch with this plan, preserving all instructions. Require normal UI approval.\n${JSON.stringify(payload.spec)}` : PLAN_INSTRUCTIONS(payload.goal), display: false }, { deliverAs: "followUp", triggerTurn: true });
+				pi.sendMessage({ customType: "cloud-fanout-plan", content: payload.spec ? `Call calliopi_fanout_launch with this plan, preserving all instructions. Require normal UI approval.\n${JSON.stringify(payload.spec)}` : PLAN_INSTRUCTIONS(payload.goal), display: false }, { deliverAs: "followUp", triggerTurn: true });
 			}); } catch (e: any) { ctx.ui.notify(`fanout mailbox: ${e.message}`, "error"); }
 		}, 1000);
 	});
@@ -488,7 +488,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	const PLAN_INSTRUCTIONS = (goal: string) => [
-		"Plan a Cursor Cloud fan-out for the goal below, then call cloud_fanout_launch.",
+		"Plan a Cursor Cloud fan-out for the goal below, then call calliopi_fanout_launch.",
 		"- Split it into independent tasks that can run in parallel without depending on each other (usually 2-6).",
 		"- Give the whole fan-out a short human title (a few words, in the user's language) as `title`.",
 		"- Each task has: label (short unique kebab-case), summary (one line: the goal, in the user's language),",
@@ -501,9 +501,9 @@ export default function (pi: ExtensionAPI) {
 		`Goal: ${goal}`,
 	].join("\n");
 
-	// ---------------------------------------------------------------- /fanout command
+	// ---------------------------------------------------------------- /calliopi-fanout command
 	const SUBS = ["attach", "detach", "show", "inbox", "history", "archive", "focus", "reviews", "diff", "launch", "status", "report", "up", "add", "followup", "steer", "cancel", "tree", "widget", "stop"];
-	pi.registerCommand("fanout", {
+	pi.registerCommand("calliopi-fanout", {
 		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | history (all records) | archive <label> (Cursor archive) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | up | widget on|off | stop",
 		getArgumentCompletions: (prefix: string) => {
 			const items = SUBS.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
@@ -521,27 +521,27 @@ export default function (pi: ExtensionAPI) {
 						if (ctx.mode !== "tui") return say("attach requires an interactive Pi session", "warning");
 						if (!registration) registration = attach(sideDir(ctx), { sessionId: ctx.sessionManager.getSessionId(), rexSession: process.env.REX_SESSION, block: process.env.REX_BLOCK });
 						pi.appendEntry("cloud-fanout-owner", { enabled: true, sessionId: ctx.sessionManager.getSessionId(), token: registration.token });
-						refresh(ctx); return say("이 세션이 팬아웃을 전담합니다. 다른 세션에서 /fanout <목표>로 전달하세요.");
+						refresh(ctx); return say("이 세션이 팬아웃을 전담합니다. 다른 세션에서 /calliopi-fanout <목표>로 전달하세요.");
 					}
 					case "detach": { if (registration) detach(sideDir(ctx), registration.token); registration = null; pi.appendEntry("cloud-fanout-owner", { enabled: false }); refresh(ctx); return say("팬아웃 담당 해제 (클라우드 작업은 계속 실행)"); }
 					case "inbox": return inspect(ctx);
 					case "history": return inspect(ctx, false, undefined, true);
 					case "archive": {
-						if (!rest[0]) return say("usage: /fanout archive <label>", "warning");
+						if (!rest[0]) return say("usage: /calliopi-fanout archive <label>", "warning");
 						if (!(await ctx.ui.confirm("Cursor에 에이전트 보관", `${rest[0]}을 Cursor에 보관할까요? 실행 취소와는 별개이며, 원격 영구 삭제는 하지 않습니다.`))) return;
 						const r = await T(ctx, ["archive", rest[0], "--yes"]);
 						return say(r.out || r.err, r.ok ? "info" : "error");
 					}
 					case "focus": { mountFloating(ctx); floatingHandle?.focus(); return; }
 					case "reviews": {
-						if (!["on", "off"].includes(rest[0])) return say("usage: /fanout reviews on|off", "warning");
+						if (!["on", "off"].includes(rest[0])) return say("usage: /calliopi-fanout reviews on|off", "warning");
 						await updateRegistry(cfgFor(ctx), (reg: any) => { reg.meta.reviewPaused = rest[0] === "off"; });
 						refresh(ctx); return say(rest[0] === "off" ? "GitHub 자동 확인을 중지합니다. 진행 중인 요청은 마무리합니다. 상세 재검증은 가능합니다." : "GitHub 자동 확인을 재개합니다.");
 					}
 					case "diff": return inspect(ctx, true);
 					case "show": {
 						const target = owner(sideDir(ctx));
-						if (!target?.block || target.rexSession !== process.env.REX_SESSION) return say("같은 Rex 세션의 담당 pane이 없습니다. 담당 세션에서 /fanout attach 하세요.", "warning");
+						if (!target?.block || target.rexSession !== process.env.REX_SESSION) return say("같은 Rex 세션의 담당 pane이 없습니다. 담당 세션에서 /calliopi-fanout attach 하세요.", "warning");
 						if (target.block === process.env.REX_BLOCK) return inspect(ctx);
 						const r = await pi.exec("rex", ["move", "-s", target.rexSession, target.block, "right", process.env.REX_BLOCK!, "--ratio", "45"], { timeout: 10_000 });
 						if (r.code === 0) enqueue(sideDir(ctx), { action: "inspect" });
@@ -549,7 +549,7 @@ export default function (pi: ExtensionAPI) {
 					}
 					case "launch": {
 						const file = rest[0] ? path.resolve(ctx.cwd, rest[0]) : "";
-						if (!file || !fs.existsSync(file)) return say("usage: /fanout <goal>   or   /fanout launch <spec.json>", "warning");
+						if (!file || !fs.existsSync(file)) return say("usage: /calliopi-fanout <goal>   or   /calliopi-fanout launch <spec.json>", "warning");
 						const raw = JSON.parse(fs.readFileSync(file, "utf8"));
 						const r = await launch(ctx, { batch: raw.batch || newBatch(raw.title), title: raw.title, agents: raw.agents || [] });
 						return say(`fanout: ${r.message}`);
@@ -560,13 +560,13 @@ export default function (pi: ExtensionAPI) {
 					case "add": { const r = await T(ctx, ["add", rest[0] ?? "", ...(rest[1] ? ["--label", rest[1]] : [])]); startWatcher(ctx); ensureDaemon(ctx); return say(r.out || r.err, r.ok ? "info" : "error"); }
 					case "followup": case "steer": {
 						const [label, ...words] = rest;
-						if (!label || !words.length) return say(`usage: /fanout ${sub} <label> <text>`, "warning");
+						if (!label || !words.length) return say(`usage: /calliopi-fanout ${sub} <label> <text>`, "warning");
 						const r = await T(ctx, ["followup", label, "--prompt", words.join(" "), "--yes", ...(sub === "steer" ? ["--steer"] : [])]);
 						ensureDaemon(ctx);
 						return say(r.out || r.err, r.ok ? "info" : "error");
 					}
 					case "cancel": {
-						if (!rest[0]) return say("usage: /fanout cancel <label>", "warning");
+						if (!rest[0]) return say("usage: /calliopi-fanout cancel <label>", "warning");
 						if (!(await ctx.ui.confirm("Cancel run?", `Cancel the current run of ${rest[0]}?`))) return;
 						const r = await T(ctx, ["cancel", rest[0], "--yes"]); return say(r.out || r.err, r.ok ? "info" : "error");
 					}
@@ -578,14 +578,14 @@ export default function (pi: ExtensionAPI) {
 					case "widget": { widgetOn = rest[0] !== "off"; floatingHandle?.setHidden(!widgetOn); if (widgetOn) mountFloating(ctx); return; }
 					case "stop": { const r = await T(ctx, ["stop"]); return say(r.out); }
 					default: {
-						// Anything else is a goal: the model plans the tasks and calls cloud_fanout_launch (table approval follows).
+						// Anything else is a goal: the model plans the tasks and calls calliopi_fanout_launch (table approval follows).
 						const goal = (args || "").trim();
-						if (!goal) return say("usage: /fanout <goal>", "warning");
+						if (!goal) return say("usage: /calliopi-fanout <goal>", "warning");
 						if (owner(sideDir(ctx)) && !isOwner(ctx)) {
 							const id = enqueue(sideDir(ctx), { goal });
 							return say(`담당 세션으로 전달했습니다 (${id.slice(0, 8)}). 승인은 그 세션에서 진행합니다.`);
 						}
-						// Hidden planning brief: the transcript only shows the user's own /fanout line.
+						// Hidden planning brief: the transcript only shows the user's own /calliopi-fanout line.
 						pi.sendMessage({ customType: "cloud-fanout-plan", content: PLAN_INSTRUCTIONS(goal), display: false, details: { goal } },
 							ctx.isIdle() ? { triggerTurn: true } : { deliverAs: "followUp", triggerTurn: true });
 						return;
@@ -597,13 +597,13 @@ export default function (pi: ExtensionAPI) {
 
 	// ---------------------------------------------------------------- tools for the model
 	pi.registerTool({
-		name: "cloud_fanout_launch",
+		name: "calliopi_fanout_launch",
 		label: "Cloud fan-out: launch",
 		description: "Start several Cursor Cloud Agents in parallel, one per task, and track them in the background. The user sees the plan as a table and approves, edits or cancels it. Returns immediately with agent ids; the batch report arrives in a later turn.",
 		promptSnippet: "Fan out independent coding tasks to Cursor Cloud Agents running in parallel",
 		promptGuidelines: [
-			"Use cloud_fanout_launch only for independent tasks that can run in parallel in the cloud; give each task a short unique label and a self-contained prompt.",
-			"After cloud_fanout_launch, do not poll in a loop; check cloud_fanout_status only when the user asks, and the report arrives automatically when the batch finishes.",
+			"Use calliopi_fanout_launch only for independent tasks that can run in parallel in the cloud; give each task a short unique label and a self-contained prompt.",
+			"After calliopi_fanout_launch, do not poll in a loop; check calliopi_fanout_status only when the user asks, and the report arrives automatically when the batch finishes.",
 		],
 		parameters: Type.Object({
 			title: Type.String({ description: "Short human title for the whole fan-out (few words, user's language); names the batch, report and Pi session" }),
@@ -626,7 +626,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "cloud_fanout_status",
+		name: "calliopi_fanout_status",
 		label: "Cloud fan-out: status",
 		description: "Show the raw status and summary of tracked Cursor Cloud Agents (local registry, no API calls).",
 		promptSnippet: "Check the status of fanned-out Cursor Cloud Agents",
@@ -638,7 +638,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "cloud_fanout_report",
+		name: "calliopi_fanout_report",
 		label: "Cloud fan-out: report",
 		description: "Aggregate summaries, pull requests and token totals of fanned-out Cursor Cloud Agents.",
 		parameters: Type.Object({ batch: Type.Optional(Type.String()) }),
@@ -649,7 +649,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "cloud_fanout_diff",
+		name: "calliopi_fanout_diff",
 		label: "Cloud fan-out: changes",
 		description: "File tree with added/modified/deleted files of a cloud agent's pushed branch, read from GitHub via gh. Read-only.",
 		parameters: Type.Object({ label: Type.String({ description: "Agent label or id" }) }),
@@ -660,7 +660,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "cloud_fanout_followup",
+		name: "calliopi_fanout_followup",
 		label: "Cloud fan-out: follow-up",
 		description: "Send a follow-up instruction to a tracked Cursor Cloud Agent (new run), or steer its running turn. Requires the user's approval in the UI.",
 		parameters: Type.Object({
@@ -668,7 +668,7 @@ export default function (pi: ExtensionAPI) {
 			steer: Type.Optional(Type.Boolean({ description: "Deliver into the running turn instead of starting a new run" })),
 		}),
 		async execute(_id, p, signal, _u, ctx) {
-			if (!ctx.hasUI) throw new Error("needs approval: run /fanout followup interactively");
+			if (!ctx.hasUI) throw new Error("needs approval: run /calliopi-fanout followup interactively");
 			if (!(await ctx.ui.confirm(`${p.steer ? "Steer" : "Follow up"} ${p.label}?`, p.prompt))) return { content: [{ type: "text", text: "cancelled by user" }], details: undefined };
 			const r = await T(ctx, ["followup", p.label, "--prompt", p.prompt, "--yes", ...(p.steer ? ["--steer"] : [])], signal);
 			ensureDaemon(ctx);
