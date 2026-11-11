@@ -4,16 +4,30 @@
   "private": true,
   "description": "A modular, local-first harness for Pi.",
   "type": "module",
-  "keywords": ["pi-package"],
-  "workspaces": ["packages/*"],
+  "keywords": [
+    "pi-package"
+  ],
+  "workspaces": [
+    "packages/*"
+  ],
   "pi": {
     "extensions": [
       "./packages/core/extensions",
       "./packages/context/extensions",
-      "./packages/ui/extensions"
+      "./packages/ui/extensions",
+      "./packages/cloud-fanout/extensions"
     ],
-    "skills": ["./packages/context/skills"],
-    "prompts": ["./packages/context/prompts"],
-    "themes": ["./packages/ui/themes"]
+    "skills": [
+      "./packages/context/skills"
+    ],
+    "prompts": [
+      "./packages/context/prompts"
+    ],
+    "themes": [
+      "./packages/ui/themes"
+    ]
+  },
+  "devDependencies": {
+    "@cursor/sdk": "^1.3.1"
   }
 }
