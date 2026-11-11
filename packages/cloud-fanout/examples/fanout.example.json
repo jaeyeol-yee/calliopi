@@ -1,0 +1,39 @@
+{
+  "batch": "docs-sweep",
+  "defaults": {
+    "model": {
+      "id": "auto"
+    },
+    "repo": "https://github.com/your-org/your-repo",
+    "ref": "main",
+    "autoCreatePR": true,
+    "mode": "agent"
+  },
+  "agents": [
+    {
+      "label": "readme",
+      "prompt": "Rewrite README.md setup instructions for the current build system."
+    },
+    {
+      "label": "contributing",
+      "prompt": "Add a CONTRIBUTING.md derived from the existing CI configuration."
+    },
+    {
+      "label": "pr-followup",
+      "prompt": "Address the open review comments.",
+      "prUrl": "https://github.com/your-org/your-repo/pull/123"
+    }
+  ],
+  "matrix": {
+    "prompts": [
+      {
+        "label": "typecheck",
+        "prompt": "Fix all TypeScript strict-mode errors in src/."
+      }
+    ],
+    "refs": [
+      "main",
+      "release/1.x"
+    ]
+  }
+}
