@@ -3,17 +3,21 @@
 // talks to the network runs the multiplexer-agnostic tracker CLI so locking/logging stay in one place.
 // Nothing starts in the factory: the registry watcher starts on session_start and stops on session_shutdown.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
+import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, highlightCode } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { MouseRegion, truncateToWidth, visibleWidth, wrapTextWithAnsi, matchesKey } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi, matchesKey } from "@earendil-works/pi-tui";
 import { owner, attach, detach, enqueue, drain } from "../lib/sidecar.mjs";
+import { createReviewService, syncReviews, prTarget } from "../lib/github-review.mjs";
+import { taskState, freshness } from "../lib/floating-model.mjs";
+import { floatingList } from "./components/floating.ts";
+import { metadataTable, type MetadataValue } from "./components/metadata.ts";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../lib/config.mjs";
-import { load } from "../lib/registry.mjs";
-import { counts, icon } from "../lib/dashboard.mjs";
+import { load, update as updateRegistry } from "../lib/registry.mjs";
+import { icon } from "../lib/dashboard.mjs";
 import { aggregate, toMarkdown } from "../lib/report.mjs";
 import { isTerminal, short, cleanResult } from "../lib/util.mjs";
 
@@ -33,18 +37,65 @@ export default function (pi: ExtensionAPI) {
 	let registration: any = null;
 	let mailboxTimer: NodeJS.Timeout | null = null;
 	let inspectorOpen = false;
+	let floatingHandle: any = null;
+	let closeFloating: (() => void) | null = null;
+	let floatingMounted = false;
+	let renderFloating: (() => void) | null = null;
+	let floatingAgents: Agent[] = [];
+	let lastReviewStart = 0;
+	const reviewing = new Set<string>();
+	const reviewService = createReviewService({ exec: (command: string, args: string[], options: any) => pi.exec(command, args, options) });
+
+	async function revalidate(ctx: ExtensionContext, a?: Agent) {
+		const id = a?.agentId || a?.key;
+		if (!id || reviewing.has(id)) return;
+		reviewing.add(id);
+		try { await syncReviews(cfgFor(ctx), reviewService, { agentId: id, detail: true, limit: 100 }); }
+		catch (e: any) { ctx.ui.notify(`GitHub: ${e.message}`, "warning"); }
+		finally { reviewing.delete(id); }
+	}
+
+	function mountFloating(ctx: ExtensionContext) {
+		const modeArg = process.argv.find(a => a.startsWith("--tui-mode="))?.split("=")[1] || (process.argv.includes("--tui-mode") ? process.argv[process.argv.indexOf("--tui-mode") + 1] : undefined);
+		if (ctx.mode !== "tui" || (modeArg || pi.getSettings().tuiMode) === "regular" || floatingMounted || !widgetOn || !floatingAgents.length) return;
+		floatingMounted = true;
+		void ctx.ui.custom<void>((tui, _theme, _keys, done) => {
+			closeFloating = () => done();
+			renderFloating = () => tui.requestRender();
+			return floatingList({ agents: () => floatingAgents, theme: () => ctx.ui.theme,
+				render: () => tui.requestRender(), open: id => { if (id.startsWith("approval:")) ctx.ui.notify("팬아웃 담당 세션의 승인 화면을 확인하세요.", "info"); else void inspect(ctx, false, id); }, unfocus: () => floatingHandle?.unfocus(),
+			});
+		}, { overlay: true, overlayOptions: { anchor: "top-right", width: 42, maxHeight: 12, margin: { top: 1, right: 1 }, nonCapturing: true,
+			visible: (w: number, h: number) => w >= 48 && h >= 18 }, onHandle: handle => { floatingHandle = handle; if (inspectorOpen) handle.setHidden(true); },
+		}).catch((e: any) => ctx.ui.notify(`fanout floating: ${e.message}`, "warning")).finally(() => {
+			floatingMounted = false; floatingHandle = null; closeFloating = null; renderFloating = null;
+		});
+	}
+
+	function ensureReviewDaemon(ctx: ExtensionContext, agents: Agent[]) {
+		if (load(cfgFor(ctx)).meta.reviewPaused) return;
+		if (!agents.some(a => a.status === "FINISHED" && (a.git?.branches || []).some((b: any) => prTarget(b.prUrl) && a.reviews?.[b.prUrl]?.state !== "merged"))) return;
+		if (Date.now() - lastReviewStart < 5000) return;
+		lastReviewStart = Date.now();
+		const file = path.join(stateDir(ctx), "review.pid");
+		try { const pid = Number(fs.readFileSync(file, "utf8")); if (pid) { process.kill(pid, 0); return; } } catch { /* stale */ }
+		const child = spawn(NODE, [path.join(HERE, "..", "bin", "review-watch.mjs"), stateDir(ctx)], { cwd: ctx.cwd, detached: true, stdio: "ignore" });
+		child.on("error", () => {}); child.unref();
+	}
 	const sideDir = (ctx: ExtensionContext) => path.join(stateDir(ctx), "sidecar");
 	const isOwner = (ctx: ExtensionContext) => owner(sideDir(ctx))?.sessionId === ctx.sessionManager.getSessionId();
 
-	async function inspect(ctx: ExtensionContext, localReview = false) {
+	async function inspect(ctx: ExtensionContext, localReview = false, initialId?: string) {
 		if (ctx.mode !== "tui" || inspectorOpen) return;
 		inspectorOpen = true;
+		floatingHandle?.setHidden(true);
 		let timer: NodeJS.Timeout | undefined;
 		try {
 			await ctx.ui.custom<void>((tui, theme, keys, done) => {
-				let selected = 0, offset = 0, detail = localReview;
+				let selected = 0, offset = 0, detail = localReview || !!initialId, showMetadata = true;
 				let review: string | null = localReview ? "diff를 불러오는 중…" : null;
 				let loading = false, closed = false;
+				let contentCache: { text: string; width: number; theme: any; lines: string[]; diff: boolean } | null = null;
 				const loadDiff = async (local: boolean, external = false) => {
 					if (loading) return;
 					loading = true; detail = true; offset = 0; review = "diff를 불러오는 중…"; tui.requestRender();
@@ -98,7 +149,9 @@ export default function (pi: ExtensionAPI) {
 				};
 				let agents: Agent[] = [];
 				const update = () => { try { agents = Object.values(load(cfgFor(ctx)).agents) as Agent[]; } catch { agents = []; } tui.requestRender(); };
-				update(); timer = setInterval(update, 1000);
+				update();
+				if (initialId) { selected = Math.max(0, agents.findIndex(a => (a.agentId || a.key) === initialId)); void revalidate(ctx, agents[selected]); }
+				timer = setInterval(update, 1000);
 				if (localReview) void loadDiff(true);
 				return {
 					render(w: number) {
@@ -107,23 +160,52 @@ export default function (pi: ExtensionAPI) {
 						// Border + two-cell horizontal padding; reserve vertical space for the frame.
 						const padding = w >= 24 ? 2 : 1;
 						const innerWidth = Math.max(1, w - 2 - padding * 2);
+						const contentWidth = Math.max(1, innerWidth - 4); // Separate rail: │ + space + ANSI-colored triangle + space.
 						const height = Math.max(1, Math.min(16, (process.stdout.rows || 30) - 14));
 						let body: string[];
+						let scrollTop = 0, totalLines = 0;
 						if (detail && (a || review !== null)) {
-							const text = review ?? `${a.label} · ${a.status || a.phase}\n${a.batch || ""}\n${a.summary || ""}\n\n${cleanResult(a.runs?.[a.runId]?.result) || "아직 결과가 없습니다."}`;
-							const lines = text.split("\n").flatMap(s => wrapTextWithAnsi(s, innerWidth));
+							const text = review ?? (cleanResult(a.runs?.[a.runId]?.result) || "아직 결과가 없습니다.");
+							const diff = review !== null;
+							if (!contentCache || contentCache.text !== text || contentCache.width !== contentWidth || contentCache.theme !== ctx.ui.theme || contentCache.diff !== diff) {
+								const lines = diff ? text.split("\n").flatMap(s => wrapTextWithAnsi(s, contentWidth)).map(s => theme.fg(s.startsWith("+") ? "success" : s.startsWith("-") ? "error" : s.startsWith("@@") ? "accent" : "text", s)) : highlightCode(text, "markdown").flatMap(s => wrapTextWithAnsi(s, contentWidth));
+								contentCache = { text, width: contentWidth, theme: ctx.ui.theme, lines, diff };
+							}
+							const branches = a?.git?.branches || [];
+							const agentUrl = a?.url || (/^bc-[\w-]+$/.test(a?.agentId || "") ? `https://cursor.com/agents/${a.agentId}` : undefined);
+							const repoLink = (b: any) => {
+								const repo = String(b.repoUrl || "").replace(/^(https?:\/\/)?github\.com\//, "").replace(/\.git$/, "");
+								return /^[\w.-]+\/[\w.-]+$/.test(repo) ? `https://github.com/${repo}` : undefined;
+							};
+							const meta: [string, MetadataValue][] = diff ? [] : [
+								["작업", a.label || a.name || ""], ["목표", a.summary || ""], ["상태", `${taskState(a).text} · ${a.status || a.phase}`],
+								["에이전트", { text: a.agentId || a.key || "", url: agentUrl }], ["실행", a.runId || ""], ["배치", a.batch || ""],
+								["저장소", branches.flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.repoUrl || "—", url: repoLink(b) }])],
+								["브랜치", branches.flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.branch || "—", url: repoLink(b) && b.branch ? `${repoLink(b)}/tree/${encodeURIComponent(b.branch)}` : undefined }])],
+								["PR", branches.filter((b: any) => b.prUrl).flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.prUrl, url: b.prUrl }, ` · ${a.reviews?.[b.prUrl]?.state || "미확인"}${a.reviews?.[b.prUrl]?.lastError ? ` · ${a.reviews[b.prUrl].lastError}` : ""}`])],
+								["갱신", `${reviewing.has(a.agentId || a.key) ? "갱신 중 · " : ""}${freshness(a)}`],
+							];
+							const lines = diff ? contentCache.lines : [...(showMetadata ? [...metadataTable(meta, contentWidth, theme), ""] : []), theme.fg("accent", theme.bold("결과")), "", ...contentCache.lines];
 							offset = Math.min(offset, Math.max(0, lines.length - height));
-							body = lines.slice(offset, offset + height).map(s => review === null ? s : theme.fg(s.startsWith("+") ? "success" : s.startsWith("-") ? "error" : s.startsWith("@@") ? "accent" : "text", s));
+							body = lines.slice(offset, offset + height);
+							scrollTop = offset; totalLines = lines.length;
 						} else {
 							const start = Math.max(0, selected - height + 1);
+							scrollTop = start; totalLines = agents.length;
 							body = agents.slice(start, start + height).map((a, i) => {
 								const active = start + i === selected;
-								const row = truncateToWidth(`${active ? "›" : " "} ${icon(a.status || a.phase)} ${a.label} · ${a.status || a.phase} · ${a.summary || ""}`, innerWidth);
+								const row = truncateToWidth(`${active ? "›" : " "} ${taskState(a).icon} ${a.label} · ${taskState(a).text} · ${a.summary || ""}`, contentWidth);
 								return active ? theme.fg("accent", theme.bold(row)) : row;
 							});
 						}
+						const canUp = scrollTop > 0, canDown = scrollTop + height < totalLines;
+						const viewport = Array.from({ length: height }, (_, i) => {
+							const text = truncateToWidth(body[i] || (i === 0 && !body.length ? "작업이 없습니다." : ""), contentWidth);
+							const glyph = height === 1 ? (canDown ? "▼" : canUp ? "▲" : " ") : i === 0 && canUp ? "▲" : i === height - 1 && canDown ? "▼" : " ";
+							return text + " ".repeat(Math.max(0, contentWidth - visibleWidth(text))) + theme.fg("dim", "│") + " " + theme.fg("accent", theme.bold(glyph)) + " ";
+						});
 						const title = review !== null ? "☁ Diff 리뷰" : detail ? `☁ Fan-out · ${a?.label || "상세"}` : `☁ Fan-out 현황 · ${agents.length}개 작업`;
-						const hint = detail ? "↑↓ / 휠 · PgUp/PgDn · d diff · r 외부 리뷰 · Esc" : "↑↓ 선택 · Enter 상세 · d diff · r 외부 리뷰 · Esc";
+						const hint = detail ? "↑↓ / 휠 · m 표 접기 · d diff · r 리뷰 · u 갱신 · Esc" : "↑↓ 선택 · Enter 상세 · d diff · r 외부 리뷰 · Esc";
 						const border = (s: string) => theme.fg("dim", s);
 						const row = (s = "") => {
 							const text = truncateToWidth(s, innerWidth);
@@ -133,7 +215,7 @@ export default function (pi: ExtensionAPI) {
 						return [
 							border("╭" + "─".repeat(w - 2) + "╮"),
 							row(), row(theme.fg("accent", theme.bold(title))), row(),
-							...(body.length ? body : [theme.fg("dim", "아직 작업이 없습니다.")]).map(s => row(s)),
+							...viewport.map(s => row(s)),
 							row(),
 							border("├" + "─".repeat(w - 2) + "┤"),
 							row(theme.fg("dim", hint)), row(),
@@ -142,13 +224,20 @@ export default function (pi: ExtensionAPI) {
 					},
 					handleInput(data: string) {
 						if (keys.matches(data, "tui.select.cancel")) { if (detail && !localReview) { detail = false; review = null; offset = 0; } else { closed = true; done(); return; } }
+						else if (data === "m" && detail && review === null) { showMetadata = !showMetadata; offset = 0; }
+						else if (data === "u") { void revalidate(ctx, agents[selected]); return; }
+						else if (data === "a" && agents[selected]?.status === "FINISHED" && !(agents[selected].git?.branches || []).some((b: any) => b.prUrl)) {
+							const a = agents[selected];
+							void updateRegistry(cfgFor(ctx), (reg: any) => { const current = reg.agents[a.agentId || a.key]; if (current?.runId === a.runId) current.reviewAckRunId = a.runId; }).catch((e: any) => ctx.ui.notify(e.message, "warning"));
+							return;
+						}
 						else if (data === "r") { void loadDiff(localReview, true); return; }
 						else if (data === "d" && !localReview) { void loadDiff(false); return; }
 						else if (matchesKey(data, "pageup")) { offset = Math.max(0, offset - 10); }
 						else if (matchesKey(data, "pagedown")) { offset += 10; }
 						else if (matchesKey(data, "home")) { offset = 0; selected = 0; }
 						else if (matchesKey(data, "end")) { if (detail) offset = Number.MAX_SAFE_INTEGER; else selected = agents.length - 1; }
-						else if (keys.matches(data, "tui.select.confirm")) { detail = true; offset = 0; }
+						else if (keys.matches(data, "tui.select.confirm")) { detail = true; offset = 0; void revalidate(ctx, agents[selected]); }
 						else if (keys.matches(data, "tui.select.up")) { if (detail) offset = Math.max(0, offset - 1); else selected = Math.max(0, selected - 1); }
 						else if (keys.matches(data, "tui.select.down")) { if (detail) offset++; else selected = Math.min(agents.length - 1, selected + 1); }
 						tui.requestRender();
@@ -163,7 +252,7 @@ export default function (pi: ExtensionAPI) {
 					invalidate() {},
 				};
 			}, { overlay: true, overlayOptions: { width: "90%", anchor: "center", margin: 1 } });
-		} finally { clearInterval(timer); inspectorOpen = false; }
+		} finally { clearInterval(timer); inspectorOpen = false; if (widgetOn) floatingHandle?.setHidden(false); }
 	}
 
 	const stateDir = (ctx: ExtensionContext) => process.env.CURSOR_FANOUT_DIR || path.join(ctx.cwd, ".cursor-fanout");
@@ -190,25 +279,19 @@ export default function (pi: ExtensionAPI) {
 
 	function refresh(ctx: ExtensionContext) {
 		const cfg = cfgFor(ctx);
-		if (!fs.existsSync(cfg.registryPath)) { ctx.ui.setStatus("cloud-fanout", undefined); ctx.ui.setWidget("cloud-fanout", undefined); return; }
+		ctx.ui.setStatus("cloud-fanout", undefined); ctx.ui.setWidget("cloud-fanout", undefined);
+		if (!fs.existsSync(cfg.registryPath)) { floatingAgents = []; floatingHandle?.setHidden(true); return; }
 		let reg; try { reg = load(cfg); } catch { return; }
 		const agents = Object.values(reg.agents) as Agent[];
-		if (!agents.length) { ctx.ui.setStatus("cloud-fanout", undefined); ctx.ui.setWidget("cloud-fanout", undefined); return; }
-		const c = counts(reg) as Record<string, number>;
-		const theme = ctx.ui.theme;
-		const active = (c.CREATING || 0) + (c.RUNNING || 0) + (c.WAITING_FOR_BACKGROUND_WORK || 0);
-		const failed = (c.ERROR || 0) + (c.CREATE_FAILED || 0) + (c.MISSING || 0) + (c.EXPIRED || 0);
-		const pending = Object.entries(c).filter(([s]) => !["CREATING", "RUNNING", "WAITING_FOR_BACKGROUND_WORK", "FINISHED", "ERROR", "CREATE_FAILED", "MISSING", "EXPIRED", "CANCELLED"].includes(s)).reduce((n, [, v]) => n + v, 0);
-		const parts = [
-			active ? theme.fg("accent", `진행 ${active}`) : "",
-			pending ? theme.fg("dim", `대기 ${pending}`) : "",
-			c.FINISHED ? theme.fg("dim", `완료 ${c.FINISHED}`) : "",
-			failed ? theme.fg("warning", `확인 필요 ${failed}`) : "",
-			c.CANCELLED ? theme.fg("dim", `취소 ${c.CANCELLED}`) : "",
-		].filter(Boolean).join(theme.fg("dim", " · "));
-		const status = `${theme.fg(active ? "accent" : "dim", "팬아웃")}  ${parts}`;
-		// A single surface: clickable strip when enabled; footer fallback otherwise.
-		ctx.ui.setStatus("cloud-fanout", widgetOn ? undefined : status);
+		const approvals = (Object.values(reg.meta.approvals || {}) as any[]).filter(a => { try { if (!a.pid) return false; process.kill(a.pid, 0); return true; } catch { return false; } });
+		floatingAgents = [...approvals, ...agents];
+		if (!floatingAgents.length) { floatingHandle?.setHidden(true); return; }
+		floatingHandle?.setHidden(!widgetOn || inspectorOpen);
+		ctx.ui.setStatus("cloud-fanout", undefined);
+		ctx.ui.setWidget("cloud-fanout", undefined);
+		ensureReviewDaemon(ctx, agents);
+		mountFloating(ctx);
+		renderFloating?.();
 
 		// Notify on terminal transitions (local file only, zero API calls).
 		for (const a of agents) {
@@ -220,22 +303,6 @@ export default function (pi: ExtensionAPI) {
 			}
 			lastStatus.set(id, now);
 		}
-		if (widgetOn) {
-			if (ctx.mode === "tui") ctx.ui.setWidget("cloud-fanout", (_tui, widgetTheme) => new MouseRegion({
-				render(width: number) {
-					const right = widgetTheme.fg("dim", width >= 80 ? "현황 ↗  /fanout inbox" : "현황 ↗");
-					const gap = 3;
-					const available = Math.max(0, width - visibleWidth(right) - gap - 2);
-					if (available < 10) return [truncateToWidth(status, width)];
-					const left = truncateToWidth(status, available);
-					return [" " + left + " ".repeat(Math.max(gap, width - visibleWidth(left) - visibleWidth(right) - 2)) + right + " "];
-				},
-				invalidate() {},
-			}, event => {
-				if (event.type === "click" && event.button === "left") { void inspect(ctx); return { handled: true }; }
-			}), { placement: "belowEditor" });
-			else ctx.ui.setWidget("cloud-fanout", [status], { placement: "belowEditor" });
-		} else ctx.ui.setWidget("cloud-fanout", undefined);
 		// When a whole batch is terminal, queue its report for the model's next turn (does not interrupt).
 		for (const batch of new Set(agents.map((a) => a.batch).filter(Boolean))) {
 			const agg = aggregate(cfg, { batch });
@@ -286,6 +353,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", async (_e, ctx) => {
 		stopWatcher(); clearInterval(mailboxTimer!); mailboxTimer = null;
+		closeFloating?.();
 		if (registration) detach(sideDir(ctx), registration.token);
 		registration = null;
 	});
@@ -359,7 +427,11 @@ export default function (pi: ExtensionAPI) {
 			if (!plan.toCreate) { ctx.ui.notify("fanout: nothing to create (all tasks already tracked)", "info"); return null; }
 			if (!ctx.hasUI) throw new Error(`needs approval in the UI:\n${planTable(plan, spec)}`);
 			const launchLabel = `Launch ${plan.toCreate} agent(s)`;
-			const choice = await ctx.ui.select(planTable(plan, spec), [launchLabel, "Edit plan", "Cancel"]);
+			const approvalId = `approval:${ctx.sessionManager.getSessionId()}:${spec.batch}`;
+			await updateRegistry(cfgFor(ctx), (reg: any) => { reg.meta.approvals ||= {}; reg.meta.approvals[approvalId] = { key: approvalId, label: spec.title || spec.batch, localApproval: true, pid: process.pid }; });
+			let choice: string | undefined;
+			try { choice = await ctx.ui.select(planTable(plan, spec), [launchLabel, "Edit plan", "Cancel"]); }
+			finally { await updateRegistry(cfgFor(ctx), (reg: any) => { delete reg.meta.approvals?.[approvalId]; }); }
 			if (choice === launchLabel) return { spec, plan };
 			if (choice !== "Edit plan") return null;
 			const edited = await ctx.ui.editor("Edit fan-out plan (JSON)", JSON.stringify(spec.agents, null, 2));
@@ -409,9 +481,9 @@ export default function (pi: ExtensionAPI) {
 	].join("\n");
 
 	// ---------------------------------------------------------------- /fanout command
-	const SUBS = ["attach", "detach", "show", "inbox", "diff", "launch", "status", "report", "up", "add", "followup", "steer", "cancel", "tree", "widget", "stop"];
+	const SUBS = ["attach", "detach", "show", "inbox", "focus", "reviews", "diff", "launch", "status", "report", "up", "add", "followup", "steer", "cancel", "tree", "widget", "stop"];
 	pi.registerCommand("fanout", {
-		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | up | widget on|off | stop",
+		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | up | widget on|off | stop",
 		getArgumentCompletions: (prefix: string) => {
 			const items = SUBS.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
 			return items.length ? items : null;
@@ -432,6 +504,12 @@ export default function (pi: ExtensionAPI) {
 					}
 					case "detach": { if (registration) detach(sideDir(ctx), registration.token); registration = null; pi.appendEntry("cloud-fanout-owner", { enabled: false }); refresh(ctx); return say("팬아웃 담당 해제 (클라우드 작업은 계속 실행)"); }
 					case "inbox": return inspect(ctx);
+					case "focus": { mountFloating(ctx); floatingHandle?.focus(); return; }
+					case "reviews": {
+						if (!["on", "off"].includes(rest[0])) return say("usage: /fanout reviews on|off", "warning");
+						await updateRegistry(cfgFor(ctx), (reg: any) => { reg.meta.reviewPaused = rest[0] === "off"; });
+						refresh(ctx); return say(rest[0] === "off" ? "GitHub 자동 확인을 중지합니다. 진행 중인 요청은 마무리합니다. 상세 재검증은 가능합니다." : "GitHub 자동 확인을 재개합니다.");
+					}
 					case "diff": return inspect(ctx, true);
 					case "show": {
 						const target = owner(sideDir(ctx));
@@ -469,7 +547,7 @@ export default function (pi: ExtensionAPI) {
 						const r = await pi.exec(FANOUT_SH, ["up"], { cwd: ctx.cwd, timeout: 60_000 });
 						return say(r.code === 0 ? "rex panes up" : r.stderr || r.stdout, r.code === 0 ? "info" : "error");
 					}
-					case "widget": { widgetOn = rest[0] !== "off"; if (!widgetOn) ctx.ui.setWidget("cloud-fanout", undefined); refresh(ctx); return; }
+					case "widget": { widgetOn = rest[0] !== "off"; floatingHandle?.setHidden(!widgetOn); if (widgetOn) mountFloating(ctx); return; }
 					case "stop": { const r = await T(ctx, ["stop"]); return say(r.out); }
 					default: {
 						// Anything else is a goal: the model plans the tasks and calls cloud_fanout_launch (table approval follows).

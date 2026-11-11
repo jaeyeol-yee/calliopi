@@ -2,25 +2,40 @@
 
 ## 전담 세션과 선택형 현황
 
+상태 모델과 floating 목록의 구현 기준은 [상태 추적 API 검토](docs/status-tracking.md)를 참고하세요. 실행 완료와 PR 병합은 별개의 상태입니다.
+
 같은 프로젝트(같은 `CURSOR_FANOUT_DIR`)의 별도 **대화형 Pi 세션**에서 `/fanout attach`를 실행하면 그 세션이 팬아웃을 전담합니다. 메인 세션에서 `/fanout <목표>` 또는 `cloud_fanout_launch`로 전달한 작업은 로컬 mailbox에 저장되고, 담당 세션이 idle일 때 받아 계획·승인을 진행합니다. 승인 우회나 터미널 키 입력 주입은 하지 않습니다.
 
 - `/fanout show`: 같은 Rex 세션의 담당 pane을 현재 pane 오른쪽으로 이동하고, 담당이 idle이면 현황 창을 엽니다. 다른 Rex 세션을 가로질러 pane을 이동하지 않습니다.
-- `/fanout inbox` 또는 하단 상태 바 클릭: 실시간 현황 overlay. 기본 단축키는 등록하지 않습니다(`Ctrl+Shift+F`는 Pi 대화 검색 키입니다). ↑↓로 작업 선택, Enter로 상세 결과, Esc로 돌아가기/닫기.
+- fullscreen 화면 우측 상단에 비포커스 floating box를 표시합니다. 하단 status/widget은 표시하지 않습니다. `진행 / 검토 / 보관`을 클릭해 전환하고, 최대 5행의 목록 안에서 휠로 스크롤합니다. 행을 클릭하면 그 작업의 상세 창을 엽니다.
+- `/fanout focus`: floating 목록에 키보드 포커스를 줍니다. ←→ 분류, ↑↓·PgUp/PgDn 선택, Enter 상세, Esc 편집창 복귀. 기본 단축키는 등록하지 않습니다(`Ctrl+Shift+F`는 Pi 대화 검색 키입니다).
+- `/fanout inbox`: 전체 현황 overlay. ↑↓로 작업 선택, Enter로 상세 결과, Esc로 돌아가기/닫기. 상세의 메타데이터는 행 구분선이 있는 2열 표로 표시합니다. 본문은 Markdown 원문의 `##`, `**`, 코드 펜스를 그대로 유지하고 구문 색상만 적용합니다. 목록과 상세 영역 오른쪽의 별도 세로 칸에 ANSI 강조색 `▲`/`▼`를 두며 더 스크롤할 수 있는 방향만 표시합니다. 이모지나 Nerd Font는 사용하지 않습니다. 에이전트·저장소·브랜치·PR은 OSC 8 하이퍼링크로 열 수 있습니다. Run ID는 공식 웹 URL이 없으므로 텍스트로 유지합니다. `m`으로 메타데이터 표를 접고 본문에 집중할 수 있습니다. 상세를 열 때 해당 PR을 재검증합니다. `u`로 재검증, PR 없는 완료 작업은 `a`로 명시적으로 확인/보관합니다. 새 run에는 이전 확인 표시를 적용하지 않습니다.
+- `/fanout widget off|on`: floating box를 숨김/표시합니다. 폭 48칸 미만 또는 높이 18줄 미만에서는 자동 숨김이며 `/fanout inbox`로 접근할 수 있습니다.
 - 현황에서 `d`: 선택한 에이전트의 GitHub 기본 브랜치 대비 원격 diff를 표시합니다. 읽기 전용 분석 등 push된 브랜치가 없는 작업은 diff가 없다는 안내가 나옵니다. ↑↓, 마우스 휠(fullscreen), PgUp/PgDn, Home/End로 스크롤합니다.
 - 현황에서 `r`: 같은 diff를 `delta`로 별도 Rex pane에 엽니다(설치 필요). pager 키로 리뷰하고 `q`로 종료합니다. 저장소 checkout·수정 없이 `.cursor-fanout/reviews`에 읽기용 diff를 저장합니다. `lazygit` 브랜치 checkout 리뷰는 아직 지원하지 않습니다.
 - `/fanout diff`: 로컬 HEAD 대비 staged/unstaged/미추적 파일 리뷰. 출력 제한을 넘으면 생략 안내를 표시합니다. 클라우드 작업 리뷰는 현황에서 `d`/`r`을 사용하세요.
-- fullscreen TUI에서는 하단 위젯을 클릭해 같은 현황 창을 엽니다. regular 모드에서는 `/fanout inbox` 명령을 사용하세요.
+- regular 모드에서는 floating box를 표시하지 않습니다. `/fanout inbox` 명령을 사용하세요.
 - 담당이 지정되면 다른 세션에는 짧은 현황과 완료 알림만 표시하고, 전체 보고서는 담당 세션에만 전달합니다. `/fanout report`로 명시적으로 가져올 수 있습니다.
 - `/fanout detach`: 담당 해제. 클라우드 작업과 트래커는 계속 실행됩니다. 담당 역할은 세션에 저장되어 reload/resume 시 복원됩니다(다른 담당이 살아 있으면 빼앗지 않음).
 - 담당 Pi를 종료하면 수신은 중단됩니다. 패널 포커스를 옮기는 것과 Pi 프로세스를 종료하는 것은 다릅니다. 전담 세션은 실행 상태로 유지하세요.
 - 로컬 변경/미추적 파일이 있으면 클라우드가 볼 수 없음을 실행 전에 확인합니다. 자동 push는 하지 않습니다. 이 경고는 원격 브랜치와 파일의 존재를 검증하는 완전한 사전 점검은 아닙니다.
+
+### GitHub 리뷰 상태 갱신
+
+- Cursor 실행 상태와 GitHub PR 병합 상태는 별도입니다. `FINISHED`만으로 병합됨이라고 표시하지 않습니다.
+- PR이 있는 완료 작업은 별도 `bin/review-watch.mjs`가 기본 3분(+ 최대 15초 jitter)마다 확인합니다. Cursor 트래커가 실행 완료 후 종료돼도 GitHub 리뷰 확인은 계속됩니다.
+- 상세를 열면 해당 PR만 재검증합니다. 최근 30초 내 요청은 재사용하고, 동시 요청은 합칩니다. 렌더·스크롤은 API를 호출하지 않습니다.
+- GitHub 인증 범위별 캐시·ETag·직렬 요청 lease·시간당 300회 예산을 `~/.cache/calliopi/github`에 공유합니다. 헤더의 잔여량/갱신 시각과 Retry-After를 존중하며 약 10%의 primary 잔여량을 다른 도구에 남깁니다. 제한 시 3분 주기보다 늦어질 수 있고 마지막 확인 시각/갱신 대기를 표시합니다.
+- 병합된 PR은 polling을 끝냅니다. 병합 없이 닫힌 PR은 재열림을 확인합니다. 여러 브랜치 중 일부만 병합됐으면 부분 병합으로 표시합니다. PR이 없는 브랜치의 직접 병합이나 PR 자동 발견은 아직 지원하지 않습니다.
+- 실제 diff 열기는 기존 `d`/`r` 경로이며 다중 브랜치의 첫 항목을 사용합니다. 목록의 병합 판정은 전체 산출물을 확인하므로 이 제한과 구분됩니다.
+- GitHub 리뷰 데몬은 Pi 종료 후에도 미병합 PR을 확인할 수 있습니다. `/fanout reviews off`로 프로젝트의 자동 확인을 중지하고 `on`으로 재개합니다. 중지 설정은 reload 후에도 유지하며, 진행 중인 요청은 마무리합니다. 상세를 열 때의 명시적 재검증은 계속 가능합니다. 토큰 원문은 캐시에 기록하지 않습니다.
 
 mailbox는 `.cursor-fanout/sidecar`에 저장됩니다. 전달된 요청은 `.delivered`로 남습니다. 재시작 시 아직 전달하지 않은 요청은 같은 담당 세션으로 복구되며, 다른 담당에게 자동 재배정하지 않습니다. 프로세스가 메시지 주입 직후 중단되는 경우에는 중복 전달 가능성이 있습니다. 새 요청 전송은 API 호출이 아니며, 1초 간격의 로컬 mailbox 확인만 사용합니다.
 
 이 패키지는 Cursor Cloud Agents를 N개 병렬로 생성(fan-out)합니다. 생성된 에이전트의 **REST raw status**와 **summary(`Run.result`)**·PR·토큰은 백그라운드에서 추적합니다.
 핵심 트래커는 의존성이 없는 Node 코드이고 멀티플렉서를 모릅니다. pane 배치·완료 이벤트·대시보드 표시는 rex 계층(CLI·Server API·Lua)이 얇게 감쌉니다. tmux는 쓰지 않습니다.
 
-Pi 패키지 manifest에는 등록하지 않습니다. 자동 로드되는 확장이 아니라, Pi에서 `!` 셸이나 rex pane으로 호출하는 독립 도구입니다.
+Pi 패키지 manifest에 확장이 등록돼 있으며, CLI와 rex 레이어도 독립적으로 사용할 수 있습니다.
 
 ```text
 packages/cloud-fanout/
@@ -69,7 +84,7 @@ calliopi 루트 manifest에 `./packages/cloud-fanout/extensions`가 등록되어
 | 명령 | `/fanout launch <spec.json>` | 파일로 넘기는 호환 경로입니다. 같은 표 승인을 거칩니다. CLI에서는 `launch --spec -`로 stdin도 받습니다 |
 | 명령 | `/fanout status` · `report` · `tree <label>` · `add <bc-id>` · `followup`/`steer <label> <text>` · `cancel <label>` · `up`(rex pane) · `widget on/off` · `stop` | |
 | 도구 | `cloud_fanout_launch`, `cloud_fanout_status`, `cloud_fanout_report`, `cloud_fanout_diff`, `cloud_fanout_followup` | 모델이 호출합니다. 생성과 후속 지시는 UI 승인이 필요하고, 비대화형 모드에서는 거부합니다 |
-| 화면 | 푸터 `☁ fanout ✓1 ▶1` · 편집기 아래 위젯 · 완료 알림 | 레지스트리 파일만 감시합니다(API 호출 없음) |
+| 화면 | 우측 상단 비포커스 floating 목록 · 메타데이터 표/Markdown 상세 · 완료 알림 | 렌더·스크롤은 레지스트리만 읽습니다. GitHub 자동/상세 갱신은 공유 예산을 사용하는 별도 경로입니다 |
 | 컨텍스트 | 배치가 모두 끝나면 리포트를 `deliverAs: "nextTurn"`로 넣습니다 | 실행 중인 대화를 끊지 않고, 다음 턴에 모델이 결과를 봅니다 |
 
 ## Automation 경로 (생성)
