@@ -1,0 +1,19 @@
+{
+  "name": "calliopi",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A modular, local-first harness for Pi.",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "workspaces": ["packages/*"],
+  "pi": {
+    "extensions": [
+      "./packages/core/extensions",
+      "./packages/context/extensions",
+      "./packages/ui/extensions"
+    ],
+    "skills": ["./packages/context/skills"],
+    "prompts": ["./packages/context/prompts"],
+    "themes": ["./packages/ui/themes"]
+  }
+}
