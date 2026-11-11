@@ -1,4 +1,13 @@
 import { reviewSummary } from './github-review.mjs';
+import { ARCHIVE_RETENTION_MS, archiveTime } from './archive.mjs';
+
+/** Hide only explicitly archived, resolved entries of the same run after a full 24h. */
+export function visibleByDefault(agent, now = Date.now()) {
+  const archivedAt = archiveTime(agent.archivedAt);
+  return taskState(agent).tab !== 2 || !agent.runId || agent.archivedRunId !== agent.runId || archivedAt == null || now - archivedAt < ARCHIVE_RETENTION_MS;
+}
+
+export const defaultTasks = (agents, now = Date.now()) => agents.filter(a => visibleByDefault(a, now));
 
 export const TABS = ['진행', '검토', '보관'];
 export function taskState(a) {

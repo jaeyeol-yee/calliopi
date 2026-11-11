@@ -8,7 +8,8 @@ import { Type } from "typebox";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi, matchesKey } from "@earendil-works/pi-tui";
 import { owner, attach, detach, enqueue, drain } from "../lib/sidecar.mjs";
 import { createReviewService, syncReviews, prTarget } from "../lib/github-review.mjs";
-import { taskState, freshness } from "../lib/floating-model.mjs";
+import { taskState, freshness, visibleByDefault } from "../lib/floating-model.mjs";
+import { stampArchive, archiveTime } from "../lib/archive.mjs";
 import { floatingList } from "./components/floating.ts";
 import { metadataTable, type MetadataValue } from "./components/metadata.ts";
 import { spawn } from "node:child_process";
@@ -59,15 +60,19 @@ export default function (pi: ExtensionAPI) {
 		const modeArg = process.argv.find(a => a.startsWith("--tui-mode="))?.split("=")[1] || (process.argv.includes("--tui-mode") ? process.argv[process.argv.indexOf("--tui-mode") + 1] : undefined);
 		if (ctx.mode !== "tui" || (modeArg || pi.getSettings().tuiMode) === "regular" || floatingMounted || !widgetOn || !floatingAgents.length) return;
 		floatingMounted = true;
+		let ageTimer: NodeJS.Timeout | undefined;
 		void ctx.ui.custom<void>((tui, _theme, _keys, done) => {
 			closeFloating = () => done();
 			renderFloating = () => tui.requestRender();
+			// Expiration is local display work, even when the registry/API is idle.
+			ageTimer = setInterval(() => tui.requestRender(), 1000);
 			return floatingList({ agents: () => floatingAgents, theme: () => ctx.ui.theme,
 				render: () => tui.requestRender(), open: id => { if (id.startsWith("approval:")) ctx.ui.notify("팬아웃 담당 세션의 승인 화면을 확인하세요.", "info"); else void inspect(ctx, false, id); }, unfocus: () => floatingHandle?.unfocus(),
 			});
 		}, { overlay: true, overlayOptions: { anchor: "top-right", width: 42, maxHeight: 12, margin: { top: 1, right: 1 }, nonCapturing: true,
 			visible: (w: number, h: number) => w >= 48 && h >= 18 }, onHandle: handle => { floatingHandle = handle; if (inspectorOpen) handle.setHidden(true); },
 		}).catch((e: any) => ctx.ui.notify(`fanout floating: ${e.message}`, "warning")).finally(() => {
+			clearInterval(ageTimer);
 			floatingMounted = false; floatingHandle = null; closeFloating = null; renderFloating = null;
 		});
 	}
@@ -85,7 +90,7 @@ export default function (pi: ExtensionAPI) {
 	const sideDir = (ctx: ExtensionContext) => path.join(stateDir(ctx), "sidecar");
 	const isOwner = (ctx: ExtensionContext) => owner(sideDir(ctx))?.sessionId === ctx.sessionManager.getSessionId();
 
-	async function inspect(ctx: ExtensionContext, localReview = false, initialId?: string) {
+	async function inspect(ctx: ExtensionContext, localReview = false, initialId?: string, includeArchived = false) {
 		if (ctx.mode !== "tui" || inspectorOpen) return;
 		inspectorOpen = true;
 		floatingHandle?.setHidden(true);
@@ -148,7 +153,17 @@ export default function (pi: ExtensionAPI) {
 					finally { loading = false; if (!closed) tui.requestRender(); }
 				};
 				let agents: Agent[] = [];
-				const update = () => { try { agents = Object.values(load(cfgFor(ctx)).agents) as Agent[]; } catch { agents = []; } tui.requestRender(); };
+				const update = () => {
+					try {
+						const selectedId = agents[selected]?.agentId || agents[selected]?.key || initialId;
+						const all = Object.values(load(cfgFor(ctx)).agents) as Agent[];
+						// Keep an open detail stable across the 24h boundary; hide it upon returning to the list.
+						agents = includeArchived ? all : all.filter(a => visibleByDefault(a) || (detail && (a.agentId || a.key) === selectedId));
+						const index = agents.findIndex(a => (a.agentId || a.key) === selectedId);
+						selected = index >= 0 ? index : Math.max(0, Math.min(selected, agents.length - 1));
+					} catch { agents = []; }
+					tui.requestRender();
+				};
 				update();
 				if (initialId) { selected = Math.max(0, agents.findIndex(a => (a.agentId || a.key) === initialId)); void revalidate(ctx, agents[selected]); }
 				timer = setInterval(update, 1000);
@@ -184,6 +199,7 @@ export default function (pi: ExtensionAPI) {
 								["브랜치", branches.flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.branch || "—", url: repoLink(b) && b.branch ? `${repoLink(b)}/tree/${encodeURIComponent(b.branch)}` : undefined }])],
 								["PR", branches.filter((b: any) => b.prUrl).flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.prUrl, url: b.prUrl }, ` · ${a.reviews?.[b.prUrl]?.state || "미확인"}${a.reviews?.[b.prUrl]?.lastError ? ` · ${a.reviews[b.prUrl].lastError}` : ""}`])],
 								["갱신", `${reviewing.has(a.agentId || a.key) ? "갱신 중 · " : ""}${freshness(a)}`],
+								["보관 시각", a.archivedRunId === a.runId && archiveTime(a.archivedAt) != null ? new Date(archiveTime(a.archivedAt)!).toLocaleString() : "미기록"],
 							];
 							const lines = diff ? contentCache.lines : [...(showMetadata ? [...metadataTable(meta, contentWidth, theme), ""] : []), theme.fg("accent", theme.bold("결과")), "", ...contentCache.lines];
 							offset = Math.min(offset, Math.max(0, lines.length - height));
@@ -204,8 +220,8 @@ export default function (pi: ExtensionAPI) {
 							const glyph = height === 1 ? (canDown ? "▼" : canUp ? "▲" : " ") : i === 0 && canUp ? "▲" : i === height - 1 && canDown ? "▼" : " ";
 							return text + " ".repeat(Math.max(0, contentWidth - visibleWidth(text))) + theme.fg("dim", "│") + " " + theme.fg("accent", theme.bold(glyph)) + " ";
 						});
-						const title = review !== null ? "☁ Diff 리뷰" : detail ? `☁ Fan-out · ${a?.label || "상세"}` : `☁ Fan-out 현황 · ${agents.length}개 작업`;
-						const hint = detail ? "↑↓ / 휠 · m 표 접기 · d diff · r 리뷰 · u 갱신 · Esc" : "↑↓ 선택 · Enter 상세 · d diff · r 외부 리뷰 · Esc";
+						const title = review !== null ? "☁ Diff 리뷰" : detail ? `☁ Fan-out · ${a?.label || "상세"}` : `☁ Fan-out ${includeArchived ? "전체 기록" : "현황"} · ${agents.length}개 작업`;
+						const hint = detail ? "↑↓ / 휠 · m 표 · d diff · r 리뷰 · u 갱신 · a 보관 · Esc" : "↑↓ 선택 · Enter 상세 · d diff · r 외부 리뷰 · Esc";
 						const border = (s: string) => theme.fg("dim", s);
 						const row = (s = "") => {
 							const text = truncateToWidth(s, innerWidth);
@@ -226,9 +242,14 @@ export default function (pi: ExtensionAPI) {
 						if (keys.matches(data, "tui.select.cancel")) { if (detail && !localReview) { detail = false; review = null; offset = 0; } else { closed = true; done(); return; } }
 						else if (data === "m" && detail && review === null) { showMetadata = !showMetadata; offset = 0; }
 						else if (data === "u") { void revalidate(ctx, agents[selected]); return; }
-						else if (data === "a" && agents[selected]?.status === "FINISHED" && !(agents[selected].git?.branches || []).some((b: any) => b.prUrl)) {
+						else if (data === "a" && agents[selected] && (taskState(agents[selected]).tab === 2 || (agents[selected].status === "FINISHED" && !(agents[selected].git?.branches || []).some((b: any) => b.prUrl)))) {
 							const a = agents[selected];
-							void updateRegistry(cfgFor(ctx), (reg: any) => { const current = reg.agents[a.agentId || a.key]; if (current?.runId === a.runId) current.reviewAckRunId = a.runId; }).catch((e: any) => ctx.ui.notify(e.message, "warning"));
+							void updateRegistry(cfgFor(ctx), (reg: any) => {
+								const current = reg.agents[a.agentId || a.key];
+								if (current?.runId !== a.runId) return;
+								if (current.status === "FINISHED" && !(current.git?.branches || []).some((b: any) => b.prUrl)) current.reviewAckRunId = current.runId;
+								stampArchive(current);
+							}).catch((e: any) => ctx.ui.notify(e.message, "warning"));
 							return;
 						}
 						else if (data === "r") { void loadDiff(localReview, true); return; }
@@ -481,9 +502,9 @@ export default function (pi: ExtensionAPI) {
 	].join("\n");
 
 	// ---------------------------------------------------------------- /fanout command
-	const SUBS = ["attach", "detach", "show", "inbox", "focus", "reviews", "diff", "launch", "status", "report", "up", "add", "followup", "steer", "cancel", "tree", "widget", "stop"];
+	const SUBS = ["attach", "detach", "show", "inbox", "history", "archive", "focus", "reviews", "diff", "launch", "status", "report", "up", "add", "followup", "steer", "cancel", "tree", "widget", "stop"];
 	pi.registerCommand("fanout", {
-		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | up | widget on|off | stop",
+		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | history (all records) | archive <label> (Cursor archive) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | up | widget on|off | stop",
 		getArgumentCompletions: (prefix: string) => {
 			const items = SUBS.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
 			return items.length ? items : null;
@@ -504,6 +525,13 @@ export default function (pi: ExtensionAPI) {
 					}
 					case "detach": { if (registration) detach(sideDir(ctx), registration.token); registration = null; pi.appendEntry("cloud-fanout-owner", { enabled: false }); refresh(ctx); return say("팬아웃 담당 해제 (클라우드 작업은 계속 실행)"); }
 					case "inbox": return inspect(ctx);
+					case "history": return inspect(ctx, false, undefined, true);
+					case "archive": {
+						if (!rest[0]) return say("usage: /fanout archive <label>", "warning");
+						if (!(await ctx.ui.confirm("Cursor에 에이전트 보관", `${rest[0]}을 Cursor에 보관할까요? 실행 취소와는 별개이며, 원격 영구 삭제는 하지 않습니다.`))) return;
+						const r = await T(ctx, ["archive", rest[0], "--yes"]);
+						return say(r.out || r.err, r.ok ? "info" : "error");
+					}
 					case "focus": { mountFloating(ctx); floatingHandle?.focus(); return; }
 					case "reviews": {
 						if (!["on", "off"].includes(rest[0])) return say("usage: /fanout reviews on|off", "warning");

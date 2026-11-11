@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../lib/config.mjs';
+import { stampArchive } from '../lib/archive.mjs';
 import { resolveApiKey, ensureLogin, AuthError } from '../lib/auth.mjs';
 import { CursorApi, Limiter, ApiError } from '../lib/api.mjs';
 import { load, update, ensureDir, findAgent, newAgentRecord, pushHistory } from '../lib/registry.mjs';
@@ -445,7 +446,11 @@ const commands = {
     requireYes(`archive ${a.agentId}`);
     const { api } = apiCtx(makeLogger());
     await api.archiveAgent(a.agentId);
-    await update(cfg, (reg) => { reg.agents[a.agentId].archived = true; });
+    await update(cfg, (reg) => {
+      const current = reg.agents[a.agentId];
+      current.archived = true;
+      if (current.runId === a.runId) stampArchive(current);
+    });
     out(`archived ${a.agentId}`);
     return 0;
   },

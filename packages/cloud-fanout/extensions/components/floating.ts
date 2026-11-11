@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth, matchesKey } from '@earendil-works/pi-tui';
-import { TABS, taskState, freshness, plain } from '../../lib/floating-model.mjs';
+import { TABS, taskState, freshness, plain, defaultTasks } from '../../lib/floating-model.mjs';
 
 // No timers or I/O: all state comes from the local registry subscription.
 export function floatingList({ agents, theme, render, open, unfocus }: {
@@ -11,7 +11,7 @@ export function floatingList({ agents, theme, render, open, unfocus }: {
   return {
     render(width: number) {
       const t = theme();
-      const all = agents();
+      const all = defaultTasks(agents());
       visible = all.filter(a => taskState(a).tab === tab);
       selected = Math.max(0, Math.min(selected, visible.length - 1));
       start = Math.max(0, Math.min(start, Math.max(0, visible.length - 5)));

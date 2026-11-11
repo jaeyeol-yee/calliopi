@@ -42,6 +42,27 @@ test('launch requires --yes and prints a plan only', async () => {
   assert.equal(fs.existsSync(path.join(dir, 'registry.json')), false);
 });
 
+test('Cursor archive records a per-run timestamp only after explicit approval and preserves it on repeat', async t => {
+  const dir = tmp();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const f = spec(dir, { batch: 'archive', agents: [{ label: 'archive-me', prompt: 'read only [script:FINISHED]' }] });
+  const launched = await run(dir, ['launch', '--spec', f, '--yes', '--json']);
+  assert.equal(launched.code, 0, launched.stderr);
+  const id = JSON.parse(launched.stdout).results[0].agentId;
+  const declined = await run(dir, ['archive', 'archive-me']);
+  assert.equal(declined.code, 2);
+  assert.equal(reg(dir).agents[id].archivedAt, undefined);
+  const archived = await run(dir, ['archive', 'archive-me', '--yes']);
+  assert.equal(archived.code, 0, archived.stderr);
+  const a = reg(dir).agents[id];
+  assert.equal(a.archived, true);
+  assert.equal(a.archivedRunId, a.runId);
+  assert.ok(Number.isFinite(Date.parse(a.archivedAt)));
+  const repeated = await run(dir, ['archive', 'archive-me', '--yes']);
+  assert.equal(repeated.code, 0, repeated.stderr);
+  assert.equal(reg(dir).agents[id].archivedAt, a.archivedAt);
+});
+
 test('fan-out → watch → terminal with result, PR, usage; WAITING is not an error', async () => {
   const dir = tmp();
   const f = spec(dir, {
