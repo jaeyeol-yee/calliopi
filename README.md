@@ -2,7 +2,7 @@
 
 Pi 위에 얹는 모듈형 로컬 하네스. 브랜드는 Calliopi, 내부 패키지는 역할을 드러내는 이름을 사용합니다.
 
-현재는 **구조만 있는 스켈레톤**입니다. 실행되는 확장, 컨텍스트 주입, 사용자 정의 UI, 서브에이전트는 아직 구현하지 않았습니다.
+현재 Cursor Cloud Agents 팬아웃·추적 확장을 제공합니다. `core`, `context`, `ui`는 아직 스켈레톤입니다.
 
 ## 이름의 유래
 
@@ -32,10 +32,10 @@ calliopi/
     │   ├── package.json
     │   ├── extensions/       # 상태 표시·알림·TUI
     │   └── themes/           # Pi 테마 JSON
-    └── cloud-fanout/         # Cursor Cloud Agents 팬아웃·추적 (Pi 확장·rex 레이어 포함)
+    └── calliopi-fanout/      # Cursor Cloud Agents 팬아웃·추적 (Pi 확장·rex 레이어 포함)
 ```
 
-`cloud-fanout`은 Pi manifest에 등록된 확장으로 `/calliopi-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/cloud-fanout/README.md](packages/cloud-fanout/README.md)를 보세요.
+`calliopi-fanout`은 Pi manifest에 등록된 확장으로 `/calliopi-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/calliopi-fanout/README.md](packages/calliopi-fanout/README.md)를 보세요.
 
 `core`, `context`, `ui`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
 
@@ -48,7 +48,8 @@ Pi settings의 packages 항목
 calliopi/package.json 의 pi manifest
           ├── packages/core/extensions
           ├── packages/context/{extensions,skills,prompts}
-          └── packages/ui/{extensions,themes}
+          ├── packages/ui/{extensions,themes}
+          └── packages/calliopi-fanout/extensions
 ```
 
 - Pi는 루트 manifest에 명시된 리소스 경로를 읽습니다. 하위 `package.json`의 `pi` 선언을 재귀 탐색하는 구조가 아닙니다.
@@ -77,7 +78,7 @@ pi install ~/agent-labs/calliopi
 - 저장 즉시 자동 반영되는 HMR은 아닙니다. `/reload`는 확장 런타임을 다시 구성하며 메모리 상태 보존을 보장하지 않습니다.
 - 리소스 경로를 추가하거나 바꾸면 루트 manifest도 수정한 뒤 `/reload`합니다.
 - 향후 빌드 결과물(`dist/`)을 참조하게 되면 수정 후 재빌드가 필요합니다. 외부 의존성의 모든 캐시까지 무효화된다고 가정하지 않습니다.
-- 현재는 의존성과 빌드 단계가 없어 `npm install`이 필요 없습니다. 나중에 로컬 패키지에 의존성을 추가하면 별도로 설치해야 합니다.
+- 의존성과 workspace 링크는 루트에서 `npm install`로 설치합니다. 별도 빌드 단계는 없습니다.
 
 ## 확장 원칙
 
@@ -85,4 +86,4 @@ pi install ~/agent-labs/calliopi
 - **context**: 모델이 읽을 지침·자료의 구성. 단순한 절차는 TypeScript 대신 skill이나 prompt로 유지합니다.
 - **ui**: 표시와 입력. 실행 정책이나 컨텍스트 선택을 결정하지 않습니다.
 - Pi가 제공하는 SDK 패키지는 필요해질 때 `peerDependencies`로 선언하고 번들에 포함하지 않습니다.
-- 실행 기능은 실제 요구가 생겼을 때 추가합니다. 자동 reload, 서브에이전트, 오케스트레이션은 현재 범위 밖입니다.
+- 실행 기능은 `calliopi-fanout`에서 제공합니다. 자동 reload는 현재 범위 밖입니다.

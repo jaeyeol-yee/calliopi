@@ -1,5 +1,5 @@
 {
-  "name": "@calliopi/cloud-fanout",
+  "name": "@calliopi/calliopi-fanout",
   "version": "0.0.0",
   "private": true,
   "description": "Fan out Cursor Cloud Agents and track raw run status / summaries in the background (rex layer optional).",

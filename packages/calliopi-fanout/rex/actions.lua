@@ -2,7 +2,7 @@
 --
 -- Install: in ~/.config/rex/init.lua add
 --     CALLIOPI_FANOUT = { node = "/abs/path/to/node", rex = "/abs/path/to/rex" }  -- optional
---     dofile("/abs/path/to/calliopi/packages/cloud-fanout/rex/actions.lua")
+--     dofile("/abs/path/to/calliopi/packages/calliopi-fanout/rex/actions.lua")
 -- then `rex config reload`. Try without installing:
 --     rex do rex/actions.lua --action fanout spec=fanout.json
 --

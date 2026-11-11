@@ -1,4 +1,6 @@
-# @calliopi/cloud-fanout
+# @calliopi/calliopi-fanout
+
+패키지 디렉터리와 이름은 `cloud-fanout`에서 `calliopi-fanout`으로 변경했습니다. 기존 작업·세션과의 호환성을 위해 `.cursor-fanout` 저장 경로, `CURSOR_FANOUT_*` 환경변수, `cloud-fanout*` 세션 식별자는 유지합니다. 사용자 명령과 CLI는 `/calliopi-fanout`, `calliopi-fanout`입니다.
 
 ## 전담 세션과 선택형 현황
 
@@ -48,7 +50,7 @@ mailbox는 `.cursor-fanout/sidecar`에 저장됩니다. 전달된 요청은 `.de
 Pi 패키지 manifest에 확장이 등록돼 있으며, CLI와 rex 레이어도 독립적으로 사용할 수 있습니다.
 
 ```text
-packages/cloud-fanout/
+packages/calliopi-fanout/
 ├── bin/tracker.mjs        CLI 진입점 (launch·watch·add·follow·stream·report·…)
 ├── lib/
 │   ├── auth.mjs           apiKey → CURSOR_API_KEY → ~/.cursor/sdk/auth.json(만료 체크)
@@ -85,7 +87,7 @@ node $F/bin/tracker.mjs whoami             # GET /v1/me — 과금 없는 인증
 
 ## Pi 통합 (네이티브)
 
-calliopi 루트 manifest에 `./packages/cloud-fanout/extensions`가 등록되어 있어 Pi가 자동으로 불러옵니다. 반영하려면 `/reload`를 실행합니다.
+calliopi 루트 manifest에 `./packages/calliopi-fanout/extensions`가 등록되어 있어 Pi가 자동으로 불러옵니다. 반영하려면 `/reload`를 실행합니다.
 
 | 종류 | 이름 | 동작 |
 |---|---|---|
@@ -121,7 +123,7 @@ node bin/tracker.mjs launch --spec spec.json --yes
 아래는 모두 rex 터미널(`REX_SESSION`/`REX_BLOCK`이 설정된 곳)에서 실행합니다. Pi 안에서는 앞에 `!`를 붙입니다. 생성은 즉시 반환되므로 Pi 세션을 막지 않습니다. `/cursor-runtime cloud`처럼 `run.wait()`로 블로킹하지 않습니다.
 
 ```bash
-F=~/agent-labs/calliopi/packages/cloud-fanout
+F=~/agent-labs/calliopi/packages/calliopi-fanout
 export CURSOR_FANOUT_DIR=$PWD/.cursor-fanout        # 레지스트리·대시보드·로그 위치 (0700)
 
 # 1) launch — --yes 없이는 계획만 출력합니다 (exit 2). 모델별로 포함 풀/선불 크레딧 중 어디서 차감되는지 표시합니다.
@@ -157,7 +159,7 @@ rex do $F/rex/fanout.lua tracker=$F/bin/tracker.mjs dir=$CURSOR_FANOUT_DIR node=
 
 ```lua
 CALLIOPI_FANOUT = { node = "/abs/path/node", rex = "/abs/path/rex" }   -- 서버 PATH에 없을 때
-dofile(os.getenv("HOME") .. "/agent-labs/calliopi/packages/cloud-fanout/rex/actions.lua")
+dofile(os.getenv("HOME") .. "/agent-labs/calliopi/packages/calliopi-fanout/rex/actions.lua")
 ```
 
 ```bash
