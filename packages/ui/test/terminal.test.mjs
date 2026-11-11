@@ -108,3 +108,13 @@ test('real fzf → real Vim → diff, entirely through the overlay PTY', { timeo
   assert.match(result.content, /-before/);
   assert.match(result.content, /\+after/);
 });
+
+test('overlay key names: press only, legacy and Kitty forms, Caps/Num Lock ignored', async () => {
+  const { keyName } = await import('../lib/terminal-input.ts');
+  for (const [input, name] of [['\r', 'enter'], ['\x1b[13u', 'enter'], ['\x1b[13;65u', 'enter'], ['\x1b', 'escape'], ['\x1b[27u', 'escape'],
+    ['\t', 'tab'], ['\x1b[9u', 'tab'], ['\x1b[Z', 'shift+tab'], ['\x1b[9;2u', 'shift+tab'], ['\x03', 'ctrl+c'], ['\x1b[99;5u', 'ctrl+c'],
+    ['\x1b[13;1:3u', null], ['\x1b[27;1:3u', null], ['a', null], ['\x1b[13;3u', null]]) assert.equal(keyName(input), name, JSON.stringify(input));
+  // Caps Lock (64) must not make ordinary keys disappear.
+  assert.equal(terminalInput('\x1b[97;65u'), 'a');
+  assert.equal(terminalInput('\x1b[99;69u'), '\x03');
+});

@@ -20,7 +20,7 @@ export function terminalInput(data, modes = {}) {
   if (kitty) {
     if (kitty[5] === '3') return ''; // release
     const code = Number(kitty[1]);
-    const mod = Number(kitty[4] || 1) - 1;
+    const mod = (Number(kitty[4] || 1) - 1) & ~(64 | 128); // Caps Lock / Num Lock are not modifiers here
     if (mod & ~7) return ''; // Super/Hyper/etc have no legacy equivalent.
     let text = specials[code];
     if (text === undefined && code >= 32 && code <= 0x10ffff && (code < 57344 || code > 63743)) {
@@ -52,4 +52,19 @@ export function terminalInput(data, modes = {}) {
   data = data.replace(/^\x1b\[1;1([ABCDHF])$/, '\x1b[$1').replace(/^\x1b\[(\d+);1~$/, '\x1b[$1~');
   if (modes.applicationCursorKeysMode && /^\x1b\[[ABCDHF]$/.test(data)) return data.replace('[', 'O');
   return data;
+}
+
+// Key names for keys the overlay itself handles (pane focus, closing). Press/repeat only;
+// releases return null and are dropped by terminalInput() anyway.
+export function keyName(data) {
+  const legacy = { '\r': 'enter', '\x1b': 'escape', '\t': 'tab', '\x1b[Z': 'shift+tab', '\x03': 'ctrl+c' }[data];
+  if (legacy) return legacy;
+  const kitty = /^\x1b\[(\d+)(?::\d*)?(?::\d*)?(?:;(\d*)(?::(\d+))?)?(?:;[\d:]*)?u$/.exec(data);
+  if (!kitty || kitty[3] === '3') return null;
+  const code = Number(kitty[1]);
+  const mod = (Number(kitty[2] || 1) - 1) & ~(64 | 128); // ignore Caps/Num Lock
+  if (mod === 0) return { 13: 'enter', 27: 'escape', 9: 'tab' }[code] ?? null;
+  if (mod === 1 && code === 9) return 'shift+tab';
+  if (mod === 4 && code === 99) return 'ctrl+c';
+  return null;
 }

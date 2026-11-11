@@ -30,11 +30,53 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 - 다음 턴 메시지는 Pi의 `nextTurn` 큐를 사용합니다. 전송 전에 종료하거나 `/reload`할 경우까지 별도 복구를 보장하지 않습니다.
 - `/reload`·세션 교체·Pi 종료 시 PTY와 임시 파일을 정리합니다. Vim에서 저장하지 않은 내용의 복구는 보장하지 않습니다.
 
+## git 기록 탐색
+
+같은 floating terminal에서 커밋 → 변경 파일 → diff 순서로 탐색합니다. **보기 전용**이며 Pi 대화에 아무것도 전달하지 않습니다.
+
+터미널 폭이 100칸 이상이면 **분할 화면**입니다. 왼쪽과 오른쪽 모두 실제 fzf라서, 오른쪽 변경 파일 목록에도 들어가 검색·선택할 수 있습니다.
+
+```text
+╭ Commits ────────────┬ Files · 9771367 ─────────────╮
+│ > 9771367 Add…      │ > +50 -0  lib/fzf.ts         │   왼쪽 커서를 옮기면
+│   69a5fd5 Ren…      │   +93 -0  lib/git-log.ts     │   오른쪽 파일 목록과
+│                     │ ╭ diff 미리보기 ──────────╮ │   diff가 따라 바뀝니다
+╰ Tab/Enter: 파일 목록 · Esc: 닫기 ────────────────╯
+```
+
+| 위치 | `Tab` / `Enter` | `Esc` | 기타 |
+|---|---|---|---|
+| 커밋 목록 | 파일 목록으로 | Pi 복귀 | 검색어 입력·↑↓ 이동 |
+| 파일 목록 | `Tab`: 커밋 목록으로 · `Enter`: 전체 화면 diff | 커밋 목록으로 | |
+| diff (delta 또는 less) | | | `q`: 파일 목록으로 |
+
+- 커밋 fzf는 계속 실행되어 검색어·커서가 그대로 유지됩니다. 파일 fzf는 커밋을 옮길 때마다 다시 띄우며, diff를 보고 돌아오면 검색어·커서를 복원합니다.
+- 커밋 커서는 fzf의 `focus` 이벤트를 개인 임시 파일로 받아 따라갑니다. 다른 로컬 프로세스가 명령을 보낼 수 있는 fzf 원격 제어 서버(`--listen`)는 쓰지 않습니다. 빠르게 스크롤할 때는 80ms 모아서 한 번만 갱신합니다.
+
+폭이 100칸 미만이거나 `/calliopi-log --steps`로 열면 단계별 화면입니다.
+
+```text
+ ① 커밋 목록      미리보기: git show --stat     Enter → ② · Esc → Pi 복귀
+ ② 변경 파일 목록  미리보기: 해당 파일 diff    Enter → ③ · Esc → ①
+ ③ 파일 diff       delta(없으면 less)              q → ②
+```
+
+- `git`, `fzf`, `less`가 필요하고 `delta`는 선택 사항입니다. 현재 Pi 작업 디렉터리가 속한 저장소의 현재 브랜치 기록을 최근 2000개까지 보여줍니다.
+- 이전 단계로 돌아오면 검색어를 유지합니다. 검색어가 없으면 직전에 고른 항목에 커서를 둡니다.
+- merge 커밋은 첫 번째 부모와, 최초 커밋은 빈 트리와 비교합니다. 이름 변경은 `이전 → 이후`로 표시합니다. 변경 파일이 없는 커밋은 선택해도 커밋 목록에 머묭니다.
+- pager는 이 명령 안에서만 고정합니다. 사용자의 `pager.diff` 설정을 바꾸지 않으며, diff가 짧아도 바로 닫히지 않고 `q`로 나갑니다.
+- 파일 경로는 문자 그대로 다룹니다(`GIT_LITERAL_PATHSPECS`). 항목은 번호로만 주고받아 공백·탭·줄바꿈이 있는 파일명도 안전하게 처리합니다.
+
 ### 구조
 
 ```text
-extensions/file-picker.ts   명령·overlay 수명·다음 턴 메시지
-lib/terminal-overlay.ts    node-pty ↔ @xterm/headless ↔ Pi 렌더러
+extensions/file-picker.ts   /calliopi-edit · 다음 턴 메시지
+extensions/git-log.ts       /calliopi-log
+lib/overlay-session.ts      공용 overlay 수명·키 입력 점유·사전 확인
+lib/fzf.ts                  번호 기반 fzf 선택(검색어·커서 복원)
+lib/git-log.ts              커밋·파일 목록, 분할/단계별 탐색 흐름
+bin/git-preview.mjs         커밋/파일 미리보기
+lib/terminal-overlay.ts    pane(node-pty ↔ @xterm/headless) ↔ Pi 렌더러, 단일/분할 배치
 lib/terminal-input.ts      외부 Kitty 키 입력 → 내부 xterm 키 입력
 lib/editor-flow.ts         fzf → 스냅샷 → Vim → 변경 비교
 lib/file-edit.ts           파일 목록·경로 검사·스냅샷·diff
