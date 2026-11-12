@@ -94,6 +94,51 @@ core          core ◄───────────────────�
 - 실행용 파일 경로(`new URL('../bin/x.ts', import.meta.url)`)는 import가 아니라 같은 패키지 안의 파일 위치이므로 그대로 둡니다.
 - manifest는 리소스 목록이지 실행 순서나 의존성 주입 설정이 아닙니다. 패키지 로딩 순서에 의존하는 초기화는 피합니다.
 
+## 요구 사항
+
+최소 버전은 코드가 실제로 쓰는 옵션·기능이 처음 들어간 릴리스입니다. 판정 근거는 각 프로젝트의 changelog·릴리스 노트이고, 표에 **실측**이라고 쓴 항목은 해당 릴리스 바이너리로 경계 버전을 직접 실행해 확인했습니다. 실행 시점에는 도구가 `PATH`에 있는지만 검사하고 버전은 검사하지 않습니다.
+
+### 실행 환경
+
+| 항목 | 최소 | 근거 |
+|---|---|---|
+| OS | macOS, Linux | floating terminal(PTY)은 Windows를 지원하지 않습니다 |
+| Node.js | 22.18.0 (23 계열은 23.6.0) | `.ts`를 빌드 없이 실행합니다. type stripping이 기본으로 켜진 버전입니다(Node changelog) |
+| npm | Node에 포함된 버전 | workspaces 설치·실행 |
+| Pi | 1.5.2에서 검증 | 하한은 확인하지 않았습니다. 대화 헤더는 Pi 내부 컴포넌트에 기대므로 Pi를 올리면 `npm run check`로 확인하세요 |
+| `node-pty` 빌드 | prebuilt 또는 C/C++ 빌드 도구 | 네이티브 의존성입니다. prebuilt가 없는 플랫폼에서는 로컬 빌드합니다 |
+
+### CLI 도구: `calliopi-workflows` (`/calliopi-edit`, `/calliopi-log`)
+
+| 도구 | 쓰는 곳 | 필수 | 최소 버전 | 버전을 정한 기능 | 확인 |
+|---|---|---|---|---|---|
+| fzf | 두 명령 | 필수 | **0.37.0** | `load` 이벤트·`pos()` 동작(커서 복원) 0.36.0, `focus` 이벤트(분할 화면) 0.37.0 | 실측: 0.27–0.46.1 바이너리로 실제 명령 파싱 + PTY 테스트. 0.36.0은 분할 화면만 실패 |
+| ripgrep | `/calliopi-edit` 파일 목록 | 필수 | 0.2.1 | `--files --null` | changelog |
+| Vim | `/calliopi-edit` 편집기 | 필수 | 제약 없음 | `vim -- <file>`만 사용 | — |
+| git | `/calliopi-log` | 필수 | 1.8.2 (권장 2.15.0) | `GIT_LITERAL_PATHSPECS` 1.8.2. `GIT_OPTIONAL_LOCKS` 2.15.0은 낮은 버전에서 무시되어 lock 최적화만 빠집니다 | release notes, 태그별 소스 |
+| less | `/calliopi-log` pager | 필수 | 346 | `-R` 346, `LESSSECURE` 321 | NEWS |
+| delta | `/calliopi-log` pager | 선택 | 0.4.4 | `DELTA_PAGER`. 낮은 버전은 `BAT_PAGER`/`PAGER`를 써서 pager가 바뀔 수 있습니다 | 실측: 0.4.3 / 0.4.4 |
+| bat | `/calliopi-edit` 미리보기 | 선택 | 0.5.0 | `--line-range`. 낮거나 없으면 색 없는 텍스트로 대체합니다 | 실측: 0.4.1 / 0.5.0 |
+
+### 선택: `calliopi-fanout`
+
+팬아웃을 쓰지 않으면 필요 없습니다.
+
+| 항목 | 최소 | 근거·비고 |
+|---|---|---|
+| Cursor 계정과 API 키 | — | `CURSOR_API_KEY` 또는 `~/.cursor/sdk/auth.json` |
+| `@cursor/sdk` | 1.3.1 | 브라우저 로그인 경로에서만 씁니다(선택 의존성) |
+| gh (로그인 필요) | **2.18.0** | PR 상태·diff·merge·`@cursor` 댓글. `pr merge --match-head-commit` 2.13.0, `auth token` 2.17.0, `pr view --json headRefOid` 2.18.0. 실측: 1.14–2.40 바이너리 + release notes |
+| git | 1.8.5 | 원격 작업 비교에 `git -C` 사용(release notes) |
+| rex | 확인하지 않음 | 선택. 현황 pane 배치(`show`, `up`)와 외부 diff 리뷰(`r`)에만 씁니다 |
+| delta | 0.0.17 | 선택. 외부 diff 리뷰(`r`)는 `delta --paging=always`만 씁니다(release notes) |
+
+### 개발·테스트
+
+- 테스트는 임시 저장소를 `git init -b`로 만들어서 **git 2.28.0** 이상이 필요합니다.
+- 실제 fzf·Vim·pager 테스트는 도구가 없으면 건너뜁니다.
+- smoke test(`npm run smoke -w @calliopi/calliopi-workflows`)는 설치된 `pi` 바이너리가 필요합니다(`PI_BINARY`로 경로 지정).
+
 ## 로컬 등록과 수정 반영
 
 한 번 등록합니다. 이 스켈레톤 생성 과정에서는 아래 명령을 실행하지 않았습니다.
