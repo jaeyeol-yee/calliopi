@@ -37,7 +37,7 @@ calliopi/
 
 `calliopi-fanout`은 Pi manifest에 등록된 확장으로 `/calliopi-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/calliopi-fanout/README.md](packages/calliopi-fanout/README.md)를 보세요.
 
-`ui`의 `/calliopi-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/calliopi-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
+`ui`의 `/calliopi-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/calliopi-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 대화 기록에는 사용자 입력과 Pi 답변 앞에 헤더를 붙입니다(`/calliopi-headers`). 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
 
 `core`, `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
 

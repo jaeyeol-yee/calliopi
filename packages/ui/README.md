@@ -30,6 +30,30 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 - 다음 턴 메시지는 Pi의 `nextTurn` 큐를 사용합니다. 전송 전에 종료하거나 `/reload`할 경우까지 별도 복구를 보장하지 않습니다.
 - `/reload`·세션 교체·Pi 종료 시 PTY와 임시 파일을 정리합니다. Vim에서 저장하지 않은 내용의 복구는 보장하지 않습니다.
 
+## 대화 기록 헤더
+
+대화 기록에서 사용자 입력과 Pi 답변의 시작을 헤더로 구분합니다. 배경색을 쓰지 않으므로 테마와 무관하게 보입니다.
+
+```text
+────────────────────────────────────────   ← 화면 폭 전체
+◉ 사용자
+────────────────────────────────────────
+PR 머지하고 archive 처리하죠
+
+read src/app.ts                            ← 도구 호출에는 헤더 없음
+
+────────────────────────────────────────
+⛭ Pi                                       ← 입력 뒤 첫 답변에만
+────────────────────────────────────────
+두 PR을 머지하겠습니다 …
+```
+
+- `/calliopi-headers full|compact|off`: `full`(선·헤더·선, 기본), `compact`(`── ◉ 사용자 ───` 한 줄), `off`. 설정은 `~/.pi/agent/calliopi-ui.json`의 `turnHeaders`에 저장되며 모든 프로젝트에 적용됩니다. 바꾼 뒤 이전 기록에 반영하려면 `/reload`합니다.
+- 아이콘과 레이블은 같은 파일의 `userIcon`, `userLabel`, `assistantIcon`, `assistantLabel`로 바꿀 수 있습니다. 기본 아이콘 `◉`, `⛭`은 Unicode 이모지 속성이 없는 문자라 컬러 이모지로 바뀌지 않습니다. 글꼴에 `⛭`이 없어 빈 네모로 보이면 `▣`나 `◈`로 바꾸세요.
+- **표시만 바꿉니다.** Pi의 Markdown 변환 훅을 쓰므로, 저장된 메시지와 모델에 전달되는 내용은 그대로입니다.
+- 도구를 쓰는 턴은 답변이 여러 메시지로 나뉩니다. 헤더는 사용자 입력 뒤 **첫 번째 텍스트 블록**에만 붙습니다. 텍스트 없이 도구 호출로 시작하면 그 뒤 첫 설명 문장에 붙습니다. 저장된 기록은 세션 항목 ID로, 실시간 답변은 메시지 이벤트를 따라가며 판별합니다.
+- Markdown 구분선(`---`)은 Pi가 80칸으로 자르므로, 변환 훅이 알려주는 표시 폭만큼 선을 직접 그립니다. 선은 해당 블록의 글자색을 따릅니다.
+
 ## git 기록 탐색
 
 같은 floating terminal에서 커밋 → 변경 파일 → diff 순서로 탐색합니다. **보기 전용**이며 Pi 대화에 아무것도 전달하지 않습니다.
@@ -74,6 +98,8 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 ```text
 extensions/file-picker.ts   /calliopi-edit · 다음 턴 메시지
 extensions/git-log.ts       /calliopi-log
+extensions/turn-headers.ts  대화 기록 헤더 (Markdown 변환 훅) · /calliopi-headers
+lib/turn-headers.ts         헤더 문자열, 입력 뒤 첫 답변 판별
 lib/overlay-session.ts      공용 overlay 수명·키 입력 점유·사전 확인
 lib/fzf.ts                  번호 기반 fzf 선택(검색어·커서 복원)
 lib/git-log.ts              커밋·파일 목록, 분할/단계별 탐색 흐름
