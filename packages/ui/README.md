@@ -30,34 +30,43 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 - 다음 턴 메시지는 Pi의 `nextTurn` 큐를 사용합니다. 전송 전에 종료하거나 `/reload`할 경우까지 별도 복구를 보장하지 않습니다.
 - `/reload`·세션 교체·Pi 종료 시 PTY와 임시 파일을 정리합니다. Vim에서 저장하지 않은 내용의 복구는 보장하지 않습니다.
 
-## 대화 기록 헤더
+## 대화 기록 헤더와 thinking 테두리
 
-대화 기록에서 사용자 입력과 Pi 답변의 시작을 헤더로 구분합니다. 배경색을 쓰지 않으므로 테마와 무관하게 보입니다.
+대화 기록에서 사용자 입력과 Pi의 각 응답(모델 턴)을 헤더로 구분하고, thinking을 테두리 상자로 묶습니다. 배경색을 쓰지 않으므로 테마와 무관하게 보입니다.
 
 ```text
 ────────────────────────────────────────   ← 화면 폭 전체
 ◉ 사용자
 ────────────────────────────────────────
-PR 머지하고 archive 처리하죠
+설정 파일 버전 올려줘
 
 ────────────────────────────────────────
-⛭ Pi                                       ← 모델 응답(턴)마다
+⛭ Pi                                       ← 모델 응답마다, 그 응답의 모든 블록보다 앞
 ────────────────────────────────────────
-먼저 PR 상태를 확인하겠습니다.
-
-gh pr view 1                               ← 도구 호출에는 헤더 없음
-
-────────────────────────────────────────
-⛭ Pi
-────────────────────────────────────────
-두 PR 모두 머지 가능합니다 …
+  ╭─ ∴ thinking ─────────────────────╮     ← 펼친 thinking: 들여쓰기 + 테두리
+  │ 버전 필드만 바꾸면 된다…          │
+  ╰──────────────────────────────────╯
+  ┊ ∴ Thinking...                          ← 숨긴 thinking: 한 줄
+edit config.json                           ← 도구 블록 (헤더 없음)
 ```
 
-- `/calliopi-headers full|compact|off`: `full`(선·헤더·선, 기본), `compact`(`── ◉ 사용자 ───` 한 줄), `off`. 설정은 `~/.pi/agent/calliopi-ui.json`의 `turnHeaders`에 저장되며 모든 프로젝트에 적용됩니다. 바꾼 뒤 이전 기록에 반영하려면 `/reload`합니다.
-- 아이콘과 레이블은 같은 파일의 `userIcon`, `userLabel`, `assistantIcon`, `assistantLabel`로 바꿀 수 있습니다. `assistantHeaders`는 `every`(기본: 모델 응답마다)와 `first`(사용자 입력 뒤 첫 답변에만) 중 하나입니다. 기본 아이콘 `◉`, `⛭`은 Unicode 이모지 속성이 없는 문자라 컬러 이모지로 바뀌지 않습니다. 글꼴에 `⛭`이 없어 빈 네모로 보이면 `▣`나 `◈`로 바꾸세요.
-- **표시만 바꿉니다.** Pi의 Markdown 변환 훅을 쓰므로, 저장된 메시지와 모델에 전달되는 내용은 그대로입니다.
-- 도구를 쓰면 답변이 모델 요청(턴)마다 메시지로 나뉩니다. `every`는 **각 모델 메시지의 첫 텍스트 블록**에 헤더를 붙입니다. 텍스트 없이 도구만 호출한 메시지에는 붙지 않습니다. `first`는 사용자 입력 뒤 첫 텍스트 블록에만 붙입니다. 저장된 기록은 세션 항목 ID로, 실시간 답변은 메시지 이벤트를 따라가며 판별합니다.
-- Markdown 구분선(`---`)은 Pi가 80칸으로 자르므로, 변환 훅이 알려주는 표시 폭만큼 선을 직접 그립니다. 선은 해당 블록의 글자색을 따릅니다.
+- **설정**
+  - `/calliopi-headers full|compact|off`: `full`(선·헤더·선, 기본), `compact`(`── ◉ 사용자 ───` 한 줄), `off`. 바로 적용됩니다.
+  - `/calliopi-headers thinking on|off`: thinking 테두리. 새로 그려지는 메시지부터 적용되고, 이전 기록은 `/reload` 후 반영됩니다.
+  - 설정은 `~/.pi/agent/calliopi-ui.json`의 `turnHeaders`에 저장되며 모든 프로젝트에 적용됩니다. 같은 곳에서 `userIcon`, `userLabel`, `assistantIcon`, `assistantLabel`을 바꿀 수 있습니다.
+- **아이콘**: 기본 `◉`, `⛭`, `∴`는 Unicode 이모지 속성이 없는 문자라 컬러 이모지로 바뀌지 않습니다. 말풍선 문자(`💭`, `💬`, `🗨`)는 모두 이모지라 쓰지 않습니다. 글꼴에 `⛭`이 없어 빈 네모로 보이면 `▣`나 `◈`로 바꾸세요.
+- **헤더 위치**: Pi는 모델 응답마다 응답 컴포넌트를 하나씩 만들고, 그 응답의 thinking·텍스트를 담습니다. 도구 블록은 그 뒤에 별도로 붙습니다. 헤더는 이 응답 컴포넌트가 직접 그리므로 thinking보다 앞에 오고, **도구만 호출하는 응답**에서도 도구 블록 바깥 위에 나옵니다. 사용자가 직접 실행한 `!명령`은 별도 컴포넌트라 Pi 헤더가 붙지 않습니다.
+- **thinking 테두리**: 클릭으로 펼치고 접는 동작은 그대로입니다. 폭이 좁으면 제목을 `∴`로 줄이고, 그래도 좁으면 테두리 없이 그립니다.
+- **표시만 바꿉니다.** 저장된 메시지와 모델에 전달되는 내용은 그대로입니다.
+
+### 구현 방식과 안전장치
+
+확장 API로는 이 위치에 헤더를 넣을 수 없습니다. Markdown 변환 훅은 텍스트 블록마다만 호출되고, 도구만 호출하는 응답이나 숨긴 thinking에는 닿지 않습니다. 그래서 Pi가 공개 export하는 `AssistantMessageComponent`·`UserMessageComponent`의 `render`를, thinking 테두리는 `updateContent`를 감쌉니다.
+
+- 감싼 함수는 예외가 나면 Pi의 원래 출력을 돌려줍니다. pi-tui는 render 예외를 처리되지 않은 예외로 바꿔 Pi를 종료하기 때문입니다.
+- `/reload`·세션 종료 때 원래 함수로 되돌리고, 다시 불러와도 두 번 감싸지 않습니다.
+- 클래스 모양이 예상과 다르면(Pi 업데이트 등) 감싸지 않습니다. 이때 헤더는 Markdown 변환 훅으로 대신 그립니다. 도구만 호출하는 응답과 thinking 앞에는 붙지 않고, thinking 테두리는 꺼집니다. `/calliopi-headers`가 어느 경로인지 알려줍니다.
+- Pi의 내부 구조에 기대므로 Pi를 업데이트하면 `npm test --workspace @calliopi/ui`로 확인하세요. 실제 Pi 컴포넌트를 그려서 순서·폭·클릭·복구를 검증합니다.
 
 ## git 기록 탐색
 
@@ -103,8 +112,9 @@ gh pr view 1                               ← 도구 호출에는 헤더 없음
 ```text
 extensions/file-picker.ts   /calliopi-edit · 다음 턴 메시지
 extensions/git-log.ts       /calliopi-log
-extensions/turn-headers.ts  대화 기록 헤더 (Markdown 변환 훅) · /calliopi-headers
-lib/turn-headers.ts         헤더 문자열, 헤더를 붙일 답변 블록 판별
+extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /calliopi-headers
+lib/turn-headers.ts         헤더 줄, render 감싸기, Markdown 대체 경로
+lib/thinking-frame.ts       thinking 테두리 컴포넌트, updateContent 감싸기
 lib/overlay-session.ts      공용 overlay 수명·키 입력 점유·사전 확인
 lib/fzf.ts                  번호 기반 fzf 선택(검색어·커서 복원)
 lib/git-log.ts              커밋·파일 목록, 분할/단계별 탐색 흐름

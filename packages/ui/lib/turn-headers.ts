@@ -125,3 +125,100 @@ export class LiveTurns {
     return this.streaming && !!this.holderText && (t.startsWith(this.holderText) || this.holderText.startsWith(t));
   }
 }
+
+// ---- component headers (primary path) --------------------------------------------------------
+// The header is drawn by the message component itself, before everything that message shows:
+// thinking (hidden or visible), text, and — for a model turn that only calls tools — before the
+// tool boxes, which are separate components that follow it.
+
+export interface HeaderPaint {
+  rule: (s: string) => string;
+  icon: (s: string) => string;
+  label: (s: string) => string;
+}
+export const NO_PAINT: HeaderPaint = { rule: (s) => s, icon: (s) => s, label: (s) => s };
+
+/** Header rows at `width`, aligned with the message content's left/right padding. */
+export function headerLines(icon: string, label: string, width: number, style: HeaderStyle, pad = 1, paint: HeaderPaint = NO_PAINT): string[] {
+  if (style === 'off') return [];
+  const lead = ' '.repeat(Math.max(0, pad));
+  const inner = Math.max(1, Math.floor(width) - 2 * Math.max(0, pad));
+  const cleanIcon = icon.replace(/[\x00-\x1f\x7f]/g, ' ');
+  const cleanLabel = label.replace(/[\x00-\x1f\x7f]/g, ' ');
+  const title = `${paint.icon(cleanIcon)} ${paint.label(cleanLabel)}`;
+  if (style === 'compact') {
+    const used = visibleWidth(`── ${cleanIcon} ${cleanLabel} `);
+    return [`${lead}${paint.rule('── ')}${title} ${paint.rule('─'.repeat(Math.max(1, inner - used)))}`];
+  }
+  const rule = `${lead}${paint.rule('─'.repeat(inner))}`;
+  return [rule, `${lead}${title}`, rule];
+}
+
+/** Marker stored on a patched prototype so a reload replaces the hook instead of wrapping twice. */
+const PATCH = Symbol.for('calliopi.turnHeaders.patch');
+type RenderFn = (this: object, width: number) => string[];
+type MouseFn = (this: object, event: MouseLike) => unknown;
+type MouseLike = { y: number; height: number; [key: string]: unknown };
+type Proto = { render?: RenderFn; handleMouse?: MouseFn; [PATCH]?: PatchState };
+type Patchable = { prototype: Proto };
+interface PatchState {
+  original: RenderFn;
+  originalMouse: MouseFn | undefined;
+  ownMouse: boolean;
+  header: HeaderHook;
+  /** Header rows added in each instance's last render. */
+  rows: WeakMap<object, number>;
+}
+export type HeaderHook = (instance: object, width: number, lines: string[]) => string[] | null;
+
+/**
+ * Prepend header rows to a component class's render(). The hook never breaks rendering: any error
+ * returns the original lines (pi-tui turns a throwing render into an uncaught exception that exits Pi).
+ *
+ * Mouse: a Container finds the clicked child from the layout of its OWN render, which does not
+ * include our rows; so handleMouse is wrapped too, shifting `y` by the rows added in the last
+ * render (clicks on the header rows themselves are not handled).
+ * Returns false when the class does not look like a component, so the caller can fall back.
+ */
+export function installHeader(cls: Patchable, header: HeaderHook): boolean {
+  const proto = cls?.prototype;
+  if (!proto || typeof proto.render !== 'function') return false;
+  const existing = proto[PATCH];
+  if (existing) { existing.header = header; return true; }
+  const state: PatchState = {
+    original: proto.render, originalMouse: proto.handleMouse, ownMouse: Object.prototype.hasOwnProperty.call(proto, 'handleMouse'),
+    header, rows: new WeakMap(),
+  };
+  proto.render = function (this: object, width: number): string[] {
+    const lines = state.original.call(this, width);
+    state.rows.set(this, 0);
+    if (!Array.isArray(lines)) return lines;
+    try {
+      const rows = state.header(this, width, lines);
+      if (!rows?.length) return lines;
+      state.rows.set(this, rows.length);
+      return [...rows, ...lines];
+    } catch { return lines; }
+  };
+  if (typeof state.originalMouse === 'function') {
+    const mouse = state.originalMouse;
+    proto.handleMouse = function (this: object, event: MouseLike) {
+      const n = state.rows.get(this) ?? 0;
+      if (!n) return mouse.call(this, event);
+      if (event.y < n) return undefined;
+      return mouse.call(this, { ...event, y: event.y - n, height: Math.max(0, event.height - n) });
+    };
+  }
+  proto[PATCH] = state;
+  return true;
+}
+
+export function uninstallHeader(cls: Patchable): void {
+  const proto = cls?.prototype;
+  const state = proto?.[PATCH];
+  if (!proto || !state) return;
+  proto.render = state.original;
+  if (state.ownMouse) proto.handleMouse = state.originalMouse;
+  else delete proto.handleMouse; // fall back to the inherited Container.handleMouse again
+  delete proto[PATCH];
+}
