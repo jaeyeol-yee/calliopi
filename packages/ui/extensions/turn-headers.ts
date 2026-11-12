@@ -21,6 +21,7 @@ export function loadConfig(): TurnHeaderConfig {
     userLabel: pick(raw.userLabel, DEFAULT_CONFIG.userLabel),
     assistantIcon: pick(raw.assistantIcon, DEFAULT_CONFIG.assistantIcon),
     assistantLabel: pick(raw.assistantLabel, DEFAULT_CONFIG.assistantLabel),
+    assistantHeaders: raw.assistantHeaders === 'first' ? 'first' : DEFAULT_CONFIG.assistantHeaders,
   };
 }
 
@@ -41,11 +42,11 @@ export default function (pi: ExtensionAPI) {
   // Rescan only when an entry we have not seen yet is rendered (not on every render).
   const rebuildPersisted = () => {
     const branch = (session?.getBranch() ?? []) as { id?: string }[];
-    persisted = persistedHeaders(branch as never);
+    persisted = persistedHeaders(branch as never, config.assistantHeaders);
     scanned = new Set(branch.map((e) => e.id).filter((id): id is string => Boolean(id)));
   };
 
-  pi.on('session_start', (_event, ctx) => { session = ctx.sessionManager; live = new LiveTurns(); rebuildPersisted(); });
+  pi.on('session_start', (_event, ctx) => { session = ctx.sessionManager; live = new LiveTurns(config.assistantHeaders); rebuildPersisted(); });
   pi.on('session_tree', () => rebuildPersisted());
 
   pi.on('message_start', (event) => {

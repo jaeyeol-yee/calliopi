@@ -3,6 +3,8 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
 
 export type HeaderStyle = 'full' | 'compact' | 'off';
+/** every: each assistant message (one per model turn) · first: only the first answer after a user message. */
+export type AssistantHeaders = 'every' | 'first';
 
 export interface TurnHeaderConfig {
   style: HeaderStyle;
@@ -10,11 +12,12 @@ export interface TurnHeaderConfig {
   userLabel: string;
   assistantIcon: string;
   assistantLabel: string;
+  assistantHeaders: AssistantHeaders;
 }
 
 // Non-emoji glyphs only (no Emoji property), so terminals never swap in colour emoji.
 export const DEFAULT_CONFIG: TurnHeaderConfig = {
-  style: 'full', userIcon: '◉', userLabel: '사용자', assistantIcon: '⛭', assistantLabel: 'Pi',
+  style: 'full', userIcon: '◉', userLabel: '사용자', assistantIcon: '⛭', assistantLabel: 'Pi', assistantHeaders: 'every',
 };
 
 /** Keep labels/icons single-line and free of Markdown syntax that could restructure the header. */
@@ -40,7 +43,8 @@ export const withHeader = (header: string, markdown: string): string => `${heade
 
 // ---- which assistant text block gets the header --------------------------------------------
 // Pi renders one Markdown per assistant text block, and a tool-using turn splits the reply into
-// several messages. Only the FIRST non-empty text after a user message gets the header.
+// several messages (one per model turn). `every`: the first non-empty text of each assistant
+// message gets the header. `first`: only the first non-empty text after a user message.
 // Persisted messages carry an entry id; live (streaming) ones do not, so they are tracked
 // from message events and matched by text.
 
@@ -57,13 +61,15 @@ export function firstText(message: Msg | undefined): string | null {
 type Entry = { id?: string; type?: string; message?: Msg; [key: string]: unknown };
 
 /** entry id → the text of the assistant block that opens each answer, from a session branch. */
-export function persistedHeaders(entries: Entry[]): Map<string, string> {
+export function persistedHeaders(entries: Entry[], mode: AssistantHeaders = 'every'): Map<string, string> {
   const out = new Map<string, string>();
   let pending = false;
   for (const e of entries) {
     if (e.type !== 'message' || !e.message) continue;
     if (e.message.role === 'user') { pending = true; continue; }
-    if (e.message.role !== 'assistant' || !pending || !e.id) continue;
+    if (e.message.role !== 'assistant') continue;
+    if (mode === 'every') pending = true;
+    if (!pending || !e.id) continue;
     const text = firstText(e.message);
     if (text) { out.set(e.id, text); pending = false; }
   }
@@ -79,9 +85,17 @@ export class LiveTurns {
   /** Texts of finished live header blocks (earlier turns re-render on resize, still without ids). */
   private done = new Set<string>();
 
+  private readonly mode: AssistantHeaders;
+
+  constructor(mode: AssistantHeaders = 'every') { this.mode = mode; }
+
   user(): void { this.pending = true; }
 
-  assistantStart(message: Msg): void { this.seq += 1; this.assistant(message); }
+  assistantStart(message: Msg): void {
+    this.seq += 1;
+    if (this.mode === 'every') this.pending = true;
+    this.assistant(message);
+  }
 
   assistant(message: Msg): void {
     const text = firstText(message);

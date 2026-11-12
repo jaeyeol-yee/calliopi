@@ -35,7 +35,7 @@ test('labels cannot inject Markdown structure', () => {
   assert.equal(lines.length, 3);
 });
 
-test('persisted: only the first non-empty assistant text after each user message', () => {
+test('persisted, first mode: only the first non-empty assistant text after each user message', () => {
   const user = (id: string) => ({ id, type: 'message', message: { role: 'user', content: 'q' } });
   const asst = (id: string, ...blocks: object[]) => ({ id, type: 'message', message: { role: 'assistant', content: blocks } });
   const map = persistedHeaders([
@@ -47,13 +47,13 @@ test('persisted: only the first non-empty assistant text after each user message
     { id: 'c1', type: 'custom', customType: 'x' },
     user('u2'),
     asst('a4', { type: 'text', text: 'answer two' }),
-  ]);
+  ], 'first');
   assert.deepEqual([...map], [['a2', 'answer one'], ['a4', 'answer two']]);
   assert.equal(firstText({ content: [{ type: 'text', text: '   ' }, { type: 'text', text: 'x' }] }), 'x');
 });
 
-test('live: header follows the streaming first text, not later messages of the same turn', () => {
-  const live = new LiveTurns();
+test('live, first mode: header follows the streaming first text, not later messages of the same turn', () => {
+  const live = new LiveTurns('first');
   const msg = (text?: string) => ({ role: 'assistant', content: text ? [{ type: 'text', text }] : [{ type: 'toolCall' }] });
   live.user();
   live.assistantStart(msg()); // turn opens with a tool call
@@ -73,4 +73,28 @@ test('live: header follows the streaming first text, not later messages of the s
   live.assistantEnd(msg('Second answer'));
   assert.equal(live.matches('Second answer'), true);
   assert.equal(live.matches(''), false);
+});
+
+test('every mode (default): each assistant message (model turn) with text gets one header', () => {
+  const user = (id: string) => ({ id, type: 'message', message: { role: 'user', content: 'q' } });
+  const asst = (id: string, ...blocks: object[]) => ({ id, type: 'message', message: { role: 'assistant', content: blocks } });
+  const map = persistedHeaders([
+    user('u1'),
+    asst('a1', { type: 'toolCall' }),                                     // tool only: nothing to put a header on
+    asst('a2', { type: 'text', text: 'first' }, { type: 'text', text: 'same message, second block' }),
+    asst('a3', { type: 'text', text: 'narration between tools' }),
+    asst('a4', { type: 'thinking', thinking: '…' }, { type: 'toolCall' }),
+  ]);
+  assert.deepEqual([...map], [['a2', 'first'], ['a3', 'narration between tools']]);
+  assert.equal(DEFAULT_CONFIG.assistantHeaders, 'every');
+
+  const live = new LiveTurns();
+  const msg = (...texts: string[]) => ({ role: 'assistant', content: texts.length ? texts.map((text) => ({ type: 'text', text })) : [{ type: 'toolCall' }] });
+  live.user();
+  live.assistantStart(msg()); live.assistantEnd(msg());
+  live.assistantStart(msg('one')); live.assistantEnd(msg('one', 'one-b'));
+  live.assistantStart(msg('two')); live.assistantEnd(msg('two'));
+  assert.equal(live.matches('one'), true);
+  assert.equal(live.matches('one-b'), false, 'only the first text block of a message');
+  assert.equal(live.matches('two'), true, 'next model turn gets its own header');
 });
