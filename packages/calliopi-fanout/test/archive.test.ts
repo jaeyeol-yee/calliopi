@@ -32,15 +32,28 @@ test('legacy archives without valid timestamps remain visible; never invent an a
   assert.equal(visibleByDefault(archived({ archivedRunId: undefined }), now), true);
 });
 
-test('a new run, unreviewed output, active work, and unresolved errors never age out', () => {
+test('a new run, unreviewed output, active work, open PRs, and unresolved errors never age out', () => {
   assert.equal(visibleByDefault(archived({ runId: 'run-b', status: 'RUNNING' }), now), true);
   assert.equal(visibleByDefault(archived({ runId: 'run-b' }), now), true);
-  assert.equal(visibleByDefault(archived({ reviewAckRunId: undefined }), now), true);
+  // never acknowledged nor archived → stays in review
+  assert.equal(visibleByDefault(archived({ reviewAckRunId: undefined, archivedRunId: undefined, archivedAt: undefined }), now), true);
+  assert.equal(taskState({ agentId: 'x', runId: 'r', status: 'FINISHED' }).tab, 1);
   for (const status of ['RUNNING', 'WAITING_FOR_BACKGROUND_WORK', 'ERROR', 'EXPIRED']) {
     assert.equal(visibleByDefault(archived({ status }), now), true);
   }
   assert.equal(visibleByDefault(archived({ missing: true }), now), true);
-  assert.equal(visibleByDefault(archived({ git: { branches: [{ prUrl: 'https://github.com/test/repo/pull/1' }] } }), now), true);
+  // archiving the agent does not settle an open PR: it stays in review
+  const openPr = archived({ reviewAckRunId: undefined, git: { branches: [{ prUrl: 'https://github.com/test/repo/pull/1' }] } });
+  assert.equal(visibleByDefault(openPr, now), true);
+  assert.equal(taskState(openPr).tab, 1);
+});
+
+test('archiving a run without a PR counts as reviewing its output (moves to 보관, then ages out)', () => {
+  const a = archived({ reviewAckRunId: undefined });
+  assert.deepEqual([taskState(a).tab, taskState(a).text], [2, '확인함']);
+  assert.equal(visibleByDefault(a, now), false);
+  // archive of an older run does not acknowledge a newer one
+  assert.equal(taskState(archived({ reviewAckRunId: undefined, runId: 'run-b' })).tab, 1);
 });
 
 test('merged and cancelled entries require explicit archive before their 24h retention starts', () => {

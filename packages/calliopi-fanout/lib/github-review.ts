@@ -155,7 +155,13 @@ export function createReviewService({ exec, cacheDir, scope, transport, now = Da
 
 export function reviewSummary(agent: AgentView): { state: string; text: string } {
   const entries = (agent.git?.branches || []).filter((b) => b.prUrl);
-  if (!entries.length) return { state: agent.reviewAckRunId && agent.reviewAckRunId === agent.runId ? 'acknowledged' : 'pending', text: '검토 대기' };
+  // Without a PR, the output itself is the deliverable: explicitly acknowledging it, or archiving this
+  // run (Cursor archive / local archive), means it was reviewed. With an open PR, archiving the agent
+  // does not settle the PR, so that case falls through to the PR states below.
+  if (!entries.length) {
+    const done = Boolean(agent.runId) && (agent.reviewAckRunId === agent.runId || agent.archivedRunId === agent.runId);
+    return { state: done ? 'acknowledged' : 'pending', text: '검토 대기' };
+  }
   const run = agent.runs?.[agent.runId as string];
   const hasPreviousRun = Object.entries(agent.runs || {}).some(([id, r]) => id !== agent.runId && r?.finalized);
   if (hasPreviousRun && run?.gitAttribution === 'snapshot-delta-at-newest-run' && !run.gitDelta?.length) {
