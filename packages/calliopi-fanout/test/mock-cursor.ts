@@ -4,21 +4,74 @@
 // each listRuns/getRun of that agent advances one step. "[pr]" makes it report a PR.
 // Env/opts: MOCK_429_EVERY (every Nth request gets 429 Retry-After:1), MOCK_USAGE_403=1, MOCK_STREAM_410=1.
 import http from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 = false, stream410 = false } = {}) {
-  const agents = new Map();
-  const mockState = { broke: false };
-  const stats = { total: 0, byRoute: {}, rateLimited: 0 };
+interface MockRun {
+  id: string;
+  script: string[];
+  step: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  durationMs?: number;
+  result?: string;
+  resultText?: string;
+  fanoutKey?: string;
+}
+interface MockAgent {
+  id: string;
+  name?: string;
+  createdAt: string;
+  updatedAt: string;
+  pr: boolean;
+  num: number;
+  git: { branches: { repoUrl: string; branch: string; prUrl: string }[] } | null;
+  runs: MockRun[];
+  crashed?: boolean;
+}
+export interface MockState {
+  broke: boolean;
+  lastModel?: unknown;
+  automation: null | {
+    automationId: string;
+    name: string;
+    enabled: boolean;
+    workflow: {
+      triggers?: unknown[];
+      prompts?: { prompt?: string }[];
+      modelSelection?: { modelId?: string };
+      gitConfig?: { repo?: string; branch?: string };
+    };
+  };
+  updates?: number;
+  webhookPosts?: number;
+  webhookFail?: boolean;
+}
+export interface MockHandle {
+  server: http.Server;
+  agents: Map<string, MockAgent>;
+  stats: { total: number; byRoute: Record<string, number>; rateLimited: number };
+  mockState: MockState;
+  url: string;
+  close: () => Promise<void>;
+}
+
+export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 = false, stream410 = false }: {
+  port?: number; key?: string; every429?: number; usage403?: boolean; stream410?: boolean;
+} = {}): Promise<MockHandle> {
+  const agents = new Map<string, MockAgent>();
+  const mockState: MockState = { broke: false, automation: null };
+  const stats = { total: 0, byRoute: {} as Record<string, number>, rateLimited: 0 };
   let n = 0;
 
-  const send = (res, code, body, headers = {}) => {
+  const send = (res: ServerResponse, code: number, body?: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(code, { 'content-type': 'application/json', ...headers });
     res.end(body === undefined ? '' : JSON.stringify(body));
   };
-  const err = (res, code, c, m, h) => send(res, code, { error: { code: c, message: m } }, h);
+  const err = (res: ServerResponse, code: number, c: string, m: string, h?: Record<string, string>) => send(res, code, { error: { code: c, message: m } }, h);
 
-  const advance = (ag) => {
+  const advance = (ag: MockAgent) => {
     const run = ag.runs[0];
     if (run.step < run.script.length - 1) run.step += 1;
     run.status = run.script[run.step];
@@ -30,17 +83,17 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
     }
     ag.updatedAt = run.updatedAt;
   };
-  const runView = (ag, run) => ({
+  const runView = (ag: MockAgent, run: MockRun) => ({
     id: run.id, agentId: ag.id, status: run.status, createdAt: run.createdAt, updatedAt: run.updatedAt,
     ...(run.durationMs != null ? { durationMs: run.durationMs } : {}),
     ...(run.result ? { result: run.result } : {}),
     ...(ag.git ? { git: ag.git } : {}),
   });
-  const summary = (ag) => ({ id: ag.id, name: ag.name, status: 'ACTIVE', env: { type: 'cloud' }, url: `https://cursor.com/agents/${ag.id}`, createdAt: ag.createdAt, updatedAt: ag.updatedAt, latestRunId: ag.runs[0].id });
+  const summary = (ag: MockAgent) => ({ id: ag.id, name: ag.name, status: 'ACTIVE', env: { type: 'cloud' }, url: `https://cursor.com/agents/${ag.id}`, createdAt: ag.createdAt, updatedAt: ag.updatedAt, latestRunId: ag.runs[0].id });
 
-  const server = http.createServer(async (req, res) => {
+  const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
     stats.total += 1; n += 1;
-    const url = new URL(req.url, 'http://x');
+    const url = new URL(req.url as string, 'http://x');
     const route = `${req.method} ${url.pathname.replace(/bc-[^/]+/, ':id').replace(/run-[^/]+/, ':run')}`;
     stats.byRoute[route] = (stats.byRoute[route] || 0) + 1;
     if (!url.pathname.startsWith('/automations/webhook/') && !url.pathname.startsWith('/aiserver.v1.') && url.pathname !== '/auth/exchange_user_api_key' && req.headers.authorization !== `Bearer ${key}`) return send(res, 401, { code: 'error', message: 'Invalid User API Key' });
@@ -61,7 +114,7 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
       if (agents.has(id)) return err(res, 409, 'agent_id_conflict', 'exists');
       const script = (/\[script:([A-Z_,]+)\]/.exec(json.prompt.text)?.[1] || 'CREATING,RUNNING,FINISHED').split(',');
       const now = new Date().toISOString();
-      const a = {
+      const a: MockAgent = {
         id, name: json.name, createdAt: now, updatedAt: now, pr: /\[pr\]/.test(json.prompt.text), num: agents.size + 1, git: null,
         runs: [{ id: `run-${randomUUID()}`, script, step: 0, status: script[0], createdAt: now, updatedAt: now }],
       };
@@ -77,7 +130,7 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
         workflow: { triggers: [{ webhook: {} }], prompts: [{ prompt: 'p0' }], modelSelection: { modelId: 'grok-4.7' }, gitConfig: { repo: 'https://github.com/o/r', branch: 'main' } } };
       if (m === 'GetAutomation') return send(res, 200, { workflow: { workflow: mockState.automation } });
       if (m === 'UpdateAutomation') { mockState.updates = (mockState.updates || 0) + 1; if (json.workflow) mockState.automation.workflow = json.workflow; return send(res, 200, { workflow: { workflow: mockState.automation } }); }
-      return err(res, 404, 'not_found', m);
+      return err(res, 404, 'not_found', m as string);
     }
     if (req.method === 'POST' && url.pathname.startsWith('/automations/webhook/')) {
       // Documented webhook trigger: Bearer <sender key>, JSON body → {success, backgroundComposerId}
@@ -88,7 +141,7 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
       const id = `bc-${randomUUID()}`;
       const script = (/\[script:([A-Z_,]+)\]/.exec(payload.task || '')?.[1] || 'RUNNING,FINISHED').split(',');
       const now = new Date().toISOString();
-      const a = { id, name: 'Calliopi webhook task', createdAt: now, updatedAt: now, pr: false, num: agents.size + 1, git: null,
+      const a: MockAgent = { id, name: 'Calliopi webhook task', createdAt: now, updatedAt: now, pr: false, num: agents.size + 1, git: null,
         runs: [{ id: `run-${randomUUID()}`, script, step: 0, status: script[0], createdAt: now, updatedAt: now,
           result: undefined, fanoutKey: payload.fanout_key }] };
       a.runs[0].resultText = `<calliopi_result fanout_key="${payload.fanout_key}" agent_id="${id}">\n<understood>${payload.summary || payload.label}</understood>\n</calliopi_result>\n\ndone: ${payload.label}`;
@@ -146,14 +199,14 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
     }
     if (req.method === 'POST' && parts[5] === 'cancel') {
       const run = ag.runs.find((r) => r.id === parts[4]);
-      run.script = [...run.script.slice(0, run.step + 1), 'CANCELLED']; return send(res, 200, { id: run.id });
+      run!.script = [...run!.script.slice(0, run!.step + 1), 'CANCELLED']; return send(res, 200, { id: run!.id });
     }
     if (req.method === 'POST' && rest === 'archive') return send(res, 200, { id: ag.id });
     return err(res, 404, 'not_found', route);
   });
 
   return new Promise((resolve) => server.listen(port, '127.0.0.1', () => {
-    resolve({ server, agents, stats, mockState, url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => server.close(r)) });
+    resolve({ server, agents, stats, mockState, url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, close: () => new Promise((r) => server.close(r as () => void)) });
   }));
 }
 

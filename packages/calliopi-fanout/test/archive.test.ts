@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ARCHIVE_RETENTION_MS, archiveTime, stampArchive } from '../lib/archive.mjs';
-import { defaultTasks, visibleByDefault, taskState } from '../lib/floating-model.mjs';
+import { ARCHIVE_RETENTION_MS, archiveTime, stampArchive } from '../lib/archive.ts';
+import type { AgentView } from '../lib/types.ts';
+import { defaultTasks, visibleByDefault, taskState } from '../lib/floating-model.ts';
 
 const now = Date.parse('2026-01-02T12:00:00Z');
 const archived = (extra = {}) => ({ agentId: 'a', runId: 'run-a', status: 'FINISHED', reviewAckRunId: 'run-a', archivedRunId: 'run-a', archivedAt: new Date(now - ARCHIVE_RETENTION_MS).toISOString(), ...extra });
@@ -51,7 +52,7 @@ test('merged and cancelled entries require explicit archive before their 24h ret
 });
 
 test('archive time is idempotent per run and resets only for an explicitly archived new run', () => {
-  const a = { runId: 'run-a' };
+  const a: AgentView = { runId: 'run-a' };
   stampArchive(a, now);
   assert.equal(a.archivedAt, new Date(now).toISOString());
   stampArchive(a, now + 60_000);
@@ -60,7 +61,7 @@ test('archive time is idempotent per run and resets only for an explicitly archi
   stampArchive(a, now + 120_000);
   assert.equal(a.archivedRunId, 'run-b');
   assert.equal(a.archivedAt, new Date(now + 120_000).toISOString());
-  const withoutRun = {};
+  const withoutRun: AgentView = {};
   stampArchive(withoutRun, now);
   assert.deepEqual(withoutRun, {});
 });

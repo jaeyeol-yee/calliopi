@@ -1,10 +1,11 @@
 import { hyperlink, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import { plain } from '../../lib/floating-model.mjs';
+import type { Theme } from '@earendil-works/pi-coding-agent';
+import { plain } from '../../lib/floating-model.ts';
 
 export type MetadataLink = { text: string; url?: string };
 export type MetadataValue = string | MetadataLink | (string | MetadataLink)[];
 
-function valueText(value: MetadataValue, theme: any) {
+function valueText(value: MetadataValue, theme: Theme) {
   return (Array.isArray(value) ? value : [value]).map(part => {
     if (typeof part === 'string') return part.split('\n').map(plain).join('\n');
     const text = plain(part.text);
@@ -19,7 +20,7 @@ function valueText(value: MetadataValue, theme: any) {
 }
 
 /** Width-aware table with row separators. Only explicitly supplied safe links emit OSC 8. */
-export function metadataTable(rows: [string, MetadataValue][], width: number, theme: any): string[] {
+export function metadataTable(rows: [string, MetadataValue][], width: number, theme: Theme): string[] {
   if (width < 24) return rows.flatMap(([key, value]) => valueText(value, theme).split('\n').flatMap((line, i) => wrapTextWithAnsi(`${i ? '' : key + ': '}${line}`, Math.max(1, width))));
   const keyWidth = 8;
   const valueWidth = width - keyWidth - 7;

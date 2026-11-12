@@ -4,23 +4,24 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { nowIso, processAlive, sleep } from './util.mjs';
+import { caught, nowIso, processAlive, sleep } from './util.ts';
+import type { AgentRecord, HistoryEntry, Registry, StoreConfig } from './types.ts';
 
-const EMPTY = () => ({ version: 1, updatedAt: null, meta: { panes: {} }, batches: {}, agents: {} });
+const EMPTY = (): Registry => ({ version: 1, updatedAt: null, meta: { panes: {} }, batches: {}, agents: {} });
 
-export function ensureDir(dir) {
+export function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* not owner */ }
 }
 
-export function load(cfg) {
-  let text;
-  try { text = fs.readFileSync(cfg.registryPath, 'utf8'); } catch (e) {
-    if (e.code === 'ENOENT') return EMPTY();
+export function load(cfg: { registryPath: string }): Registry {
+  let text: string;
+  try { text = fs.readFileSync(cfg.registryPath, 'utf8'); } catch (e: unknown) {
+    if (caught(e).code === 'ENOENT') return EMPTY();
     throw e;
   }
   // Never silently replace a corrupt registry: it holds the only record of paid agents.
-  const reg = JSON.parse(text);
+  const reg = JSON.parse(text) as Registry;
   reg.meta ??= { panes: {} };
   reg.meta.panes ??= {};
   reg.batches ??= {};
@@ -28,7 +29,7 @@ export function load(cfg) {
   return reg;
 }
 
-async function acquire(cfg, timeoutMs = 15_000) {
+async function acquire(cfg: StoreConfig, timeoutMs = 15_000): Promise<void> {
   ensureDir(cfg.dir);
   const start = Date.now();
   for (;;) {
@@ -37,8 +38,8 @@ async function acquire(cfg, timeoutMs = 15_000) {
       await fh.writeFile(`${process.pid} ${Date.now()}`);
       await fh.close();
       return;
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
+    } catch (e: unknown) {
+      if (caught(e).code !== 'EEXIST') throw e;
       // Steal locks left by dead processes or held absurdly long.
       try {
         const [pid, t] = fs.readFileSync(cfg.lockPath, 'utf8').split(' ').map(Number);
@@ -50,7 +51,7 @@ async function acquire(cfg, timeoutMs = 15_000) {
   }
 }
 
-function writeAtomic(file, text) {
+function writeAtomic(file: string, text: string): void {
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, text, { mode: 0o600 });
   fs.renameSync(tmp, file);
@@ -58,7 +59,7 @@ function writeAtomic(file, text) {
 }
 
 /** Read-modify-write under the lock. `mutator(reg)` may return a value, passed through. */
-export async function update(cfg, mutator) {
+export async function update<T>(cfg: StoreConfig, mutator: (reg: Registry) => T | Promise<T>): Promise<T> {
   await acquire(cfg);
   try {
     const reg = load(cfg);
@@ -71,7 +72,7 @@ export async function update(cfg, mutator) {
   }
 }
 
-export function newAgentRecord(fields) {
+export function newAgentRecord(fields: Partial<AgentRecord>): AgentRecord {
   return {
     agentId: null,
     key: null,
@@ -103,7 +104,7 @@ export function newAgentRecord(fields) {
 }
 
 /** Lookup by agentId, unique prefix, label, or pane block id. */
-export function findAgent(reg, needle) {
+export function findAgent(reg: Registry, needle: string | null | undefined): AgentRecord | null {
   if (!needle) return null;
   const all = Object.values(reg.agents);
   return (
@@ -114,13 +115,13 @@ export function findAgent(reg, needle) {
       const hits = all.filter((a) => a.agentId?.startsWith(needle));
       return hits.length === 1 ? hits[0] : null;
     })()
-  );
+  ) ?? null;
 }
 
-export const trackable = (a) =>
+export const trackable = (a: AgentRecord): boolean | string | null | undefined =>
   (a.phase === 'created' || a.phase === 'imported') && a.agentId && !a.missing && !a.finalized;
 
-export function pushHistory(a, entry) {
+export function pushHistory(a: { history: HistoryEntry[] }, entry: Omit<HistoryEntry, 'at'>): void {
   a.history.push({ at: nowIso(), ...entry });
   if (a.history.length > 50) a.history.splice(0, a.history.length - 50);
 }

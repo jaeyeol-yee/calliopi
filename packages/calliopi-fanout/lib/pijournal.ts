@@ -9,11 +9,11 @@ import path from 'node:path';
 const AGENT_RE = /\bbc-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/g;
 const RUN_RE = /\brun-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/g;
 
-export function findJournals(root = path.join(os.homedir(), '.pi', 'agent', 'sessions'), maxDepth = 8) {
-  const out = [];
-  const walk = (dir, depth) => {
+export function findJournals(root = path.join(os.homedir(), '.pi', 'agent', 'sessions'), maxDepth = 8): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number) => {
     if (depth > maxDepth) return;
-    let ents;
+    let ents: fs.Dirent[];
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of ents) {
       const p = path.join(dir, e.name);
@@ -25,11 +25,13 @@ export function findJournals(root = path.join(os.homedir(), '.pi', 'agent', 'ses
   return out;
 }
 
+export interface JournalHit { agentId: string; runId: string | null; journal: string }
+
 /** Returns [{ agentId, runId|null, journal }] — one per agent, latest runId seen on the same line. */
-export function scanJournals(files) {
-  const found = new Map();
+export function scanJournals(files: string[]): JournalHit[] {
+  const found = new Map<string, JournalHit>();
   for (const f of files) {
-    let text;
+    let text: string;
     try { text = fs.readFileSync(f, 'utf8'); } catch { continue; }
     for (const line of text.split('\n')) {
       const agents = line.match(AGENT_RE) || [];

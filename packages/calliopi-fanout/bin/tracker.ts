@@ -3,27 +3,28 @@
 // nothing here knows about rex (or tmux). Multiplexer layers only call these commands.
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
-import { loadConfig } from '../lib/config.mjs';
-import { stampArchive } from '../lib/archive.mjs';
-import { resolveApiKey, ensureLogin, AuthError } from '../lib/auth.mjs';
-import { CursorApi, Limiter, ApiError } from '../lib/api.mjs';
-import { load, update, ensureDir, findAgent, newAgentRecord, pushHistory } from '../lib/registry.mjs';
-import { tick, FatalAuth } from '../lib/poller.mjs';
-import { render, DashboardWriter, counts } from '../lib/dashboard.mjs';
-import { launch, launchViaAutomation } from '../lib/launch.mjs';
-import { readSpec } from '../lib/launch.mjs';
-import { follow, summaryBlock, exitCodeFor } from '../lib/follow.mjs';
-import { stream } from '../lib/stream.mjs';
-import { aggregate, toMarkdown } from '../lib/report.mjs';
-import { findJournals, scanJournals } from '../lib/pijournal.mjs';
-import { diffTrees, renderTree, outline, renderOutline } from '../lib/arch.mjs';
-import { gitRefSource, localSource, ghRefSource } from '../lib/workspace.mjs';
-import * as auto from '../lib/automation.mjs';
+import { loadConfig } from '../lib/config.ts';
+import { stampArchive } from '../lib/archive.ts';
+import { resolveApiKey, ensureLogin, AuthError } from '../lib/auth.ts';
+import { CursorApi, Limiter, ApiError } from '../lib/api.ts';
+import { load, update, ensureDir, findAgent, newAgentRecord, pushHistory } from '../lib/registry.ts';
+import { tick, FatalAuth, type TickCtx } from '../lib/poller.ts';
+import { render, DashboardWriter, counts } from '../lib/dashboard.ts';
+import { launch, launchViaAutomation } from '../lib/launch.ts';
+import { readSpec } from '../lib/launch.ts';
+import { follow, summaryBlock, exitCodeFor } from '../lib/follow.ts';
+import { stream } from '../lib/stream.ts';
+import { aggregate, toMarkdown } from '../lib/report.ts';
+import { findJournals, scanJournals } from '../lib/pijournal.ts';
+import { diffTrees, renderTree, outline, renderOutline } from '../lib/arch.ts';
+import { gitRefSource, localSource, ghRefSource } from '../lib/workspace.ts';
+import * as auto from '../lib/automation.ts';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { EXIT, makeLogger, nowIso, processAlive, short, sleep, isTerminal, redact } from '../lib/util.mjs';
+import { EXIT, caught, makeLogger, nowIso, processAlive, short, sleep, isTerminal, redact } from '../lib/util.ts';
+import type { AgentRecord, Logger, Registry } from '../lib/types.ts';
 
-const HELP = `usage: tracker.mjs [--dir DIR] <command> [options]
+const HELP = `usage: tracker.ts [--dir DIR] <command> [options]
 
 state dir: --dir, $CURSOR_FANOUT_DIR, or ./.cursor-fanout   (registry.json 0600)
 
@@ -84,34 +85,34 @@ const OPTS = {
   gh: { type: 'string' }, ref: { type: 'string' },
   'base-repo': { type: 'string' }, 'base-ref': { type: 'string' }, depth: { type: 'string' }, local: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
-};
+} as const;
 
 let args;
-try { args = parseArgs({ args: rest, options: OPTS, allowPositionals: true }); } catch (e) {
-  process.stderr.write(`${e.message}\n\n${HELP}`); process.exit(EXIT.USAGE);
+try { args = parseArgs({ args: rest, options: OPTS, allowPositionals: true }); } catch (e: unknown) {
+  process.stderr.write(`${caught(e).message}\n\n${HELP}`); process.exit(EXIT.USAGE);
 }
 const { values: o, positionals: pos } = args;
 const cfg = loadConfig({ dir: globalDir, max: o.max, rpm: o.rpm });
-const out = (x) => process.stdout.write(typeof x === 'string' ? `${x}\n` : `${JSON.stringify(x, null, 2)}\n`);
+const out = (x: unknown) => process.stdout.write(typeof x === 'string' ? `${x}\n` : `${JSON.stringify(x, null, 2)}\n`);
 
-function apiCtx(log) {
+function apiCtx(log: Logger): TickCtx {
   const { key, source } = resolveApiKey();
   log.debug(`auth source: ${source}`);
   const limiter = new Limiter(cfg.rpm);
   return { cfg, log, limiter, api: new CursorApi({ key, base: cfg.apiBase, limiter, log }) };
 }
 
-function needAgent(reg, needle) {
+function needAgent(reg: Registry, needle: string | undefined): AgentRecord {
   const a = findAgent(reg, needle);
   if (!a) { process.stderr.write(`unknown agent: ${needle}\n`); process.exit(EXIT.MISSING); }
   return a;
 }
 
-function requireYes(what) {
+function requireYes(what: string) {
   if (!o.yes) { process.stderr.write(`${what}\nrefusing without --yes (paid or destructive)\n`); process.exit(EXIT.USAGE); }
 }
 
-const commands = {
+const commands: Record<string, () => Promise<number>> = {
   async launch() {
     if (!o.spec) throw new UsageError('--spec FILE required');
     const log = makeLogger();
@@ -135,7 +136,7 @@ const commands = {
           automationRepo = a?.workflow?.gitConfig?.repo ?? null;
         } catch (e) { if (o.yes || e instanceof UsageError) throw e; }
       }
-      res = await launchViaAutomation({ cfg, log }, spec, { yes: o.yes, retryFailed: o['retry-failed'], webhook: hook, automationRepo });
+      res = await launchViaAutomation({ cfg, log }, spec, { yes: o.yes, retryFailed: o['retry-failed'], webhook: hook as { url: string; key: string }, automationRepo });
     } else {
       if (o.yes) await ensureLogin(); // interactive only; daemons never prompt
       const ctx = o.yes ? apiCtx(log) : { cfg, log };
@@ -148,7 +149,7 @@ const commands = {
       for (const p of res.plan || []) out(`  + ${p.label}  ${p.repo || '(no repo)'}${p.ref ? `@${p.ref}` : ''}  model ${p.model} [${p.billing}]  ${p.prompt}`);
       if (res.toCreate) out(`\nThis would start ${res.toCreate} Cloud Agent run(s) (plan usage at each model's rate). Re-run with --yes to create.`);
     } else {
-      for (const r of res.results) out(`${r.phase.padEnd(13)} ${short(r.agentId)} ${short(r.runId)} ${r.label}${r.error ? `  ! ${r.error}` : ''}`);
+      for (const r of res.results) out(`${(r.phase as string).padEnd(13)} ${short(r.agentId)} ${short(r.runId)} ${r.label}${r.error ? `  ! ${r.error}` : ''}`);
     }
     if (res.results?.some((r) => r.error && /account blocked|usage_limit_exceeded/.test(r.error))) {
       process.stderr.write('account refused creation (nothing created or spent); re-run the same command after fixing billing — it resumes with the same agentIds\n');
@@ -385,7 +386,7 @@ const commands = {
       if (!hook?.url || !hook?.key) throw new UsageError(`no webhook URL/key in ${auto.WEBHOOK_STATE}`);
       if (!o.task) throw new UsageError('--task TEXT required');
       const payload = { fanout_key: randomUUID(), label: o.label || 'webhook-probe', task: o.task };
-      const res = await auto.postWebhook(hook, payload);
+      const res = await auto.postWebhook(hook as { url: string; key: string }, payload);
       out({ sent: { fanout_key: payload.fanout_key, label: payload.label }, status: res.status, body: res.body ?? res.text,
         headers: Object.fromEntries(Object.entries(res.headers).filter(([k]) => /request-id|location|content-type|x-cursor/i.test(k))) });
       return res.status >= 200 && res.status < 300 ? 0 : 1;
@@ -404,7 +405,7 @@ const commands = {
 
   async stop() {
     const d = daemonInfo();
-    if (d.running) process.kill(d.pid, 'SIGTERM');
+    if (d.running) process.kill(d.pid as number, 'SIGTERM');
     out(d.running ? `sent SIGTERM to ${d.pid}` : 'not running');
     return 0;
   },
@@ -416,10 +417,10 @@ const commands = {
     const log = makeLogger();
     const { api } = apiCtx(log);
     const body = { prompt: { text: o.prompt }, ...(o.steer ? { delivery: 'steer' } : {}) };
-    const res = await api.createRun(a.agentId, body);
+    const res = await api.createRun(a.agentId as string, body);
     const newRun = res?.run?.id || res?.runId || null;
     await update(cfg, (reg) => {
-      const r = reg.agents[a.agentId];
+      const r = reg.agents[a.agentId as string];
       if (newRun && newRun !== r.runId) {
         pushHistory(r, { runId: newRun, from: r.status, to: res?.run?.status || 'CREATING', via: o.steer ? 'steer' : 'followup' });
         r.runId = newRun; r.status = res?.run?.status || 'CREATING';
@@ -435,8 +436,8 @@ const commands = {
     const a = needAgent(load(cfg), pos[0]);
     requireYes(`cancel run ${a.runId} of ${a.agentId}`);
     const { api } = apiCtx(makeLogger());
-    await api.cancelRun(a.agentId, a.runId);
-    await update(cfg, (reg) => { reg.agents[a.agentId].poll.nextAt = 0; });
+    await api.cancelRun(a.agentId as string, a.runId as string);
+    await update(cfg, (reg) => { reg.agents[a.agentId as string].poll.nextAt = 0; });
     out(`cancel requested for ${short(a.runId)}`);
     return 0;
   },
@@ -445,9 +446,9 @@ const commands = {
     const a = needAgent(load(cfg), pos[0]);
     requireYes(`archive ${a.agentId}`);
     const { api } = apiCtx(makeLogger());
-    await api.archiveAgent(a.agentId);
+    await api.archiveAgent(a.agentId as string);
     await update(cfg, (reg) => {
-      const current = reg.agents[a.agentId];
+      const current = reg.agents[a.agentId as string];
       current.archived = true;
       if (current.runId === a.runId) stampArchive(current);
     });
@@ -456,7 +457,7 @@ const commands = {
   },
 };
 
-async function treeOrArch(mode) {
+async function treeOrArch(mode: string): Promise<number> {
   let cur; let base = null; let label;
   if (o.local) {
     cur = localSource(o.local);
@@ -464,11 +465,11 @@ async function treeOrArch(mode) {
     base = gitRefSource(o.local, o['base-ref'] || 'HEAD');
   } else if (o.gh || pos[0]) {
     // Agent work on GitHub, located from the public REST run snapshot (Run.git.branches[] → repoUrl + branch).
-    let repo = o.gh; let ref = o.ref;
+    let repo: string | undefined = o.gh; let ref: string | null | undefined = o.ref;
     if (pos[0]) {
       const a = needAgent(load(cfg), pos[0]);
       const b = (a.git?.branches || []).find((x) => !repo || x.repoUrl?.endsWith(repo)) || null;
-      if (b) { repo ??= b.repoUrl.replace(/^(https?:\/\/)?github\.com\//, '').replace(/\.git$/, ''); ref ??= b.branch; }
+      if (b) { repo ??= (b.repoUrl as string).replace(/^(https?:\/\/)?github\.com\//, '').replace(/\.git$/, ''); ref ??= b.branch; }
       label = `${a.label} (${a.agentId})`;
     }
     if (!repo || !ref) throw new UsageError('no pushed branch known for this agent yet (Run.git.branches is empty); pass --gh OWNER/REPO --ref BRANCH');
@@ -493,8 +494,8 @@ async function treeOrArch(mode) {
   return 0;
 }
 
-function view(a) {
-  const run = a.runs?.[a.runId] || {};
+function view(a: AgentRecord) {
+  const run = a.runs?.[a.runId as string] || {};
   return {
     agentId: a.agentId, label: a.label, batch: a.batch, phase: a.phase, status: a.status, runId: a.runId,
     finalized: a.finalized, missing: a.missing, url: a.url, pane: a.pane, result: run.result ?? null,
@@ -516,8 +517,8 @@ async function claimPidfile() {
     try {
       fs.writeFileSync(cfg.pidPath, String(process.pid), { flag: 'wx', mode: 0o600 });
       return true;
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
+    } catch (e: unknown) {
+      if (caught(e).code !== 'EEXIST') throw e;
       if (daemonInfo().running) return false;
       fs.rmSync(cfg.pidPath, { force: true }); // stale
     }
@@ -525,12 +526,12 @@ async function claimPidfile() {
   return false;
 }
 
-async function runDaemon({ once }) {
+async function runDaemon({ once }: { once: boolean }): Promise<number> {
   const logFile = o.log ? fs.createWriteStream(o.log, { flags: 'a', mode: 0o600 }) : null;
   const log = makeLogger({ stream: process.stdout, file: logFile, quiet: Boolean(o.quiet) });
   let ctx;
-  try { ctx = apiCtx(log); } catch (e) {
-    log.error(e.message); return EXIT.AUTH;
+  try { ctx = apiCtx(log); } catch (e: unknown) {
+    log.error(caught(e).message); return EXIT.AUTH;
   }
   ctx.useIndex = !o['no-index'];
   if (!once && !(await claimPidfile())) {
@@ -556,7 +557,7 @@ async function runDaemon({ once }) {
         if (polled) log.debug(`polled ${polled}, requests so far ${ctx.limiter.count}`);
       } catch (e) {
         if (e instanceof FatalAuth || (e instanceof ApiError && e.status === 401)) { log.error(`authentication failed: ${e.message}`); code = EXIT.AUTH; break; }
-        log.error(`tick failed: ${redact(e.stack || e.message)}`);
+        log.error(`tick failed: ${redact(caught(e).stack || caught(e).message)}`);
       }
       const reg = load(cfg);
       dash.write(render(reg, reg.meta.events || []));
@@ -588,8 +589,8 @@ if (!fn || o.help) { process.stdout.write(HELP); process.exit(cmd && !fn ? EXIT.
 try {
   const code = await fn();
   process.exitCode = code ?? 0;
-} catch (e) {
+} catch (e: unknown) {
   if (e instanceof UsageError) { process.stderr.write(`${e.message}\n`); process.exitCode = EXIT.USAGE; }
   else if (e instanceof AuthError || (e instanceof ApiError && e.status === 401)) { process.stderr.write(`${redact(e.message)}\n`); process.exitCode = EXIT.AUTH; }
-  else { process.stderr.write(`error: ${redact(e.message)}\n`); process.exitCode = 1; }
+  else { process.stderr.write(`error: ${redact(caught(e).message)}\n`); process.exitCode = 1; }
 }

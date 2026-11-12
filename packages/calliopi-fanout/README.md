@@ -35,7 +35,7 @@
 ### GitHub 리뷰 상태 갱신
 
 - Cursor 실행 상태와 GitHub PR 병합 상태는 별도입니다. `FINISHED`만으로 병합됨이라고 표시하지 않습니다.
-- PR이 있는 완료 작업은 별도 `bin/review-watch.mjs`가 기본 3분(+ 최대 15초 jitter)마다 확인합니다. Cursor 트래커가 실행 완료 후 종료돼도 GitHub 리뷰 확인은 계속됩니다.
+- PR이 있는 완료 작업은 별도 `bin/review-watch.ts`가 기본 3분(+ 최대 15초 jitter)마다 확인합니다. Cursor 트래커가 실행 완료 후 종료돼도 GitHub 리뷰 확인은 계속됩니다.
 - 상세를 열면 해당 PR만 재검증합니다. 최근 30초 내 요청은 재사용하고, 동시 요청은 합칩니다. 렌더·스크롤은 API를 호출하지 않습니다.
 - GitHub 인증 범위별 캐시·ETag·직렬 요청 lease·시간당 300회 예산을 `~/.cache/calliopi/github`에 공유합니다. 헤더의 잔여량/갱신 시각과 Retry-After를 존중하며 약 10%의 primary 잔여량을 다른 도구에 남깁니다. 제한 시 3분 주기보다 늦어질 수 있고 마지막 확인 시각/갱신 대기를 표시합니다.
 - 병합된 PR은 polling을 끝냅니다. 병합 없이 닫힌 PR은 재열림을 확인합니다. 여러 브랜치 중 일부만 병합됐으면 부분 병합으로 표시합니다. PR이 없는 브랜치의 직접 병합이나 PR 자동 발견은 아직 지원하지 않습니다.
@@ -51,18 +51,18 @@ Pi 패키지 manifest에 확장이 등록돼 있으며, CLI와 rex 레이어도 
 
 ```text
 packages/calliopi-fanout/
-├── bin/tracker.mjs        CLI 진입점 (launch·watch·add·follow·stream·report·…)
+├── bin/tracker.ts        CLI 진입점 (launch·watch·add·follow·stream·report·…)
 ├── lib/
-│   ├── auth.mjs           apiKey → CURSOR_API_KEY → ~/.cursor/sdk/auth.json(만료 체크)
-│   ├── api.mjs            v1 REST 클라이언트 + 토큰버킷 + 429 Retry-After 전역 정지
-│   ├── registry.mjs       source of truth (0600 JSON, O_EXCL 락, tmp+rename 원자 쓰기)
-│   ├── launch.mjs         spec → N× POST /v1/agents (client agentId로 재진입 안전)
-│   ├── poller.mjs         상태별 차등 폴링, listRuns 배치, 종료 시 result/git/usage 수집
-│   ├── dashboard.mjs      cursor-cloud-dashboard.txt 롤링 프레임
-│   ├── follow.mjs         에이전트별 뷰 (레지스트리만 읽음, 종료 코드 = raw status)
-│   ├── stream.mjs         SSE 실시간 (Last-Event-ID 재연결, 410 → GET Run 폴링)
-│   ├── report.mjs         aggregator (summary·PR·토큰 합산)
-│   └── pijournal.mjs      Pi 라이프사이클 저널에서 ID만 발견 (선택)
+│   ├── auth.ts           apiKey → CURSOR_API_KEY → ~/.cursor/sdk/auth.json(만료 체크)
+│   ├── api.ts            v1 REST 클라이언트 + 토큰버킷 + 429 Retry-After 전역 정지
+│   ├── registry.ts       source of truth (0600 JSON, O_EXCL 락, tmp+rename 원자 쓰기)
+│   ├── launch.ts         spec → N× POST /v1/agents (client agentId로 재진입 안전)
+│   ├── poller.ts         상태별 차등 폴링, listRuns 배치, 종료 시 result/git/usage 수집
+│   ├── dashboard.ts      cursor-cloud-dashboard.txt 롤링 프레임
+│   ├── follow.ts         에이전트별 뷰 (레지스트리만 읽음, 종료 코드 = raw status)
+│   ├── stream.ts         SSE 실시간 (Last-Event-ID 재연결, 410 → GET Run 폴링)
+│   ├── report.ts         aggregator (summary·PR·토큰 합산)
+│   └── pijournal.ts      Pi 라이프사이클 저널에서 ID만 발견 (선택)
 ├── rex/
 │   ├── fanout.sh          rex CLI + Server API 레이어 (launch·up·add·watch·down)
 │   ├── fanout.lua         rex do: detach 데몬 + pane 그리드 + child_exited 반응
@@ -77,8 +77,8 @@ packages/calliopi-fanout/
 
 ```bash
 npm i -D @cursor/sdk                       # 선택 의존성: login 경로에서만 lazy import
-node $F/bin/tracker.mjs login              # Cursor.auth.status 확인 → 없거나 만료면 await Cursor.auth.login() (90일 키, 0600 저장)
-node $F/bin/tracker.mjs whoami             # GET /v1/me — 과금 없는 인증 확인
+node $F/bin/tracker.ts login              # Cursor.auth.status 확인 → 없거나 만료면 await Cursor.auth.login() (90일 키, 0600 저장)
+node $F/bin/tracker.ts whoami             # GET /v1/me — 과금 없는 인증 확인
 ```
 
 `launch --yes`도 TTY에서는 같은 login을 먼저 await합니다. 데몬·pane·rex 액션처럼 비대화형인 곳에서는 브라우저를 띄우지 않고 exit 4로 끝납니다. 로그인 키는 `auth.json`에 저장되므로, env를 물려받지 못하는 pane과 rex 서버 액션에서도 그대로 동작합니다. 만료는 SDK의 `apiKeyExpiresAtMs` 필드로 확인합니다.
@@ -104,11 +104,11 @@ calliopi 루트 manifest에 `./packages/calliopi-fanout/extensions`가 등록되
 이 계정에서는 사용자 API 키로 하는 REST 생성이 막혀 있어서(아래 한계 참조) Cursor Automations를 사용합니다.
 
 ```bash
-node bin/tracker.mjs automation create --repo https://github.com/OWNER/REPO --branch main --issue-key
+node bin/tracker.ts automation create --repo https://github.com/OWNER/REPO --branch main --issue-key
 #   공식 CRUD(AutomationsService, Cursor Terraform provider와 같은 경로)로 웹훅 트리거 automation을 만듭니다
 #   --issue-key: 웹훅 키 발급만 비공식 RPC를 1회 사용합니다(실패하면 UI에서 발급해 webhook.json에 저장)
-node bin/tracker.mjs launch --spec spec.json          # webhook.json이 있으면 자동으로 --via automation
-node bin/tracker.mjs launch --spec spec.json --yes
+node bin/tracker.ts launch --spec spec.json          # webhook.json이 있으면 자동으로 --via automation
+node bin/tracker.ts launch --spec spec.json --yes
 ```
 
 - 항목마다 문서화된 웹훅 POST를 1회 보냅니다(`Authorization: Bearer <sender key>`, `{fanout_key, label, task}`). 응답 `{success, backgroundComposerId}`의 에이전트 ID를 레지스트리에 바로 기록합니다.
@@ -135,12 +135,12 @@ $F/rex/fanout.sh launch spec.json --yes
 # 2) watch — 트래커 pane만 띄움 (현재 pane 아래, 30%, 포커스 유지)
 $F/rex/fanout.sh watch
 #   내부적으로:
-#   rex split --split=below --ratio 30 --focus=false -- node tracker.mjs --dir … watch   (auth.json 로그인일 때)
+#   rex split --split=below --ratio 30 --focus=false -- node tracker.ts --dir … watch   (auth.json 로그인일 때)
 #   또는 Lua detach 데몬 + tail -F tracker.log                                           (env 키일 때, 아래 참고)
 
 # 3) add — 이미 존재하는 에이전트(웹·Pi·다른 머신에서 만든 것)를 추적하고 pane을 추가
 $F/rex/fanout.sh add bc-xxxxxxxx-… [run-…] [label]
-node $F/bin/tracker.mjs import-pi --dry-run         # Pi가 띄운 에이전트 발견 (ID만)
+node $F/bin/tracker.ts import-pi --dry-run         # Pi가 띄운 에이전트 발견 (ID만)
 
 # 상태 / 리포트 / 정리
 $F/rex/fanout.sh status                             # 네트워크 호출 없음
@@ -151,7 +151,7 @@ $F/rex/fanout.sh down                               # 우리 pane만 닫고 데�
 Lua만으로 실행할 수도 있습니다. detach 데몬, pane, 반응기를 한 스크립트가 처리합니다.
 
 ```bash
-rex do $F/rex/fanout.lua tracker=$F/bin/tracker.mjs dir=$CURSOR_FANOUT_DIR node=$(command -v node) cwd=$PWD \
+rex do $F/rex/fanout.lua tracker=$F/bin/tracker.ts dir=$CURSOR_FANOUT_DIR node=$(command -v node) cwd=$PWD \
        stop_when_done=true            # 모두 종료되면 리포트 pane을 열고 rex.stop(0)
 ```
 
@@ -172,10 +172,10 @@ rex do fanout_status | rex do fanout_report | rex do fanout_up
 후속 지시와 수명주기 명령은 전부 `--yes`가 있어야 실행됩니다.
 
 ```bash
-node $F/bin/tracker.mjs followup readme --prompt "테스트도 추가" --yes          # 새 run → 추적 재개
-node $F/bin/tracker.mjs followup readme --prompt "범위 줄여" --steer --yes     # 실행 중 턴에 steer
-node $F/bin/tracker.mjs cancel readme --yes ; node $F/bin/tracker.mjs archive readme --yes
-node $F/bin/tracker.mjs stream readme                                          # SSE 실시간 (opt-in)
+node $F/bin/tracker.ts followup readme --prompt "테스트도 추가" --yes          # 새 run → 추적 재개
+node $F/bin/tracker.ts followup readme --prompt "범위 줄여" --steer --yes     # 실행 중 턴에 steer
+node $F/bin/tracker.ts cancel readme --yes ; node $F/bin/tracker.ts archive readme --yes
+node $F/bin/tracker.ts stream readme                                          # SSE 실시간 (opt-in)
 ```
 
 ### spec 형식
@@ -295,7 +295,7 @@ Pi 저널(`~/.pi/agent/sessions/**/.cursor-cloud-lifecycle-*.journal`)은 `impor
 
 ## 검증한 것
 
-- `npm test`(12개 통과, automation 웹훅 경로 포함). 목 Cursor API(`test/mock-cursor.mjs`)로 아래 항목을 확인했습니다.
+- `npm test`(12개 통과, automation 웹훅 경로 포함). 목 Cursor API(`test/mock-cursor.ts`)로 아래 항목을 확인했습니다.
   - `--yes` 게이트
   - 생성 후 연결이 끊겨도 `409 agent_id_conflict` 경로로 복구하며 중복 생성이 없음
   - 부분 실패(400) 후 재실행 시 아무것도 다시 만들지 않음

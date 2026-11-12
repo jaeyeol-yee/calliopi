@@ -1,15 +1,17 @@
 // Optional real-time view of ONE run via SSE. Opt-in because each stream is a long-lived
 // request per run. Reconnects with Last-Event-ID; on 410 stream_expired /
 // stream_unavailable falls back to GET Run polling (slow, budgeted).
-import { update, load, findAgent, pushHistory } from './registry.mjs';
-import { ApiError } from './api.mjs';
-import { EXIT, isTerminal, nowIso, short, sleep } from './util.mjs';
+import { update, load, findAgent, pushHistory } from './registry.ts';
+import { ApiError } from './api.ts';
+import { EXIT, caught, isTerminal, nowIso, short, sleep } from './util.ts';
+import type { FanoutConfig, GitSnapshot, Logger } from './types.ts';
+import type { CursorApi } from './api.ts';
 
-export async function* parseSSE(body, signal) {
+export async function* parseSSE(body: ReadableStream<Uint8Array> | null, signal?: AbortSignal): AsyncGenerator<{ id: string | null; event: string; data: string }> {
   const decoder = new TextDecoder();
   let buf = '';
-  let ev = { id: null, event: 'message', data: [] };
-  for await (const chunk of body) {
+  let ev: { id: string | null; event: string; data: string[] } = { id: null, event: 'message', data: [] };
+  for await (const chunk of body as ReadableStream<Uint8Array>) {
     if (signal?.aborted) return;
     buf += decoder.decode(chunk, { stream: true });
     let i;
@@ -32,7 +34,17 @@ export async function* parseSSE(body, signal) {
   }
 }
 
-async function recordResult(cfg, agentId, runId, data) {
+interface SseResult {
+  status?: string;
+  text?: string | null;
+  durationMs?: number | null;
+  git?: GitSnapshot | null;
+  name?: string;
+  code?: string;
+  message?: string;
+}
+
+async function recordResult(cfg: FanoutConfig, agentId: string, runId: string, data: SseResult): Promise<void> {
   await update(cfg, (reg) => {
     const a = reg.agents[agentId];
     if (!a) return;
@@ -40,8 +52,8 @@ async function recordResult(cfg, agentId, runId, data) {
     a.runs[runId] = { ...prev, status: data.status, result: data.text ?? prev.result ?? null, durationMs: data.durationMs ?? prev.durationMs ?? null };
     if (data.git) a.git = data.git;
     if (a.runId === runId && a.status !== data.status) {
-      pushHistory(a, { runId, from: a.status, to: data.status, via: 'sse' });
-      a.status = data.status;
+      pushHistory(a, { runId, from: a.status, to: data.status as string | null, via: 'sse' });
+      a.status = data.status as string;
       a.statusChangedAt = nowIso();
     }
     // Leave `finalized` to the tracker, which also collects usage; poke it to poll soon.
@@ -49,21 +61,30 @@ async function recordResult(cfg, agentId, runId, data) {
   });
 }
 
-export async function stream(ctx, needle, { out = process.stdout, showThinking = false, maxReconnects = 5 } = {}) {
+export interface StreamCtx {
+  cfg: FanoutConfig;
+  api: CursorApi;
+  log: Logger;
+}
+
+export async function stream(ctx: StreamCtx, needle: string, { out = process.stdout, showThinking = false, maxReconnects = 5 }: {
+  out?: NodeJS.WritableStream; showThinking?: boolean; maxReconnects?: number;
+} = {}): Promise<number> {
   const { cfg, api, log } = ctx;
   const a = findAgent(load(cfg), needle);
   if (!a?.runId) throw new Error(`no tracked run for ${needle}`);
-  const { agentId, runId } = a;
-  let lastEventId = null;
+  const agentId = a.agentId as string;
+  const { runId } = a;
+  let lastEventId: string | null = null;
   let reconnects = 0;
   const ac = new AbortController();
   process.once('SIGINT', () => ac.abort());
 
   for (;;) {
-    let res;
+    let res: Response;
     try {
       res = await api.streamRun(agentId, runId, { lastEventId, signal: ac.signal });
-    } catch (e) {
+    } catch (e: unknown) {
       if (e instanceof ApiError && (e.status === 410 || e.code === 'stream_expired' || e.code === 'stream_unavailable')) {
         out.write(`\n[stream ${e.code || e.status}] falling back to GET run polling\n`);
         return pollFallback(ctx, agentId, runId, out);
@@ -79,13 +100,13 @@ export async function stream(ctx, needle, { out = process.stdout, showThinking =
     const hb = new AbortController();
     let timer = setTimeout(() => hb.abort(), 90_000);
     const sig = AbortSignal.any([ac.signal, hb.signal]);
-    let terminal = null;
+    let terminal: string | null = null;
     try {
       for await (const ev of parseSSE(res.body, sig)) {
         clearTimeout(timer); timer = setTimeout(() => hb.abort(), 90_000);
         if (ev.id) lastEventId = ev.id;
-        let data = {};
-        try { data = ev.data ? JSON.parse(ev.data) : {}; } catch { /* keep raw */ }
+        let data: SseResult = {};
+        try { data = ev.data ? JSON.parse(ev.data) as SseResult : {}; } catch { /* keep raw */ }
         switch (ev.event) {
           case 'status': out.write(`\n[status] ${data.status}\n`); break;
           case 'assistant': out.write(data.text ?? ''); break;
@@ -93,7 +114,7 @@ export async function stream(ctx, needle, { out = process.stdout, showThinking =
           case 'tool_call': if (data.status !== 'running') out.write(`\n[tool] ${data.name} ${data.status}\n`); break;
           case 'error': out.write(`\n[error] ${data.code}: ${data.message}\n`); break;
           case 'result':
-            terminal = data.status;
+            terminal = data.status ?? null;
             out.write(`\n[result] ${data.status}\n`);
             await recordResult(cfg, agentId, runId, data);
             break;
@@ -101,9 +122,9 @@ export async function stream(ctx, needle, { out = process.stdout, showThinking =
           default: break; // heartbeat, interaction_update
         }
       }
-    } catch (e) {
+    } catch (e: unknown) {
       if (ac.signal.aborted) return EXIT.USAGE;
-      log.debug(`stream interrupted: ${e.message}`);
+      log.debug(`stream interrupted: ${caught(e).message}`);
     } finally { clearTimeout(timer); }
     if (terminal) return EXIT[terminal] ?? 0;
     if (++reconnects > maxReconnects) {
@@ -114,9 +135,9 @@ export async function stream(ctx, needle, { out = process.stdout, showThinking =
   }
 }
 
-async function pollFallback(ctx, agentId, runId, out) {
+async function pollFallback(ctx: StreamCtx, agentId: string, runId: string, out: NodeJS.WritableStream): Promise<number> {
   const { cfg, api } = ctx;
-  let last = null;
+  let last: string | null = null;
   for (;;) {
     const run = await api.getRun(agentId, runId);
     if (run.status !== last) { out.write(`[poll] ${short(runId)} ${run.status}\n`); last = run.status; }

@@ -6,24 +6,24 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, highlightCode } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi, matchesKey } from "@earendil-works/pi-tui";
-import { owner, attach, detach, enqueue, drain } from "../lib/sidecar.mjs";
-import { createReviewService, syncReviews, prTarget } from "../lib/github-review.mjs";
-import { taskState, freshness, visibleByDefault } from "../lib/floating-model.mjs";
-import { stampArchive, archiveTime } from "../lib/archive.mjs";
+import { owner, attach, detach, enqueue, drain } from "../lib/sidecar.ts";
+import { createReviewService, syncReviews, prTarget } from "../lib/github-review.ts";
+import { taskState, freshness, visibleByDefault } from "../lib/floating-model.ts";
+import { stampArchive, archiveTime } from "../lib/archive.ts";
 import { floatingList } from "./components/floating.ts";
 import { metadataTable, type MetadataValue } from "./components/metadata.ts";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "../lib/config.mjs";
-import { load, update as updateRegistry } from "../lib/registry.mjs";
-import { icon } from "../lib/dashboard.mjs";
-import { aggregate, toMarkdown } from "../lib/report.mjs";
-import { isTerminal, short, cleanResult } from "../lib/util.mjs";
+import { loadConfig } from "../lib/config.ts";
+import { load, update as updateRegistry } from "../lib/registry.ts";
+import { icon } from "../lib/dashboard.ts";
+import { aggregate, toMarkdown } from "../lib/report.ts";
+import { isTerminal, short, cleanResult } from "../lib/util.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const TRACKER = path.join(HERE, "..", "bin", "tracker.mjs");
+const TRACKER = path.join(HERE, "..", "bin", "tracker.ts");
 const FANOUT_SH = path.join(HERE, "..", "rex", "fanout.sh");
 const NODE = process.env.CALLIOPI_NODE || "node";
 
@@ -84,7 +84,7 @@ export default function (pi: ExtensionAPI) {
 		lastReviewStart = Date.now();
 		const file = path.join(stateDir(ctx), "review.pid");
 		try { const pid = Number(fs.readFileSync(file, "utf8")); if (pid) { process.kill(pid, 0); return; } } catch { /* stale */ }
-		const child = spawn(NODE, [path.join(HERE, "..", "bin", "review-watch.mjs"), stateDir(ctx)], { cwd: ctx.cwd, detached: true, stdio: "ignore" });
+		const child = spawn(NODE, [path.join(HERE, "..", "bin", "review-watch.ts"), stateDir(ctx)], { cwd: ctx.cwd, detached: true, stdio: "ignore" });
 		child.on("error", () => {}); child.unref();
 	}
 	const sideDir = (ctx: ExtensionContext) => path.join(stateDir(ctx), "sidecar");
@@ -180,7 +180,7 @@ export default function (pi: ExtensionAPI) {
 						let body: string[];
 						let scrollTop = 0, totalLines = 0;
 						if (detail && (a || review !== null)) {
-							const text = review ?? (cleanResult(a.runs?.[a.runId]?.result) || "아직 결과가 없습니다.");
+							const text = review ?? (cleanResult(a.runs?.[a.runId as string]?.result) || "아직 결과가 없습니다.");
 							const diff = review !== null;
 							if (!contentCache || contentCache.text !== text || contentCache.width !== contentWidth || contentCache.theme !== ctx.ui.theme || contentCache.diff !== diff) {
 								const lines = diff ? text.split("\n").flatMap(s => wrapTextWithAnsi(s, contentWidth)).map(s => theme.fg(s.startsWith("+") ? "success" : s.startsWith("-") ? "error" : s.startsWith("@@") ? "accent" : "text", s)) : highlightCode(text, "markdown").flatMap(s => wrapTextWithAnsi(s, contentWidth));
@@ -197,8 +197,8 @@ export default function (pi: ExtensionAPI) {
 								["에이전트", { text: a.agentId || a.key || "", url: agentUrl }], ["실행", a.runId || ""], ["배치", a.batch || ""],
 								["저장소", branches.flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.repoUrl || "—", url: repoLink(b) }])],
 								["브랜치", branches.flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.branch || "—", url: repoLink(b) && b.branch ? `${repoLink(b)}/tree/${encodeURIComponent(b.branch)}` : undefined }])],
-								["PR", branches.filter((b: any) => b.prUrl).flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.prUrl, url: b.prUrl }, ` · ${a.reviews?.[b.prUrl]?.state || "미확인"}${a.reviews?.[b.prUrl]?.lastError ? ` · ${a.reviews[b.prUrl].lastError}` : ""}`])],
-								["갱신", `${reviewing.has(a.agentId || a.key) ? "갱신 중 · " : ""}${freshness(a)}`],
+								["PR", branches.filter((b) => b.prUrl).flatMap((b, i) => [...(i ? ["\n"] : []), { text: b.prUrl || "", url: b.prUrl }, ` · ${a.reviews?.[b.prUrl || ""]?.state || "미확인"}${a.reviews?.[b.prUrl || ""]?.lastError ? ` · ${a.reviews?.[b.prUrl || ""]?.lastError}` : ""}`])],
+								["갱신", `${reviewing.has((a.agentId || a.key) as string) ? "갱신 중 · " : ""}${freshness(a)}`],
 								["보관 시각", a.archivedRunId === a.runId && archiveTime(a.archivedAt) != null ? new Date(archiveTime(a.archivedAt)!).toLocaleString() : "미기록"],
 							];
 							const lines = diff ? contentCache.lines : [...(showMetadata ? [...metadataTable(meta, contentWidth, theme), ""] : []), theme.fg("accent", theme.bold("결과")), "", ...contentCache.lines];
@@ -244,8 +244,8 @@ export default function (pi: ExtensionAPI) {
 						else if (data === "u") { void revalidate(ctx, agents[selected]); return; }
 						else if (data === "a" && agents[selected] && (taskState(agents[selected]).tab === 2 || (agents[selected].status === "FINISHED" && !(agents[selected].git?.branches || []).some((b: any) => b.prUrl)))) {
 							const a = agents[selected];
-							void updateRegistry(cfgFor(ctx), (reg: any) => {
-								const current = reg.agents[a.agentId || a.key];
+							void updateRegistry(cfgFor(ctx), (reg) => {
+								const current = reg.agents[(a.agentId || a.key) as string];
 								if (current?.runId !== a.runId) return;
 								if (current.status === "FINISHED" && !(current.git?.branches || []).some((b: any) => b.prUrl)) current.reviewAckRunId = current.runId;
 								stampArchive(current);
@@ -254,8 +254,8 @@ export default function (pi: ExtensionAPI) {
 						}
 						else if (data === "r") { void loadDiff(localReview, true); return; }
 						else if (data === "d" && !localReview) { void loadDiff(false); return; }
-						else if (matchesKey(data, "pageup")) { offset = Math.max(0, offset - 10); }
-						else if (matchesKey(data, "pagedown")) { offset += 10; }
+						else if (matchesKey(data, "pageup" as Parameters<typeof matchesKey>[1])) { offset = Math.max(0, offset - 10); }
+						else if (matchesKey(data, "pagedown" as Parameters<typeof matchesKey>[1])) { offset += 10; }
 						else if (matchesKey(data, "home")) { offset = 0; selected = 0; }
 						else if (matchesKey(data, "end")) { if (detail) offset = Number.MAX_SAFE_INTEGER; else selected = agents.length - 1; }
 						else if (keys.matches(data, "tui.select.confirm")) { detail = true; offset = 0; void revalidate(ctx, agents[selected]); }
@@ -316,16 +316,16 @@ export default function (pi: ExtensionAPI) {
 
 		// Notify on terminal transitions (local file only, zero API calls).
 		for (const a of agents) {
-			const id = a.agentId || a.key;
+			const id = (a.agentId || a.key) as string;
 			const prev = lastStatus.get(id);
-			const now = a.missing ? "MISSING" : a.status || a.phase;
+			const now = (a.missing ? "MISSING" : a.status || a.phase) as string;
 			if (prev && prev !== now && isTerminal(now) && a.finalized) {
 				ctx.ui.notify(`${icon(now)} ${a.label}: ${now}${a.git?.branches?.[0]?.prUrl ? ` · ${a.git.branches[0].prUrl}` : ""}`, now === "FINISHED" ? "info" : "warning");
 			}
 			lastStatus.set(id, now);
 		}
 		// When a whole batch is terminal, queue its report for the model's next turn (does not interrupt).
-		for (const batch of new Set(agents.map((a) => a.batch).filter(Boolean))) {
+		for (const batch of new Set(agents.map((a) => a.batch).filter((b): b is string => Boolean(b)))) {
 			const agg = aggregate(cfg, { batch });
 			if (agg.allDone && !notifiedBatches.has(batch)) {
 				notifiedBatches.add(batch);
@@ -543,7 +543,7 @@ export default function (pi: ExtensionAPI) {
 						const target = owner(sideDir(ctx));
 						if (!target?.block || target.rexSession !== process.env.REX_SESSION) return say("같은 Rex 세션의 담당 pane이 없습니다. 담당 세션에서 /calliopi-fanout attach 하세요.", "warning");
 						if (target.block === process.env.REX_BLOCK) return inspect(ctx);
-						const r = await pi.exec("rex", ["move", "-s", target.rexSession, target.block, "right", process.env.REX_BLOCK!, "--ratio", "45"], { timeout: 10_000 });
+						const r = await pi.exec("rex", ["move", "-s", target.rexSession as string, target.block, "right", process.env.REX_BLOCK!, "--ratio", "45"], { timeout: 10_000 });
 						if (r.code === 0) enqueue(sideDir(ctx), { action: "inspect" });
 						return say(r.code === 0 ? "오른쪽 현황에서 작업 선택 → d diff / r 외부 리뷰 (담당 세션이 idle일 때 열립니다)." : r.stderr, r.code === 0 ? "info" : "error");
 					}

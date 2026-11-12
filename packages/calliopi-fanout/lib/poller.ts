@@ -1,26 +1,36 @@
 // One polling pass. Network calls happen outside the registry lock; results are applied
 // as per-agent patch functions inside a short locked update so concurrent writers
 // (launcher, `add`, pane mapping) are never clobbered.
-import { load, update, trackable, pushHistory } from './registry.mjs';
-import { ApiError } from './api.mjs';
-import { KNOWN, isTerminal, jitter, nowIso, short } from './util.mjs';
+import { load, update, trackable, pushHistory } from './registry.ts';
+import { ApiError, type CursorApi, type Limiter } from './api.ts';
+import { KNOWN, caught, isTerminal, jitter, nowIso, short } from './util.ts';
+import type { AgentRecord, ApiRun, FanoutConfig, GitBranch, Logger, UsageStats } from './types.ts';
 
 export class FatalAuth extends Error {}
 
-const branchKey = (b) => `${b.repoUrl}|${b.branch || ''}|${b.prUrl || ''}`;
+const branchKey = (b: GitBranch): string => `${b.repoUrl}|${b.branch || ''}|${b.prUrl || ''}`;
 
-function nextInterval(cfg, status, unchanged) {
+function nextInterval(cfg: FanoutConfig, status: string, unchanged: number): number {
   const base = cfg.intervals[status] ?? cfg.intervals.UNKNOWN;
   return Math.min(Math.round(base * 1.5 ** Math.min(unchanged, 4)), cfg.intervals.MAX);
 }
 
-async function fetchIndex(ctx, wanted) {
+export interface TickCtx {
+  cfg: FanoutConfig;
+  api: CursorApi;
+  limiter: Limiter;
+  log: Logger;
+  usageUnavailable?: boolean;
+  useIndex?: boolean;
+}
+
+async function fetchIndex(ctx: TickCtx, wanted: Set<string>): Promise<Map<string, { id: string; updatedAt?: string; latestRunId?: string; url?: string; name?: string; status?: string }>> {
   const { api, limiter } = ctx;
-  const map = new Map();
-  let cursor;
+  const map = new Map<string, { id: string; updatedAt?: string; latestRunId?: string; url?: string; name?: string; status?: string }>();
+  let cursor: string | null | undefined;
   for (let page = 0; page < 2; page += 1) {
     if (page > 0 && !limiter.tryTake()) break;
-    const res = await api.request('GET', '/v1/agents', { query: { limit: 100, cursor }, preTaken: true });
+    const res = await api.request<{ items?: { id: string; updatedAt?: string; latestRunId?: string; url?: string; name?: string; status?: string }[]; nextCursor?: string | null }>('GET', '/v1/agents', { query: { limit: 100, cursor }, preTaken: true });
     for (const it of res?.items || []) map.set(it.id, it);
     cursor = res?.nextCursor;
     if (!cursor || [...wanted].every((id) => map.has(id))) break;
@@ -28,29 +38,29 @@ async function fetchIndex(ctx, wanted) {
   return map;
 }
 
-export async function tick(ctx) {
+export async function tick(ctx: TickCtx): Promise<{ events: { agentId: string; label: string | null; runId: string | null; from: string | null; to: string }[]; polled: number }> {
   const { cfg, api, limiter, log } = ctx;
   const reg = load(cfg);
   ctx.usageUnavailable ||= Boolean(reg.meta.usageUnavailable);
   const now = Date.now();
   const due = Object.values(reg.agents)
-    .filter((a) => trackable(a) && now >= (a.poll?.nextAt || 0))
+    .filter((a): a is AgentRecord & { agentId: string } => Boolean(trackable(a) && now >= (a.poll?.nextAt || 0)))
     .sort((a, b) => (a.poll?.nextAt || 0) - (b.poll?.nextAt || 0));
   if (!due.length) return { events: [], polled: 0 };
 
-  const patches = new Map();
-  const events = [];
-  const patch = (id, fn) => patches.set(id, [...(patches.get(id) || []), fn]);
+  const patches = new Map<string, ((r: AgentRecord) => void)[]>();
+  const events: { agentId: string; label: string | null; runId: string | null; from: string | null; to: string }[] = [];
+  const patch = (id: string, fn: (r: AgentRecord) => void) => patches.set(id, [...(patches.get(id) || []), fn]);
   let polled = 0;
 
   // 1) Cheap batch index: one GET /v1/agents returns updatedAt + latestRunId for up to 100 agents.
   //    Used only to *skip* agents that look unchanged, bounded by a staleness guard, because
   //    whether AgentSummary.updatedAt moves on every run status change is not documented.
-  let index = null;
+  let index: Awaited<ReturnType<typeof fetchIndex>> | null = null;
   if (ctx.useIndex !== false && due.length >= cfg.indexThreshold && limiter.tryTake()) {
-    try { index = await fetchIndex(ctx, new Set(due.map((a) => a.agentId))); } catch (e) {
+    try { index = await fetchIndex(ctx, new Set(due.map((a) => a.agentId))); } catch (e: unknown) {
       if (e instanceof ApiError && e.status === 401) throw new FatalAuth(e.message);
-      log.warn(`agent index unavailable: ${e.message}`);
+      log.warn(`agent index unavailable: ${caught(e).message}`);
     }
   }
 
@@ -79,9 +89,9 @@ export async function tick(ctx) {
       }
       const newest = items[0];
       // Tracked run fell off the first page (many follow-ups): one targeted GET, rare.
-      let older = null;
+      let older: ApiRun | null = null;
       if (a.runId && !items.some((r) => r.id === a.runId) && !a.runs?.[a.runId]?.finalized) {
-        try { older = await api.getRun(id, a.runId); } catch (e) { log.warn(`getRun ${short(a.runId)}: ${e.message}`); }
+        try { older = await api.getRun(id, a.runId); } catch (e: unknown) { log.warn(`getRun ${short(a.runId)}: ${caught(e).message}`); }
       }
       if (!KNOWN.has(newest.status)) log.warn(`${short(id)}: unknown status ${newest.status} (treated as active)`);
 
@@ -89,17 +99,17 @@ export async function tick(ctx) {
       const unchanged = changed ? 0 : (a.poll?.unchanged || 0) + 1;
       const interval = nextInterval(cfg, newest.status, unchanged);
 
-      let usage = null;
-      let usageNote = null;
-      let full = null;
+      let usage: UsageStats | null = null;
+      let usageNote: string | null = null;
+      let full: ApiRun | null = null;
       const needsFinal = isTerminal(newest.status) && !a.runs?.[newest.id]?.finalized;
       if (needsFinal) {
         // Observed on the real API: listRuns items omit `result`; GET run carries it.
         // One targeted getRun per terminal transition — not per poll.
         if (!newest.result) {
-          try { full = await api.getRun(id, newest.id); } catch (e) {
+          try { full = await api.getRun(id, newest.id); } catch (e: unknown) {
             if (e instanceof ApiError && e.status === 401) throw new FatalAuth(e.message);
-            log.warn(`${short(id)}: getRun for result failed (${e.message}); will retry`);
+            log.warn(`${short(id)}: getRun for result failed (${caught(e).message}); will retry`);
             patch(id, (r) => { r.poll.nextAt = now + jitter(cfg.intervals.CREATING); });
             continue; // not finalized: next tick tries again
           }
@@ -109,11 +119,11 @@ export async function tick(ctx) {
           try {
             const u = await api.usage(id, newest.id);
             usage = u?.runs?.find((r) => r.id === newest.id)?.usage ?? u?.totalUsage ?? null;
-          } catch (e) {
+          } catch (e: unknown) {
             if (e instanceof ApiError && e.status === 403) {
               ctx.usageUnavailable = true; usageNote = e.code || 'forbidden';
               log.warn(`usage endpoint unavailable (${e.code}); tokens will not be collected`);
-            } else usageNote = `error: ${e.message}`;
+            } else usageNote = `error: ${caught(e).message}`;
           }
         }
       }
@@ -174,19 +184,20 @@ export async function tick(ctx) {
         if (idx?.name && !r.name) r.name = idx.name;
         if (idx?.status === 'ARCHIVED') r.archived = true;
       });
-    } catch (e) {
+    } catch (e: unknown) {
       if (e instanceof ApiError && e.status === 401) throw new FatalAuth(e.message);
       if (e instanceof ApiError && e.status === 404) {
         events.push({ agentId: id, label: a.label, runId: a.runId, from: a.status, to: 'MISSING' });
         patch(id, (r) => { r.missing = true; r.lastError = { at: nowIso(), status: 404, code: e.code, message: e.message }; });
         continue;
       }
+      const err = caught(e);
       const backoff = e instanceof ApiError && e.status === 403
         ? cfg.intervals.MAX
         : Math.min(Math.max(a.poll?.interval || 15_000, 15_000) * 2, cfg.intervals.MAX);
-      log.warn(`${short(id)}: ${e.message}; retry in ${Math.round(backoff / 1000)}s`);
+      log.warn(`${short(id)}: ${err.message}; retry in ${Math.round(backoff / 1000)}s`);
       patch(id, (r) => {
-        r.lastError = { at: nowIso(), status: e.status ?? null, code: e.code ?? null, message: e.message };
+        r.lastError = { at: nowIso(), status: err.status ?? null, code: err.code ?? null, message: err.message };
         r.poll = { ...r.poll, interval: backoff, nextAt: now + jitter(backoff) };
       });
     }

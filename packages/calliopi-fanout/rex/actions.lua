@@ -17,7 +17,7 @@ local PKG = HERE:match("^(.*)/[^/]*$") or ".."
 local O = rawget(_G, "CALLIOPI_FANOUT") or {}
 local NODE = O.node or "node"
 local REX = O.rex or "rex"
-local TRACKER = PKG .. "/bin/tracker.mjs"
+local TRACKER = PKG .. "/bin/tracker.ts"
 local LUA = HERE .. "/fanout.lua"
 
 local function block_cwd(ctx)
