@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fzfSelect, shellQuote, cleanDisplay, fzfEnv, nodePreview, parseSelectResult, type FzfSelection } from '@calliopi/core/fzf';
+import { shellQuote, cleanDisplay, fzfEnv, nodePreview, parseSelectResult } from '@calliopi/core/fzf';
+import { runWorkflow, type WorkflowStep } from '@calliopi/core/workflow';
 import { keyName } from '@calliopi/ui/terminal-input';
 import type { RunProgram } from '@calliopi/core/types';
 import type { TerminalOverlay } from '@calliopi/ui/terminal-overlay';
@@ -268,35 +269,33 @@ export interface BrowseLogOptions {
 }
 
 // commit list → changed files → file diff. Esc goes one step back, q leaves the pager.
-export async function browseLog({ root, directory, run, setFooter = () => {}, cancelled = () => false, commits = listCommits(root) }: BrowseLogOptions): Promise<{ empty: true } | null> {
+export async function browseLog({ root, directory, run, setFooter, cancelled, commits = listCommits(root) }: BrowseLogOptions): Promise<{ empty: true } | null> {
   if (!commits.length) return { empty: true };
   const commitState = path.join(directory, 'commits.json');
   writeState(commitState, { kind: 'commits', hashes: commits.map(c => c.hash) });
-  let commitView: { query: string; position: number } = { query: '', position: 0 };
-  for (;;) {
-    setFooter(' Enter: 변경 파일 · Esc: 닫기 ');
-    const commit: FzfSelection | null = await fzfSelect({ run, directory, name: 'commits', items: commits.map(c => c.display), prompt: 'Commit > ',
-      preview: previewCommand(commitState), ...commitView });
-    if (!commit || cancelled()) return null;
-    commitView = { query: commit.query, position: commit.index + 1 };
-    const { hash } = commits[commit.index]!;
-    const base = commitBase(root, hash);
-    const files = listFiles(root, base, hash);
-    if (!files.length) continue; // e.g. empty commit: stay on the commit list
+  const filesStep = (hash: string, base: string, files: GitFileRecord[]): WorkflowStep<never> => {
     const fileState = path.join(directory, 'files.json');
     writeState(fileState, { kind: 'files', base, hash, paths: files.map(f => f.paths) });
-    let fileView: { query: string; position: number } = { query: '', position: 0 };
-    for (;;) {
-      setFooter(' Enter: diff 보기 (q: 돌아가기) · Esc: 커밋 목록 ');
-      const file = await fzfSelect({ run, directory, name: 'files', items: files.map(f => f.display), prompt: `${hash.slice(0, 7)} > `,
-        preview: previewCommand(fileState), ...fileView });
-      if (cancelled()) return null;
-      if (!file) break;
-      fileView = { query: file.query, position: file.index + 1 };
-      setFooter(' q: 파일 목록 ');
-      const { args, env } = pagerArgs(base, hash, files[file.index]!.paths);
-      await run('git', args, env);
-      if (cancelled()) return null;
-    }
-  }
+    return {
+      name: 'files', prompt: `${hash.slice(0, 7)} > `, items: files.map(f => f.display), preview: previewCommand(fileState),
+      footer: ' Enter: diff 보기 (q: 돌아가기) · Esc: 커밋 목록 ',
+      async onSelect({ index }, io) {
+        io.setFooter(' q: 파일 목록 ');
+        const { args, env } = pagerArgs(base, hash, files[index]!.paths);
+        await io.run('git', args, env);
+        return 'stay' as const;
+      },
+    };
+  };
+  const commitsStep: WorkflowStep<never> = {
+    name: 'commits', prompt: 'Commit > ', items: commits.map(c => c.display), preview: previewCommand(commitState),
+    footer: ' Enter: 변경 파일 · Esc: 닫기 ',
+    onSelect({ index }) {
+      const { hash } = commits[index]!;
+      const base = commitBase(root, hash);
+      const files = listFiles(root, base, hash);
+      return files.length ? { next: filesStep(hash, base, files) } : 'stay'; // e.g. empty commit: stay on the commit list
+    },
+  };
+  return runWorkflow(commitsStep, { run, directory, setFooter, cancelled });
 }

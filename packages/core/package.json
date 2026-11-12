@@ -9,6 +9,7 @@
   },
   "exports": {
     "./fzf": "./lib/fzf.ts",
+    "./workflow": "./lib/workflow.ts",
     "./types": "./lib/types.ts",
     "./package.json": "./package.json"
   },

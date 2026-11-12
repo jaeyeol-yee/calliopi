@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fzfSelect, nodePreview } from '@calliopi/core/fzf';
+import { nodePreview } from '@calliopi/core/fzf';
+import { runWorkflow } from '@calliopi/core/workflow';
 import type { RunProgram } from '@calliopi/core/types';
 import { snapshot, changeMessage, resolveProjectFile } from '#lib/file-edit.ts';
 
@@ -21,19 +22,19 @@ export interface EditOneFileOptions {
   cancelled?: () => boolean;
 }
 
+// file list → Vim. Changes are measured around the Vim run, not against git.
 export async function editOneFile({ cwd, candidates, directory, run, cancelled = () => false }: EditOneFileOptions): Promise<EditResult | null> {
   // fzf shows sanitized names; the preview and the result refer to candidates by index.
   const list = path.join(directory, 'candidates');
   fs.writeFileSync(list, `${candidates.join('\0')}\0`, { mode: 0o600 });
-  // A closed overlay kills fzf mid-way: cancellation wins over whatever it left in the output.
-  const picked = await fzfSelect({ run, directory, name: 'files', items: candidates, prompt: 'File > ', preview: nodePreview(preview, list) })
-    .catch((error: unknown) => { if (cancelled()) return null; throw error; });
-  if (!picked || cancelled()) return null;
-  const file = candidates[picked.index]!;
-  const absolute = resolveProjectFile(cwd, file);
-  const before = snapshot(cwd, file);
-  const editor = await run('vim', ['--', absolute]);
-  if (cancelled()) return null;
-  const after = snapshot(cwd, file);
-  return { file, content: changeMessage(file, before, after), exitCode: editor.exitCode };
+  return runWorkflow<EditResult>({
+    name: 'files', prompt: 'File > ', items: candidates, preview: nodePreview(preview, list),
+    async onSelect({ index }, io) {
+      const file = candidates[index]!;
+      const absolute = resolveProjectFile(cwd, file);
+      const before = snapshot(cwd, file);
+      const editor = await io.run('vim', ['--', absolute]);
+      return { done: { file, content: changeMessage(file, before, snapshot(cwd, file)), exitCode: editor.exitCode } };
+    },
+  }, { run, directory, cancelled });
 }

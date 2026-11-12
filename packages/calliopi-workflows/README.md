@@ -77,9 +77,9 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 ```text
 extensions/file-picker.ts   /calliopi-edit · 다음 턴 메시지
 extensions/git-log.ts       /calliopi-log
-lib/editor-flow.ts          fzf → 스냅샷 → Vim → 변경 비교
+lib/editor-flow.ts          워크플로우: 파일 → Vim, 스냅샷으로 변경 비교
 lib/file-edit.ts            파일 목록·경로 검사·스냅샷·diff
-lib/git-log.ts              커밋·파일 목록, 분할/단계별 탐색 흐름
+lib/git-log.ts              커밋·파일 목록, 단계별 워크플로우, 분할 화면(전용 구현)
 bin/file-preview.ts         bat preview / plain-text fallback (번호로 후보 조회)
 bin/git-preview.ts          커밋/파일 미리보기
 scripts/smoke.ts            설치된 Pi로 두 명령을 끝까지 실행하는 smoke test
