@@ -96,6 +96,19 @@ pi install ~/agent-labs/calliopi
 - 향후 빌드 결과물(`dist/`)을 참조하게 되면 수정 후 재빌드가 필요합니다. 외부 의존성의 모든 캐시까지 무효화된다고 가정하지 않습니다.
 - 의존성과 workspace 링크는 루트에서 `npm install`로 설치합니다. 별도 빌드 단계는 없습니다.
 
+## 검사
+
+루트에서 모든 패키지를 한 번에 검사합니다. 스크립트가 없는 패키지(`core`, `context`)는 건너뜁니다.
+
+| 명령 | 내용 |
+|---|---|
+| `npm run check:imports` | import 규칙 검사 |
+| `npm run typecheck` | 각 패키지 `tsc -p .` |
+| `npm test` | 각 패키지 `node --test` |
+| `npm run check` | 위 세 가지를 순서대로, 첫 실패에서 중단 |
+
+한 패키지만 돌리려면 `npm test -w @calliopi/ui`처럼 `-w`를 붙입니다.
+
 ## 확장 원칙
 
 - **core**: 공통 타입·설정·기본 명령. 다른 패키지의 편의 기능을 모두 모으는 장소로 사용하지 않습니다.
