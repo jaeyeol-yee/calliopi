@@ -1,21 +1,18 @@
 // Inspector overlay: task list → detail (metadata + result) → diff review (built-in or delta in a Rex pane).
+// This file owns I/O and input; the frame itself is drawn by renderInspector (inspector-view.ts).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi, matchesKey } from "@earendil-works/pi-tui";
+import { matchesKey } from "@earendil-works/pi-tui";
 import fs from "node:fs";
 import path from "node:path";
-import { metadataTable, type MetadataValue } from "@calliopi/ui/table";
-import { taskState, freshness, visibleByDefault } from "#lib/floating-model.ts";
-import { stampArchive, archiveTime } from "#lib/archive.ts";
+import { taskState, visibleByDefault } from "#lib/floating-model.ts";
+import { stampArchive } from "#lib/archive.ts";
 import { load, update as updateRegistry } from "#lib/registry.ts";
-import { cleanResult } from "#lib/util.ts";
 import { cfgFor, revalidate, type Agent, type Runtime } from "#extensions/runtime/state.ts";
+import { renderInspector, repoSlug, validRepo, type InspectorState } from "#extensions/components/inspector-view.ts";
 
 type Exec = ExtensionAPI["exec"];
 type Diff = { text: string; incomplete: boolean };
-
-const repoSlug = (url?: string) => String(url || "").replace(/^(https?:\/\/)?github\.com\//, "").replace(/\.git$/, "");
-const validRepo = (repo: string) => /^[\w.-]+\/[\w.-]+$/.test(repo);
 
 /** Local changes against HEAD: staged + unstaged + (up to 40) untracked files. */
 async function localDiff(exec: Exec, cwd: string): Promise<Diff> {
@@ -66,22 +63,7 @@ async function openExternal(exec: Exec, ctx: ExtensionContext, review: string, l
 	ctx.ui.notify("외부 diff 리뷰를 열었습니다. ↑↓ / PgUp / PgDn 스크롤 · q 종료", "info");
 }
 
-function detailMetadata(rt: Runtime, a: Agent): [string, MetadataValue][] {
-	const branches = a.git?.branches || [];
-	const agentUrl = a.url || (/^bc-[\w-]+$/.test(a.agentId || "") ? `https://cursor.com/agents/${a.agentId}` : undefined);
-	const repoLink = (b: any) => { const repo = repoSlug(b.repoUrl); return validRepo(repo) ? `https://github.com/${repo}` : undefined; };
-	return [
-		["작업", a.label || a.name || ""], ["목표", a.summary || ""], ["상태", `${taskState(a).text} · ${a.status || a.phase}`],
-		["에이전트", { text: a.agentId || a.key || "", url: agentUrl }], ["실행", a.runId || ""], ["배치", a.batch || ""],
-		["저장소", branches.flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.repoUrl || "—", url: repoLink(b) }])],
-		["브랜치", branches.flatMap((b: any, i: number) => [...(i ? ["\n"] : []), { text: b.branch || "—", url: repoLink(b) && b.branch ? `${repoLink(b)}/tree/${encodeURIComponent(b.branch)}` : undefined }])],
-		["PR", branches.filter((b) => b.prUrl).flatMap((b, i) => [...(i ? ["\n"] : []), { text: b.prUrl || "", url: b.prUrl }, ` · ${a.reviews?.[b.prUrl || ""]?.state || "미확인"}${a.reviews?.[b.prUrl || ""]?.lastError ? ` · ${a.reviews?.[b.prUrl || ""]?.lastError}` : ""}`])],
-		["갱신", `${rt.reviewing.has((a.agentId || a.key) as string) ? "갱신 중 · " : ""}${freshness(a)}`],
-		["보관 시각", a.archivedRunId === a.runId && archiveTime(a.archivedAt) != null ? new Date(archiveTime(a.archivedAt)!).toLocaleString() : "미기록"],
-	];
-}
-
-const canArchive = (a: Agent) => taskState(a).tab === 2 || (a.status === "FINISHED" && !(a.git?.branches || []).some((b: any) => b.prUrl));
+export const canArchive = (a: Agent) => taskState(a).tab === 2 || (a.status === "FINISHED" && !(a.git?.branches || []).some((b: any) => b.prUrl));
 
 export async function inspect(rt: Runtime, ctx: ExtensionContext, localReview = false, initialId?: string, includeArchived = false) {
 	if (ctx.mode !== "tui" || rt.inspectorOpen) return;
@@ -90,123 +72,74 @@ export async function inspect(rt: Runtime, ctx: ExtensionContext, localReview = 
 	let timer: NodeJS.Timeout | undefined;
 	try {
 		await ctx.ui.custom<void>((tui, theme, keys, done) => {
-			let selected = 0, offset = 0, detail = localReview || !!initialId, showMetadata = true;
-			let review: string | null = localReview ? "diff를 불러오는 중…" : null;
+			const s: InspectorState = {
+				agents: [], selected: 0, offset: 0, detail: localReview || !!initialId, showMetadata: true,
+				review: localReview ? "diff를 불러오는 중…" : null, includeArchived, cache: null,
+			};
 			let loading = false, closed = false;
-			let contentCache: { text: string; width: number; theme: any; lines: string[]; diff: boolean } | null = null;
-			let agents: Agent[] = [];
 			const exec: Exec = (...args) => rt.pi.exec(...args);
+			const current = () => s.agents[s.selected];
 			const loadDiff = async (local: boolean, external = false) => {
 				if (loading) return;
-				loading = true; detail = true; offset = 0; review = "diff를 불러오는 중…"; tui.requestRender();
+				loading = true; s.detail = true; s.offset = 0; s.review = "diff를 불러오는 중…"; tui.requestRender();
 				try {
-					const d = local ? await localDiff(exec, ctx.cwd) : await branchDiff(exec, agents[selected]);
-					review = d.text;
-					if (d.incomplete) review += "\n\n⚠ 출력 제한 또는 시간 초과: diff가 완전하지 않습니다.";
-					if (external) await openExternal(exec, ctx, review, agents[selected]?.label || "diff");
-				} catch (e: any) { review = `diff를 열 수 없습니다.\n\n${e.message}`; }
+					const d = local ? await localDiff(exec, ctx.cwd) : await branchDiff(exec, current());
+					s.review = d.text;
+					if (d.incomplete) s.review += "\n\n⚠ 출력 제한 또는 시간 초과: diff가 완전하지 않습니다.";
+					if (external) await openExternal(exec, ctx, s.review, current()?.label || "diff");
+				} catch (e: any) { s.review = `diff를 열 수 없습니다.\n\n${e.message}`; }
 				finally { loading = false; if (!closed) tui.requestRender(); }
 			};
 			const update = () => {
 				try {
-					const selectedId = agents[selected]?.agentId || agents[selected]?.key || initialId;
+					const selectedId = current()?.agentId || current()?.key || initialId;
 					const all = Object.values(load(cfgFor(ctx)).agents) as Agent[];
 					// Keep an open detail stable across the 24h boundary; hide it upon returning to the list.
-					agents = includeArchived ? all : all.filter(a => visibleByDefault(a) || (detail && (a.agentId || a.key) === selectedId));
-					const index = agents.findIndex(a => (a.agentId || a.key) === selectedId);
-					selected = index >= 0 ? index : Math.max(0, Math.min(selected, agents.length - 1));
-				} catch { agents = []; }
+					s.agents = includeArchived ? all : all.filter(a => visibleByDefault(a) || (s.detail && (a.agentId || a.key) === selectedId));
+					const index = s.agents.findIndex(a => (a.agentId || a.key) === selectedId);
+					s.selected = index >= 0 ? index : Math.max(0, Math.min(s.selected, s.agents.length - 1));
+				} catch { s.agents = []; }
 				tui.requestRender();
 			};
 			update();
-			if (initialId) { selected = Math.max(0, agents.findIndex(a => (a.agentId || a.key) === initialId)); void revalidate(rt, ctx, agents[selected]); }
+			if (initialId) { s.selected = Math.max(0, s.agents.findIndex(a => (a.agentId || a.key) === initialId)); void revalidate(rt, ctx, current()); }
 			timer = setInterval(update, 1000);
 			if (localReview) void loadDiff(true);
 			return {
-				render(w: number) {
-					selected = Math.max(0, Math.min(selected, agents.length - 1));
-					const a = agents[selected];
-					// Border + two-cell horizontal padding; reserve vertical space for the frame.
-					const padding = w >= 24 ? 2 : 1;
-					const innerWidth = Math.max(1, w - 2 - padding * 2);
-					const contentWidth = Math.max(1, innerWidth - 4); // Separate rail: │ + space + ANSI-colored triangle + space.
-					const height = Math.max(1, Math.min(16, (process.stdout.rows || 30) - 14));
-					let body: string[];
-					let scrollTop = 0, totalLines = 0;
-					if (detail && (a || review !== null)) {
-						const text = review ?? (cleanResult(a.runs?.[a.runId as string]?.result) || "아직 결과가 없습니다.");
-						const diff = review !== null;
-						if (!contentCache || contentCache.text !== text || contentCache.width !== contentWidth || contentCache.theme !== ctx.ui.theme || contentCache.diff !== diff) {
-							const lines = diff ? text.split("\n").flatMap(s => wrapTextWithAnsi(s, contentWidth)).map(s => theme.fg(s.startsWith("+") ? "success" : s.startsWith("-") ? "error" : s.startsWith("@@") ? "accent" : "text", s)) : highlightCode(text, "markdown").flatMap(s => wrapTextWithAnsi(s, contentWidth));
-							contentCache = { text, width: contentWidth, theme: ctx.ui.theme, lines, diff };
-						}
-						const lines = diff ? contentCache.lines : [...(showMetadata ? [...metadataTable(detailMetadata(rt, a), contentWidth, theme), ""] : []), theme.fg("accent", theme.bold("결과")), "", ...contentCache.lines];
-						offset = Math.min(offset, Math.max(0, lines.length - height));
-						body = lines.slice(offset, offset + height);
-						scrollTop = offset; totalLines = lines.length;
-					} else {
-						const start = Math.max(0, selected - height + 1);
-						scrollTop = start; totalLines = agents.length;
-						body = agents.slice(start, start + height).map((a, i) => {
-							const active = start + i === selected;
-							const row = truncateToWidth(`${active ? "›" : " "} ${taskState(a).icon} ${a.label} · ${taskState(a).text} · ${a.summary || ""}`, contentWidth);
-							return active ? theme.fg("accent", theme.bold(row)) : row;
-						});
-					}
-					const canUp = scrollTop > 0, canDown = scrollTop + height < totalLines;
-					const viewport = Array.from({ length: height }, (_, i) => {
-						const text = truncateToWidth(body[i] || (i === 0 && !body.length ? "작업이 없습니다." : ""), contentWidth);
-						const glyph = height === 1 ? (canDown ? "▼" : canUp ? "▲" : " ") : i === 0 && canUp ? "▲" : i === height - 1 && canDown ? "▼" : " ";
-						return text + " ".repeat(Math.max(0, contentWidth - visibleWidth(text))) + theme.fg("dim", "│") + " " + theme.fg("accent", theme.bold(glyph)) + " ";
-					});
-					const title = review !== null ? "☁ Diff 리뷰" : detail ? `☁ Fan-out · ${a?.label || "상세"}` : `☁ Fan-out ${includeArchived ? "전체 기록" : "현황"} · ${agents.length}개 작업`;
-					const hint = detail ? "↑↓ / 휠 · m 표 · d diff · r 리뷰 · u 갱신 · a 보관 · Esc" : "↑↓ 선택 · Enter 상세 · d diff · r 외부 리뷰 · Esc";
-					const border = (s: string) => theme.fg("dim", s);
-					const row = (s = "") => {
-						const text = truncateToWidth(s, innerWidth);
-						return border("│") + " ".repeat(padding) + text + " ".repeat(Math.max(0, innerWidth - visibleWidth(text)) + padding) + border("│");
-					};
-					if (w < 8) return [truncateToWidth(title, w)];
-					return [
-						border("╭" + "─".repeat(w - 2) + "╮"),
-						row(), row(theme.fg("accent", theme.bold(title))), row(),
-						...viewport.map(s => row(s)),
-						row(),
-						border("├" + "─".repeat(w - 2) + "┤"),
-						row(theme.fg("dim", hint)), row(),
-						border("╰" + "─".repeat(w - 2) + "╯"),
-					];
-				},
+				render: (w: number) => renderInspector(s, w, {
+					theme, rows: process.stdout.rows || 30, themeKey: ctx.ui.theme,
+					highlight: text => highlightCode(text, "markdown"), refreshing: id => rt.reviewing.has(id),
+				}),
 				handleInput(data: string) {
-					if (keys.matches(data, "tui.select.cancel")) { if (detail && !localReview) { detail = false; review = null; offset = 0; } else { closed = true; done(); return; } }
-					else if (data === "m" && detail && review === null) { showMetadata = !showMetadata; offset = 0; }
-					else if (data === "u") { void revalidate(rt, ctx, agents[selected]); return; }
-					else if (data === "a" && agents[selected] && canArchive(agents[selected])) {
-						const a = agents[selected];
+					if (keys.matches(data, "tui.select.cancel")) { if (s.detail && !localReview) { s.detail = false; s.review = null; s.offset = 0; } else { closed = true; done(); return; } }
+					else if (data === "m" && s.detail && s.review === null) { s.showMetadata = !s.showMetadata; s.offset = 0; }
+					else if (data === "u") { void revalidate(rt, ctx, current()); return; }
+					else if (data === "a" && current() && canArchive(current())) {
+						const a = current();
 						void updateRegistry(cfgFor(ctx), (reg) => {
-							const current = reg.agents[(a.agentId || a.key) as string];
-							if (current?.runId !== a.runId) return;
-							if (current.status === "FINISHED" && !(current.git?.branches || []).some((b: any) => b.prUrl)) current.reviewAckRunId = current.runId;
-							stampArchive(current);
+							const cur = reg.agents[(a.agentId || a.key) as string];
+							if (cur?.runId !== a.runId) return;
+							if (cur.status === "FINISHED" && !(cur.git?.branches || []).some((b: any) => b.prUrl)) cur.reviewAckRunId = cur.runId;
+							stampArchive(cur);
 						}).catch((e: any) => ctx.ui.notify(e.message, "warning"));
 						return;
 					}
 					else if (data === "r") { void loadDiff(localReview, true); return; }
 					else if (data === "d" && !localReview) { void loadDiff(false); return; }
-					else if (matchesKey(data, "pageup" as Parameters<typeof matchesKey>[1])) { offset = Math.max(0, offset - 10); }
-					else if (matchesKey(data, "pagedown" as Parameters<typeof matchesKey>[1])) { offset += 10; }
-					else if (matchesKey(data, "home")) { offset = 0; selected = 0; }
-					else if (matchesKey(data, "end")) { if (detail) offset = Number.MAX_SAFE_INTEGER; else selected = agents.length - 1; }
-					else if (keys.matches(data, "tui.select.confirm")) { detail = true; offset = 0; void revalidate(rt, ctx, agents[selected]); }
-					else if (keys.matches(data, "tui.select.up")) { if (detail) offset = Math.max(0, offset - 1); else selected = Math.max(0, selected - 1); }
-					else if (keys.matches(data, "tui.select.down")) { if (detail) offset++; else selected = Math.min(agents.length - 1, selected + 1); }
+					else if (matchesKey(data, "pageup" as Parameters<typeof matchesKey>[1])) { s.offset = Math.max(0, s.offset - 10); }
+					else if (matchesKey(data, "pagedown" as Parameters<typeof matchesKey>[1])) { s.offset += 10; }
+					else if (matchesKey(data, "home")) { s.offset = 0; s.selected = 0; }
+					else if (matchesKey(data, "end")) { if (s.detail) s.offset = Number.MAX_SAFE_INTEGER; else s.selected = s.agents.length - 1; }
+					else if (keys.matches(data, "tui.select.confirm")) { s.detail = true; s.offset = 0; void revalidate(rt, ctx, current()); }
+					else if (keys.matches(data, "tui.select.up")) { if (s.detail) s.offset = Math.max(0, s.offset - 1); else s.selected = Math.max(0, s.selected - 1); }
+					else if (keys.matches(data, "tui.select.down")) { if (s.detail) s.offset++; else s.selected = Math.min(s.agents.length - 1, s.selected + 1); }
 					tui.requestRender();
 				},
 				handleMouse(event: { type: string; wheelDelta?: number }) {
 					if (event.type !== "wheel") return;
 					const delta = event.wheelDelta || 0;
-					if (detail) offset = Math.max(0, offset + delta * 3);
-					else selected = Math.max(0, Math.min(agents.length - 1, selected + delta));
+					if (s.detail) s.offset = Math.max(0, s.offset + delta * 3);
+					else s.selected = Math.max(0, Math.min(s.agents.length - 1, s.selected + delta));
 					tui.requestRender(); return { handled: true };
 				},
 				invalidate() {},
