@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { redact, registerSecret, sha256, processAlive } from './util.mjs';
+import { redact, registerSecret, sha256, processAlive } from './util.ts';
 
 const API2 = (process.env.CURSOR_ENDPOINT || 'https://api2.cursor.sh').replace(/\/+$/, '');
 export const CONFIG_DIR = process.env.CALLIOPI_CONFIG_DIR || path.join(os.homedir(), '.config', 'calliopi');
@@ -37,21 +37,36 @@ Start your final reply with this block, then give the deliverable described by o
 </reply_format>
 </calliopi_fanout_task>`;
 
-function writePrivate(file, obj) {
+function writePrivate(file: string, obj: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
   fs.chmodSync(file, 0o600);
 }
-export const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+export interface StoredJson {
+  url?: string;
+  key?: string;
+  automationId?: string;
+  name?: string;
+  enabled?: boolean;
+  fingerprint?: string;
+  createdAt?: string;
+  adoptedAt?: string;
+  appliedAt?: string;
+  savedAt?: string;
+  via?: string;
+  apiKey?: string;
+  [k: string]: unknown;
+}
+export function readJson(file: string): StoredJson | null { try { return JSON.parse(fs.readFileSync(file, 'utf8')) as StoredJson; } catch { return null; } }
 
-export async function automationsClient(apiKey) {
+export async function automationsClient(apiKey: string) {
   const ex = await fetch(`${API2}/auth/exchange_user_api_key`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` }, body: '{}',
   });
-  const j = await ex.json().catch(() => ({}));
+  const j = await ex.json().catch(() => ({})) as { accessToken?: string };
   if (!ex.ok || !j.accessToken) throw new Error(`session exchange failed (HTTP ${ex.status})`);
   registerSecret(j.accessToken);
-  const rpc = async (method, body) => {
+  const rpc = async (method: string, body: unknown) => {
     const r = await fetch(`${API2}/aiserver.v1.AutomationsService/${method}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${j.accessToken}`, 'content-type': 'application/json', 'connect-protocol-version': '1' },
@@ -65,7 +80,7 @@ export async function automationsClient(apiKey) {
     }
     return JSON.parse(t || '{}');
   };
-  const dashboardRpc = async (method, body) => {
+  const dashboardRpc = async (method: string, body: unknown) => {
     const r = await fetch(`${API2}/aiserver.v1.DashboardService/${method}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${j.accessToken}`, 'content-type': 'application/json', 'connect-protocol-version': '1' },
@@ -82,16 +97,24 @@ export async function automationsClient(apiKey) {
      * Cursor-published client (unlike the CRUD above); used here only so the key can be captured at
      * creation time instead of copied from the UI. May change without notice.
      */
-    issueWebhookKey: (automationId, name = 'calliopi-fanout') => dashboardRpc('CreateAutomationWebhookApiKey', { automationId, name }),
-    create: (req) => rpc('CreateAutomation', req),
-    get: (automationId) => rpc('GetAutomation', { automationId }),
-    update: (req) => rpc('UpdateAutomation', req),
-    delete: (automationId) => rpc('DeleteAutomation', { automationId }),
+    issueWebhookKey: (automationId: string, name = 'calliopi-fanout') => dashboardRpc('CreateAutomationWebhookApiKey', { automationId, name }),
+    create: (req: unknown) => rpc('CreateAutomation', req),
+    get: (automationId: string) => rpc('GetAutomation', { automationId }),
+    update: (req: unknown) => rpc('UpdateAutomation', req),
+    delete: (automationId: string) => rpc('DeleteAutomation', { automationId }),
   };
 }
 
-export function workflowSpec({ prompt = DEFAULT_PROMPT, repo, branch = 'main', modelId = 'grok-4.7', effort = 'medium', context = '256k', fast = false } = {}) {
-  const wf = {
+export function workflowSpec({ prompt = DEFAULT_PROMPT, repo, branch = 'main', modelId = 'grok-4.7', effort = 'medium', context = '256k', fast = false }: {
+  prompt?: string; repo?: string; branch?: string; modelId?: string; effort?: string; context?: string; fast?: boolean;
+} = {}) {
+  const wf: {
+    triggers: { webhook: Record<string, never> }[];
+    prompts: { prompt: string; effortLevel: string }[];
+    modelSelection: { modelId: string; parameters: { id: string; value: string }[]; maxMode: boolean };
+    memoryEnabled: boolean;
+    gitConfig?: { repo: string; branch: string };
+  } = {
     triggers: [{ webhook: {} }],
     prompts: [{ prompt, effortLevel: 'PROMPT_EFFORT_LEVEL_STANDARD' }],
     // Automations only accept structured model selection with maxMode=true; pin the cost-relevant
@@ -104,9 +127,9 @@ export function workflowSpec({ prompt = DEFAULT_PROMPT, repo, branch = 'main', m
 }
 
 /** Find webhook URL / key-shaped fields anywhere in a response without printing values. */
-export function findWebhookFields(obj, at = '') {
-  const hits = [];
-  const walk = (v, p) => {
+export function findWebhookFields(obj: unknown, at = ''): { path: string; kind: string; value: string }[] {
+  const hits: { path: string; kind: string; value: string }[] = [];
+  const walk = (v: unknown, p: string) => {
     if (v && typeof v === 'object') { for (const [k, x] of Object.entries(v)) walk(x, p ? `${p}.${k}` : k); return; }
     if (typeof v !== 'string') return;
     if (/\/automations\/webhook\//.test(v)) hits.push({ path: p, kind: 'url', value: v });
@@ -117,20 +140,20 @@ export function findWebhookFields(obj, at = '') {
 }
 
 /** Shape-only view of a response: keys and value types, secrets never shown. */
-export function shape(obj, depth = 0) {
+export function shape(obj: unknown, depth = 0): unknown {
   if (Array.isArray(obj)) return obj.length ? [shape(obj[0], depth + 1)] : [];
   if (obj && typeof obj === 'object') return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, depth > 5 ? '…' : shape(v, depth + 1)]));
   return typeof obj === 'string' ? `string(${obj.length})` : typeof obj;
 }
 
 /** Webhook URL for an automation, as built by Cursor's own host code (`/automations/webhook/<automationId>`). */
-export const webhookUrl = (automationId) => `${API2}/automations/webhook/${automationId}`;
+export const webhookUrl = (automationId: string): string => `${API2}/automations/webhook/${automationId}`;
 
-export function saveAutomationState(state) { writePrivate(AUTOMATION_STATE, state); }
-export function saveWebhook(state) { registerSecret(state.key); writePrivate(WEBHOOK_STATE, state); }
+export function saveAutomationState(state: StoredJson): void { writePrivate(AUTOMATION_STATE, state); }
+export function saveWebhook(state: StoredJson & { key: string }): void { registerSecret(state.key); writePrivate(WEBHOOK_STATE, state); }
 
 /** Documented webhook trigger call. Returns status + parsed body (never logs the key). */
-export async function postWebhook({ url, key }, payload) {
+export async function postWebhook({ url, key }: { url: string; key: string }, payload: unknown): Promise<{ status: number; headers: Record<string, string>; body: { backgroundComposerId?: string } | null; text: string }> {
   registerSecret(key);
   const r = await fetch(url, {
     method: 'POST',
@@ -138,7 +161,7 @@ export async function postWebhook({ url, key }, payload) {
     body: JSON.stringify(payload),
   });
   const text = await r.text();
-  let body = null; try { body = JSON.parse(text); } catch { /* not JSON */ }
+  let body: { backgroundComposerId?: string } | null = null; try { body = JSON.parse(text) as { backgroundComposerId?: string }; } catch { /* not JSON */ }
   return { status: r.status, headers: Object.fromEntries(r.headers), body, text: redact(text.slice(0, 2000)) };
 }
 
@@ -150,7 +173,13 @@ export async function postWebhook({ url, key }, payload) {
 //    and refused if the server already differs from the recorded fingerprint (someone else edited).
 export const INFLIGHT = path.join(CONFIG_DIR, 'automation.inflight');
 
-export function fingerprint(workflow = {}) {
+export function fingerprint(workflow: {
+  prompts?: { prompt?: string }[];
+  modelSelection?: unknown;
+  model?: unknown;
+  gitConfig?: { repo?: string; branch?: string } | null;
+  triggers?: unknown[];
+} = {}): string {
   const pick = {
     prompts: (workflow.prompts || []).map((p) => p.prompt),
     model: workflow.modelSelection || workflow.model || null,

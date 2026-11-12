@@ -1,8 +1,17 @@
 // Minimal Cursor Cloud Agents v1 REST client (fetch only). Spec: cursor.com/docs-static/cloud-agents-openapi.yaml
-import { sleep, jitter, redact } from './util.mjs';
+import { caught, sleep, jitter, redact } from './util.ts';
+import type {
+  AgentSummary, ApiRun, CreateAgentResponse, CreateRunResponse, ListAgentsResponse, ListRunsResponse,
+  Logger, MeResponse, UsageResponse,
+} from './types.ts';
 
 export class ApiError extends Error {
-  constructor(status, code, message, extra = {}) {
+  status: number;
+  code: string | undefined;
+  ambiguous?: boolean;
+  retryAfterMs?: number;
+  requestId?: string | null;
+  constructor(status: number, code: string | undefined, message: string | undefined, extra: { ambiguous?: boolean; retryAfterMs?: number; requestId?: string | null } = {}) {
     super(`HTTP ${status}${code ? ` ${code}` : ''}: ${redact(message || '')}`);
     this.status = status;
     this.code = code;
@@ -15,7 +24,13 @@ export class ApiError extends Error {
  * stop used for 429 — limits are per user/team, so one 429 means everyone waits.
  */
 export class Limiter {
-  constructor(rpm, burst = Math.min(5, Math.max(1, Math.floor(rpm / 3)))) {
+  rate: number;
+  cap: number;
+  tokens: number;
+  last: number;
+  pausedUntil: number;
+  count: number;
+  constructor(rpm: number, burst = Math.min(5, Math.max(1, Math.floor(rpm / 3)))) {
     this.rate = rpm / 60_000; // tokens per ms
     this.cap = burst;
     this.tokens = burst;
@@ -23,17 +38,17 @@ export class Limiter {
     this.pausedUntil = 0;
     this.count = 0;
   }
-  #refill() {
+  #refill(): void {
     const now = Date.now();
     this.tokens = Math.min(this.cap, this.tokens + (now - this.last) * this.rate);
     this.last = now;
   }
-  available() { this.#refill(); return Date.now() >= this.pausedUntil ? Math.floor(this.tokens) : 0; }
-  tryTake() {
+  available(): number { this.#refill(); return Date.now() >= this.pausedUntil ? Math.floor(this.tokens) : 0; }
+  tryTake(): boolean {
     if (this.available() < 1) return false;
     this.tokens -= 1; this.count += 1; return true;
   }
-  async take(signal) {
+  async take(signal?: AbortSignal): Promise<void> {
     for (;;) {
       if (signal?.aborted) throw new Error('aborted');
       const waitPause = this.pausedUntil - Date.now();
@@ -43,10 +58,10 @@ export class Limiter {
       await sleep(Math.ceil((1 - this.tokens) / this.rate), signal);
     }
   }
-  pause(ms) { this.pausedUntil = Math.max(this.pausedUntil, Date.now() + ms); }
+  pause(ms: number): void { this.pausedUntil = Math.max(this.pausedUntil, Date.now() + ms); }
 }
 
-export function parseRetryAfter(h) {
+export function parseRetryAfter(h: string | null): number | null {
   if (!h) return null;
   const n = Number(h);
   if (Number.isFinite(n)) return Math.max(0, n * 1000);
@@ -54,24 +69,43 @@ export function parseRetryAfter(h) {
   return Number.isFinite(t) ? Math.max(0, t - Date.now()) : null;
 }
 
+interface RequestOpts {
+  query?: Record<string, string | number | boolean | null | undefined>;
+  body?: unknown;
+  headers?: Record<string, string>;
+  idempotent?: boolean;
+  raw?: boolean;
+  signal?: AbortSignal;
+  preTaken?: boolean;
+  maxAttempts?: number;
+}
+
 export class CursorApi {
-  constructor({ key, base, limiter, log, timeoutMs = 30_000 }) {
+  key: string;
+  base: string;
+  limiter: Limiter;
+  log: Pick<Logger, 'warn'> | undefined;
+  timeoutMs: number;
+  constructor({ key, base, limiter, log, timeoutMs = 30_000 }: {
+    key: string; base: string; limiter: Limiter; log?: Pick<Logger, 'warn'>; timeoutMs?: number;
+  }) {
     this.key = key; this.base = base; this.limiter = limiter; this.log = log; this.timeoutMs = timeoutMs;
   }
 
   /**
-   * @param {object} o
-   * @param {boolean} o.idempotent  safe to retry after 5xx/network errors (GETs, creates with client agentId)
-   * @param {boolean} o.preTaken    caller already consumed a limiter token for the first attempt
+   * @param o.idempotent  safe to retry after 5xx/network errors (GETs, creates with client agentId)
+   * @param o.preTaken    caller already consumed a limiter token for the first attempt
    */
-  async request(method, p, { query, body, headers = {}, idempotent = method === 'GET', raw = false, signal, preTaken = false, maxAttempts = 5 } = {}) {
+  async request(method: string, p: string, opts: RequestOpts & { raw: true }): Promise<Response>;
+  async request<T = unknown>(method: string, p: string, opts?: RequestOpts): Promise<T>;
+  async request(method: string, p: string, { query, body, headers = {}, idempotent = method === 'GET', raw = false, signal, preTaken = false, maxAttempts = 5 }: RequestOpts = {}): Promise<unknown> {
     const url = new URL(this.base + p);
     for (const [k, v] of Object.entries(query || {})) if (v != null) url.searchParams.set(k, String(v));
     let attempt = 0;
     for (;;) {
       attempt += 1;
       if (!(preTaken && attempt === 1)) await this.limiter.take(signal);
-      let res;
+      let res: Response;
       try {
         res = await fetch(url, {
           method,
@@ -84,9 +118,9 @@ export class CursorApi {
           body: body ? JSON.stringify(body) : undefined,
           signal: raw ? signal : AbortSignal.any([AbortSignal.timeout(this.timeoutMs), ...(signal ? [signal] : [])]),
         });
-      } catch (e) {
+      } catch (e: unknown) {
         if (signal?.aborted) throw e;
-        if (!idempotent || attempt >= maxAttempts) throw new ApiError(0, 'network', e.message, { ambiguous: !idempotent });
+        if (!idempotent || attempt >= maxAttempts) throw new ApiError(0, 'network', caught(e).message, { ambiguous: !idempotent });
         await sleep(jitter(1000 * 2 ** attempt));
         continue;
       }
@@ -107,8 +141,8 @@ export class CursorApi {
       }
       if (raw && res.ok) return res;
       const text = await res.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+      let data: { error?: { code?: string; message?: string }; code?: string; message?: string } | null = null;
+      try { data = text ? JSON.parse(text) as { error?: { code?: string; message?: string }; code?: string; message?: string } : null; } catch { /* non-JSON */ }
       if (!res.ok) {
         const err = data?.error || data || {};
         throw new ApiError(res.status, err.code, err.message || text.slice(0, 200), {
@@ -120,28 +154,28 @@ export class CursorApi {
     }
   }
 
-  me() { return this.request('GET', '/v1/me'); }
-  createAgent(body, opts = {}) {
+  me(): Promise<MeResponse> { return this.request('GET', '/v1/me'); }
+  createAgent(body: Record<string, unknown>, opts: Omit<RequestOpts, 'body' | 'raw'> = {}): Promise<CreateAgentResponse> {
     // With a client-supplied agentId a re-POST yields 409 agent_id_conflict, never a duplicate.
     return this.request('POST', '/v1/agents', { body, idempotent: Boolean(body.agentId), ...opts });
   }
-  getAgent(id) { return this.request('GET', `/v1/agents/${enc(id)}`); }
-  listAgents({ limit = 100, cursor, includeArchived } = {}) {
+  getAgent(id: string): Promise<AgentSummary> { return this.request('GET', `/v1/agents/${enc(id)}`); }
+  listAgents({ limit = 100, cursor, includeArchived }: { limit?: number; cursor?: string; includeArchived?: boolean } = {}): Promise<ListAgentsResponse> {
     return this.request('GET', '/v1/agents', { query: { limit, cursor, includeArchived } });
   }
-  listRuns(id, { limit = 5, cursor } = {}, opts = {}) {
+  listRuns(id: string, { limit = 5, cursor }: { limit?: number; cursor?: string } = {}, opts: Omit<RequestOpts, 'query' | 'raw'> = {}): Promise<ListRunsResponse> {
     return this.request('GET', `/v1/agents/${enc(id)}/runs`, { query: { limit, cursor }, ...opts });
   }
-  getRun(id, runId, opts = {}) { return this.request('GET', `/v1/agents/${enc(id)}/runs/${enc(runId)}`, opts); }
-  usage(id, runId) { return this.request('GET', `/v1/agents/${enc(id)}/usage`, { query: { runId } }); }
-  streamRun(id, runId, { lastEventId, signal } = {}) {
+  getRun(id: string, runId: string, opts: Omit<RequestOpts, 'raw'> = {}): Promise<ApiRun> { return this.request('GET', `/v1/agents/${enc(id)}/runs/${enc(runId)}`, opts); }
+  usage(id: string, runId: string): Promise<UsageResponse> { return this.request('GET', `/v1/agents/${enc(id)}/usage`, { query: { runId } }); }
+  streamRun(id: string, runId: string, { lastEventId, signal }: { lastEventId?: string | null; signal?: AbortSignal } = {}): Promise<Response> {
     return this.request('GET', `/v1/agents/${enc(id)}/runs/${enc(runId)}/stream`, {
       raw: true, signal, headers: lastEventId ? { 'last-event-id': lastEventId } : {}, maxAttempts: 3,
     });
   }
-  createRun(id, body) { return this.request('POST', `/v1/agents/${enc(id)}/runs`, { body, idempotent: false }); }
-  cancelRun(id, runId) { return this.request('POST', `/v1/agents/${enc(id)}/runs/${enc(runId)}/cancel`, { idempotent: false }); }
-  archiveAgent(id) { return this.request('POST', `/v1/agents/${enc(id)}/archive`, { idempotent: false }); }
+  createRun(id: string, body: unknown): Promise<CreateRunResponse> { return this.request('POST', `/v1/agents/${enc(id)}/runs`, { body, idempotent: false }); }
+  cancelRun(id: string, runId: string): Promise<unknown> { return this.request('POST', `/v1/agents/${enc(id)}/runs/${enc(runId)}/cancel`, { idempotent: false }); }
+  archiveAgent(id: string): Promise<unknown> { return this.request('POST', `/v1/agents/${enc(id)}/archive`, { idempotent: false }); }
 }
 
 const enc = encodeURIComponent;

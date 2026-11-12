@@ -3,17 +3,18 @@
 // with an exit code that encodes the raw status — so any multiplexer's "child exited"
 // event carries the outcome. WAITING_FOR_BACKGROUND_WORK keeps it running.
 import fs from 'node:fs';
-import { load, findAgent } from './registry.mjs';
-import { EXIT, fmtDur, isTerminal, processAlive, short, cleanResult, keyVerified, understood } from './util.mjs';
-import { icon } from './dashboard.mjs';
+import { load, findAgent } from './registry.ts';
+import { EXIT, caught, fmtDur, isTerminal, processAlive, short, cleanResult, keyVerified, understood } from './util.ts';
+import { icon } from './dashboard.ts';
+import type { AgentView, FanoutConfig } from './types.ts';
 
-export function exitCodeFor(a) {
+export function exitCodeFor(a: AgentView | null | undefined): number {
   if (!a || a.missing) return EXIT.MISSING;
-  return EXIT[a.status] ?? EXIT.ERROR;
+  return EXIT[a.status as string] ?? EXIT.ERROR;
 }
 
-export function summaryBlock(a) {
-  const run = a.runs?.[a.runId] || {};
+export function summaryBlock(a: AgentView): string {
+  const run = a.runs?.[a.runId as string] || {};
   const out = [];
   out.push(`${icon(a.status)} ${a.status}  ${a.label || ''}  ${a.agentId}`);
   out.push(`run ${a.runId}  duration ${fmtDur(run.durationMs)}`);
@@ -31,13 +32,13 @@ export function summaryBlock(a) {
   return out.join('\n');
 }
 
-export async function follow(cfg, needle, { appearTimeoutMs = 120_000, pollMs = 1500 } = {}) {
+export async function follow(cfg: FanoutConfig, needle: string, { appearTimeoutMs = 120_000, pollMs = 1500 } = {}): Promise<number> {
   const started = Date.now();
   let lastLine = '';
   let warnedDaemon = 0;
   for (;;) {
     let reg;
-    try { reg = load(cfg); } catch (e) { process.stdout.write(`registry unreadable: ${e.message}\n`); reg = null; }
+    try { reg = load(cfg); } catch (e: unknown) { process.stdout.write(`registry unreadable: ${caught(e).message}\n`); reg = null; }
     const a = reg && findAgent(reg, needle);
     if (!a) {
       if (Date.now() - started > appearTimeoutMs) {
@@ -47,7 +48,7 @@ export async function follow(cfg, needle, { appearTimeoutMs = 120_000, pollMs = 
     } else {
       if (a.missing) { process.stdout.write(`${short(a.agentId)} MISSING (404)\n`); return EXIT.MISSING; }
       if (a.phase === 'create_failed') { process.stdout.write(`create failed: ${a.createError?.message}\n`); return EXIT.ERROR; }
-      const run = a.runs?.[a.runId] || {};
+      const run = a.runs?.[a.runId as string] || {};
       const age = run.createdAt ? fmtDur(Date.now() - Date.parse(run.createdAt)) : '-';
       const line = `${icon(a.status)} ${a.status || a.phase}  ${a.label || ''}  ${short(a.agentId)}/${short(a.runId)}`;
       if (line !== lastLine) {
@@ -69,12 +70,12 @@ export async function follow(cfg, needle, { appearTimeoutMs = 120_000, pollMs = 
   }
 }
 
-function safeRead(f) { try { return fs.readFileSync(f, 'utf8').trim(); } catch { return ''; } }
+function safeRead(f: string): string { try { return fs.readFileSync(f, 'utf8').trim(); } catch { return ''; } }
 
-function waitForChange(file, ms) {
+function waitForChange(file: string, ms: number): Promise<void> {
   // fs.watch on the directory catches atomic renames; fall back to a timer either way.
   return new Promise((resolve) => {
-    let w;
+    let w: fs.FSWatcher | undefined;
     const t = setTimeout(done, ms);
     function done() { clearTimeout(t); try { w?.close(); } catch { /* */ } resolve(); }
     try { w = fs.watch(file.replace(/[^/]+$/, ''), (_, name) => { if (name && name.startsWith('registry.json')) done(); }); } catch { /* */ }

@@ -6,12 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startMock } from './mock-cursor.mjs';
+import { startMock, type MockHandle } from './mock-cursor.ts';
 
-const TRACKER = fileURLToPath(new URL('../bin/tracker.mjs', import.meta.url));
-let mock;
+const TRACKER = fileURLToPath(new URL('../bin/tracker.ts', import.meta.url));
+let mock: MockHandle;
 
-function run(dir, args, { env = {}, input } = {}) {
+function run(dir: string, args: string[], { env = {}, input }: { env?: NodeJS.ProcessEnv; input?: string } = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, [TRACKER, '--dir', dir, ...args], {
       env: {
@@ -27,8 +27,11 @@ function run(dir, args, { env = {}, input } = {}) {
   });
 }
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-'));
-const reg = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'registry.json'), 'utf8'));
-const spec = (dir, s) => { const f = path.join(dir, 'spec.json'); fs.writeFileSync(f, JSON.stringify(s)); return f; };
+const reg = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, 'registry.json'), 'utf8')) as {
+  meta: { usageUnavailable?: boolean; panes?: Record<string, unknown> };
+  agents: Record<string, { label?: string; status?: string; agentId?: string; runId?: string; archived?: boolean; archivedAt?: string; archivedRunId?: string; source?: string; fanoutKey?: string; history: { to?: string }[]; runs: Record<string, { result?: string; usage?: { totalTokens?: number }; usageNote?: string; gitDelta?: unknown[] }>; git?: { branches?: { prUrl?: string }[] } }>;
+};
+const spec = (dir: string, s: unknown) => { const f = path.join(dir, 'spec.json'); fs.writeFileSync(f, JSON.stringify(s)); return f; };
 
 before(async () => { mock = await startMock(); });
 after(async () => { await mock.close(); });
@@ -57,7 +60,7 @@ test('Cursor archive records a per-run timestamp only after explicit approval an
   const a = reg(dir).agents[id];
   assert.equal(a.archived, true);
   assert.equal(a.archivedRunId, a.runId);
-  assert.ok(Number.isFinite(Date.parse(a.archivedAt)));
+  assert.ok(Number.isFinite(Date.parse(a.archivedAt as string)));
   const repeated = await run(dir, ['archive', 'archive-me', '--yes']);
   assert.equal(repeated.code, 0, repeated.stderr);
   assert.equal(reg(dir).agents[id].archivedAt, a.archivedAt);
@@ -78,7 +81,7 @@ test('fan-out → watch → terminal with result, PR, usage; WAITING is not an e
   assert.equal(l.code, 0, l.stderr);
   const created = JSON.parse(l.stdout).results;
   assert.equal(created.length, 3);
-  assert.ok(created.every((c) => c.phase === 'created' && /^bc-/.test(c.agentId) && /^run-/.test(c.runId)));
+  assert.ok(created.every((c: { phase: string; agentId: string; runId: string }) => c.phase === 'created' && /^bc-/.test(c.agentId) && /^run-/.test(c.runId)));
   const st = fs.statSync(path.join(dir, 'registry.json')).mode & 0o777;
   assert.equal(st, 0o600);
 
@@ -93,8 +96,8 @@ test('fan-out → watch → terminal with result, PR, usage; WAITING is not an e
   assert.equal(by.ok.status, 'FINISHED');
   assert.equal(by.bad.status, 'ERROR');
   assert.equal(by.bg.status, 'FINISHED');
-  assert.ok(by.bg.history.some((h) => h.to === 'WAITING_FOR_BACKGROUND_WORK'), 'saw WAITING');
-  assert.ok(!by.bg.history.some((h) => h.to === 'ERROR'), 'WAITING never mapped to ERROR');
+  assert.ok(by.bg.history.some((h: { to?: string }) => h.to === 'WAITING_FOR_BACKGROUND_WORK'), 'saw WAITING');
+  assert.ok(!by.bg.history.some((h: { to?: string }) => h.to === 'ERROR'), 'WAITING never mapped to ERROR');
   assert.match(by.ok.runs[by.ok.runId].result, /summary for ok/);
   assert.equal(by.ok.runs[by.ok.runId].usage.totalTokens, 200);
   assert.equal(by.ok.runs[by.ok.runId].gitDelta.length, 1);
@@ -132,7 +135,7 @@ test('partial failure: 400 marks create_failed, others proceed; re-run skips bot
   const f = spec(dir, { batch: 'pf', agents: [{ label: 'good', prompt: 'x' }, { label: 'nope', prompt: 'y [reject]' }] });
   const l = await run(dir, ['launch', '--spec', f, '--yes', '--json']);
   assert.equal(l.code, 1);
-  const phases = JSON.parse(l.stdout).results.map((r) => r.phase).sort();
+  const phases = JSON.parse(l.stdout).results.map((r: { phase: string }) => r.phase).sort();
   assert.deepEqual(phases, ['create_failed', 'created']);
   const again = JSON.parse((await run(dir, ['launch', '--spec', f, '--yes', '--json'])).stdout);
   assert.equal(again.toCreate, 0);
@@ -153,7 +156,7 @@ test('429 with Retry-After is honoured, usage 403 degrades gracefully', async ()
   assert.ok(Date.now() - t0 >= 900, 'paused for Retry-After');
   const r = reg(dir);
   assert.equal(r.meta.usageUnavailable, true);
-  assert.ok(Object.values(r.agents).every((a) => a.status === 'FINISHED' && a.runs[a.runId].usageNote));
+  assert.ok(Object.values(r.agents).every((a) => a.status === 'FINISHED' && a.runs[a.runId as string].usageNote));
   await m2.close();
 });
 
@@ -171,9 +174,9 @@ test('add + SSE stream records result; 410 falls back to polling', async () => {
     const s = await run(dir2, ['stream', 'adopted'], { env });
     assert.equal(s.code, 0, s.stderr);
     assert.match(s.stdout, s410 ? /falling back to GET run polling/ : /working on it/);
-    const a = reg(dir2).agents[l.agentId];
+    const a = reg(dir2).agents[l.agentId as string];
     assert.equal(a.status, 'FINISHED');
-    assert.match(a.runs[l.runId].result, /summary/);
+    assert.match(a.runs[l.runId as string].result as string, /summary/);
     await m.close();
   }
 });
@@ -213,7 +216,7 @@ test('stored SDK login (auth.json, apiKeyExpiresAtMs): valid works, expired refu
   const dir = tmp();
   const auth = path.join(dir, 'auth.json');
   const env = { CURSOR_API_KEY: '', CURSOR_SDK_AUTH_FILE: auth };
-  const creds = (exp) => JSON.stringify({ version: 1, backendUrl: 'https://api2.cursor.sh', apiKey: 'test-key', apiKeyExpiresAtMs: exp, createdAtMs: Date.now() });
+  const creds = (exp: number) => JSON.stringify({ version: 1, backendUrl: 'https://api2.cursor.sh', apiKey: 'test-key', apiKeyExpiresAtMs: exp, createdAtMs: Date.now() });
   fs.writeFileSync(auth, creds(Date.now() + 86_400_000), { mode: 0o600 });
   const ok = await run(dir, ['whoami', '--json'], { env });
   assert.equal(ok.code, 0, ok.stderr);
@@ -239,11 +242,11 @@ test('usage_limit_exceeded: nothing created, rest skipped, re-run after top-up r
   mock.mockState.broke = false;
   assert.equal(l.code, 1);
   const res = JSON.parse(l.stdout).results;
-  assert.ok(res.every((r) => r.phase === 'planned'));
+  assert.ok(res.every((r: { phase: string }) => r.phase === 'planned'));
   assert.ok((mock.stats.byRoute['POST /v1/agents'] || 0) - before <= 3, 'stopped hammering');
   const ids = Object.values(reg(dir).agents).map((a) => a.agentId).sort();
   const again = JSON.parse((await run(dir, ['launch', '--spec', f, '--yes', '--json'])).stdout);
-  assert.equal(again.results.filter((r) => r.phase === 'created').length, 3);
+  assert.equal(again.results.filter((r: { phase: string }) => r.phase === 'created').length, 3);
   assert.deepEqual(Object.values(reg(dir).agents).map((a) => a.agentId).sort(), ids, 'same pre-minted agentIds');
 });
 
@@ -279,14 +282,14 @@ test('launch --via automation: webhook POST per item, agent id from response, tr
   const l = await run(dir, ['launch', '--spec', f, '--yes', '--json'], { env });
   assert.equal(l.code, 0, l.stderr + l.stdout);
   const res = JSON.parse(l.stdout).results;
-  assert.ok(res.every((r) => r.phase === 'created' && /^bc-/.test(r.agentId)));
+  assert.ok(res.every((r: { phase: string; agentId: string }) => r.phase === 'created' && /^bc-/.test(r.agentId)));
   assert.equal((mock.mockState.webhookPosts || 0) - posts0, 2);
   const w = await run(dir, ['watch', '--exit-when-done'], { env });
   assert.equal(w.code, 0, w.stdout);
   const r = reg(dir);
   for (const a of Object.values(r.agents)) {
     assert.equal(a.status, 'FINISHED');
-    assert.match(a.runs[a.runId].result, new RegExp(`fanout_key="${a.fanoutKey}"`));
+    assert.match(a.runs[a.runId as string].result as string, new RegExp(`fanout_key="${a.fanoutKey}"`));
   }
   // re-run: nothing new
   assert.equal(JSON.parse((await run(dir, ['launch', '--spec', f, '--yes', '--json'], { env })).stdout).toCreate, 0);
@@ -315,7 +318,7 @@ test('automation guards: launch refuses on config drift; apply refuses while pos
   const f = spec(dir, { batch: 'g', agents: [{ label: 'g1', prompt: 'x [script:RUNNING,FINISHED]' }] });
   assert.equal((await run(dir, ['launch', '--spec', f, '--yes', '--json'], { env })).code, 0);
   // someone edits the automation in the UI → launch refuses, nothing posted
-  mock.mockState.automation.workflow.prompts = [{ prompt: 'edited in UI' }];
+  mock.mockState.automation!.workflow.prompts = [{ prompt: 'edited in UI' }];
   const posts = mock.mockState.webhookPosts;
   const f2 = spec(dir, { batch: 'g2', agents: [{ label: 'g2', prompt: 'y' }] });
   const drift = await run(dir, ['launch', '--spec', f2, '--yes'], { env });
@@ -337,7 +340,7 @@ test('automation guards: launch refuses on config drift; apply refuses while pos
 });
 
 test('reply envelope: XML parsed, legacy lines still parsed, both hidden from summaries', async () => {
-  const u = await import('../lib/util.mjs');
+  const u = await import('../lib/util.ts');
   const xml = '<calliopi_result fanout_key="k1" agent_id="bc-1">\n<understood>check the README</understood>\n</calliopi_result>\n\nREADME title is X.';
   assert.deepEqual(u.replyMeta(xml), { fanoutKey: 'k1', agentId: 'bc-1', understood: 'check the README' });
   assert.equal(u.cleanResult(xml), 'README title is X.');

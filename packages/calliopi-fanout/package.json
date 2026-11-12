@@ -5,14 +5,21 @@
   "description": "Fan out Cursor Cloud Agents and track raw run status / summaries in the background (rex layer optional).",
   "type": "module",
   "bin": {
-    "calliopi-fanout": "./bin/tracker.mjs"
+    "calliopi-fanout": "./bin/tracker.ts"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "mock": "node test/mock-cursor.mjs"
+    "test": "node --test test/*.test.ts",
+    "mock": "node test/mock-cursor.ts",
+    "typecheck": "tsc -p ."
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2",
+    "@types/node": "^22",
+    "typescript": "^5.9"
   },
   "peerDependencies": {
     "@cursor/sdk": ">=1.3.1",

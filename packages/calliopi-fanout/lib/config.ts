@@ -1,13 +1,14 @@
 import path from 'node:path';
+import type { FanoutConfig } from './types.ts';
 
 /**
  * All paths derive from one state directory so that every process
  * (launcher, daemon, follow panes, rex Lua) agrees without shared memory.
  * Pass --dir explicitly from multiplexer layers: terminal panes don't inherit env reliably.
  */
-export function loadConfig(flags = {}) {
+export function loadConfig(flags: { dir?: string; rpm?: string | number; tick?: string | number; max?: string | number } = {}): FanoutConfig {
   const dir = path.resolve(flags.dir || process.env.CURSOR_FANOUT_DIR || '.cursor-fanout');
-  const num = (v, d) => (v == null || v === '' || Number.isNaN(Number(v)) ? d : Number(v));
+  const num = (v: string | number | undefined | null, d: number) => (v == null || v === '' || Number.isNaN(Number(v)) ? d : Number(v));
   return {
     dir,
     registryPath: path.join(dir, 'registry.json'),

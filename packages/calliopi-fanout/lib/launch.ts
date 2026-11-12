@@ -4,9 +4,39 @@
 // 409 agent_id_conflict (already created) → recovered via GET /v1/agents/{id}. No duplicates.
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { load, update, newAgentRecord } from './registry.mjs';
-import { ApiError } from './api.mjs';
-import { nowIso, oneLine, sha256, short } from './util.mjs';
+import { load, update, newAgentRecord } from './registry.ts';
+import { ApiError } from './api.ts';
+import { caught, nowIso, oneLine, sha256, short } from './util.ts';
+import type { AgentRecord, FanoutConfig, LaunchSpec, Logger, ModelsResponse, PlannedItem } from './types.ts';
+import type { CursorApi } from './api.ts';
+
+export interface LaunchCtx {
+  cfg: FanoutConfig;
+  api?: CursorApi;
+  log: Logger;
+  blocked?: string;
+}
+
+export interface LaunchResultRow {
+  label?: string | null;
+  agentId?: string | null;
+  runId?: string | null;
+  phase?: string;
+  error?: string;
+  fanoutKey?: string;
+}
+
+export interface LaunchSummary {
+  batch: string;
+  via?: string;
+  total: number;
+  toCreate: number;
+  skipped: { label?: string | null; agentId?: string | null; action: string }[];
+  approved?: boolean;
+  results: LaunchResultRow[];
+  plan?: { label: string; repo?: string | null; ref?: string | null; action: string; prompt: string; model?: string; billing: string; summary?: string | null; output?: string | null }[];
+  models?: Record<string, string>;
+}
 
 /**
  * Spec shape:
@@ -17,7 +47,7 @@ import { nowIso, oneLine, sha256, short } from './util.mjs';
  *   "matrix": { "prompts": [...], "repos": [...], "refs": [...] }        // optional cartesian product
  * }
  */
-export function expandSpec(spec) {
+export function expandSpec(spec: LaunchSpec): { batch: string; items: PlannedItem[] } {
   if (!spec || typeof spec !== 'object') throw new Error('spec must be a JSON object');
   const batch = spec.batch || `batch-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}`;
   const d = spec.defaults || {};
@@ -73,23 +103,23 @@ export function expandSpec(spec) {
 }
 
 /** One prompt text from the factored fields (REST path; the automation path sends the fields separately). */
-export function composePrompt({ summary, instruction, output }) {
+export function composePrompt({ summary, instruction, output }: { summary?: string | null; instruction: string; output?: string | null }): string {
   if (!summary && !output) return instruction;
   return [summary && `Summary: ${summary}`, `Instruction:\n${instruction}`, output && `Expected output:\n${output}`].filter(Boolean).join('\n\n');
 }
 
-const repoName = (u) => (u ? String(u).replace(/\/+$/, '').split('/').pop() : 'norepo');
+const repoName = (u: string | null | undefined) => (u ? String(u).replace(/\/+$/, '').split('/').pop() : 'norepo');
 
-export function buildBody(item, agentId) {
-  const body = { prompt: { text: item.prompt }, name: `${item.summary || item.label}`.slice(0, 100) };
+export function buildBody(item: PlannedItem, agentId: string | null): Record<string, unknown> {
+  const body: Record<string, unknown> = { prompt: { text: item.prompt }, name: `${item.summary || item.label}`.slice(0, 100) };
   if (agentId) body.agentId = agentId;
   if (item.repo) {
-    const repo = { url: item.repo };
+    const repo: Record<string, unknown> = { url: item.repo };
     if (item.prUrl) repo.prUrl = item.prUrl;
     else if (item.ref) repo.startingRef = item.ref;
     body.repos = [repo];
   }
-  for (const k of ['model', 'mode', 'autoCreatePR', 'workOnCurrentBranch', 'skipReviewerRequest']) {
+  for (const k of ['model', 'mode', 'autoCreatePR', 'workOnCurrentBranch', 'skipReviewerRequest'] as const) {
     if (item[k] != null) body[k] = item[k];
   }
   Object.assign(body, item.request);
@@ -98,7 +128,7 @@ export function buildBody(item, agentId) {
   return body;
 }
 
-export function plan(cfg, spec, { retryFailed = false } = {}) {
+export function plan(cfg: FanoutConfig, spec: LaunchSpec, { retryFailed = false }: { retryFailed?: boolean } = {}) {
   const { batch, items } = expandSpec(spec);
   const reg = load(cfg);
   const byKey = new Map(Object.values(reg.agents).filter((a) => a.key).map((a) => [a.key, a]));
@@ -113,11 +143,12 @@ export function plan(cfg, spec, { retryFailed = false } = {}) {
   return { batch, rows };
 }
 
-export async function launch(ctx, spec, { yes = false, retryFailed = false, concurrency = 3 } = {}) {
-  const { cfg, api, log } = ctx;
+export async function launch(ctx: LaunchCtx, spec: LaunchSpec, { yes = false, retryFailed = false, concurrency = 3 }: { yes?: boolean; retryFailed?: boolean; concurrency?: number } = {}): Promise<LaunchSummary> {
+  const { cfg, log } = ctx;
+  const api = ctx.api as CursorApi;
   const p = plan(cfg, spec, { retryFailed });
   const todo = p.rows.filter((r) => r.action === 'create' || r.action === 'resume');
-  const summary = {
+  const summary: LaunchSummary = {
     batch: p.batch,
     total: p.rows.length,
     toCreate: todo.length,
@@ -146,7 +177,7 @@ export async function launch(ctx, spec, { yes = false, retryFailed = false, conc
       let rec = Object.values(reg.agents).find((a) => a.key === item.key);
       if (!rec || rec.phase === 'create_failed') {
         const body = buildBody(item, `bc-${randomUUID()}`);
-        const agentId = body.agentId || null;
+        const agentId = (body.agentId as string | undefined) || null;
         const prev = rec;
         rec = newAgentRecord({
           agentId,
@@ -182,15 +213,16 @@ export async function launch(ctx, spec, { yes = false, retryFailed = false, conc
 // Account-level refusals: retrying other items would fail the same way.
 const ACCOUNT_BLOCKED = new Set(['usage_limit_exceeded', 'plan_required', 'integration_not_connected']);
 
-async function createOne(ctx, { item, agentId, regKey }) {
-  const { cfg, api, log } = ctx;
+async function createOne(ctx: LaunchCtx, { item, agentId, regKey }: { item: PlannedItem; agentId: string | null; regKey: string }): Promise<LaunchResultRow> {
+  const { cfg, log } = ctx;
+  const api = ctx.api as CursorApi;
   if (ctx.blocked) {
     return record(cfg, regKey, { phase: 'planned', createError: { at: nowIso(), code: ctx.blocked, message: `skipped: account blocked (${ctx.blocked})` } }, item);
   }
   const body = buildBody(item, agentId);
   // Server-minted id path (envVars): look for a previous attempt by its unique name first.
   if (!agentId) {
-    const found = await findByName(api, body.name).catch(() => null);
+    const found = await findByName(api, body.name as string).catch(() => null);
     if (found) return record(cfg, regKey, { phase: 'created', agentId: found.id, runId: found.latestRunId, url: found.url, name: found.name, recovered: 'name' }, item);
   }
   try {
@@ -200,36 +232,37 @@ async function createOne(ctx, { item, agentId, regKey }) {
       phase: 'created', agentId: res.agent.id, runId: res.run?.id ?? res.agent.latestRunId ?? null,
       status: res.run?.status ?? null, url: res.agent.url, name: res.agent.name,
     }, item);
-  } catch (e) {
+  } catch (e: unknown) {
     if (e instanceof ApiError && e.status === 409 && e.code === 'agent_id_conflict' && agentId) {
       const ag = await api.getAgent(agentId);
       log.info(`recovered ${short(agentId)} (already created by an earlier attempt) [${item.label}]`);
       return record(cfg, regKey, { phase: 'created', agentId, runId: ag.latestRunId ?? null, url: ag.url, name: ag.name, recovered: 'agent_id_conflict' }, item);
     }
-    if (e instanceof ApiError && ACCOUNT_BLOCKED.has(e.code)) {
+    if (e instanceof ApiError && e.code != null && ACCOUNT_BLOCKED.has(e.code)) {
       // Not created, nothing spent. Stay `planned` so a plain re-run (after top-up) resumes with the same agentId.
       ctx.blocked = e.code;
       log.warn(`create refused [${item.label}]: ${e.message} (request id ${e.requestId || '-'}) — skipping the rest; re-run after fixing the account`);
       return record(cfg, regKey, { phase: 'planned', createError: { at: nowIso(), status: e.status, code: e.code, message: e.message, requestId: e.requestId ?? null } }, item);
     }
-    const ambiguous = e.ambiguous || !(e instanceof ApiError) || e.status === 0 || e.status >= 500;
-    log.warn(`create failed [${item.label}]: ${e.message}${ambiguous ? ' (ambiguous; will resume on re-run)' : ''}`);
+    const err = caught(e);
+    const ambiguous = err.ambiguous || !(e instanceof ApiError) || err.status === 0 || (err.status as number) >= 500;
+    log.warn(`create failed [${item.label}]: ${err.message}${ambiguous ? ' (ambiguous; will resume on re-run)' : ''}`);
     return record(cfg, regKey, {
       phase: ambiguous ? 'planned' : 'create_failed',
-      createError: { at: nowIso(), status: e.status ?? null, code: e.code ?? null, message: e.message, requestId: e.requestId ?? null },
+      createError: { at: nowIso(), status: err.status ?? null, code: err.code ?? null, message: err.message, requestId: err.requestId ?? null },
     }, item);
   }
 }
 
-async function findByName(api, name) {
+async function findByName(api: CursorApi, name: string) {
   const res = await api.listAgents({ limit: 100 });
   return (res?.items || []).find((a) => a.name === name) || null;
 }
 
-async function record(cfg, regKey, fields, item) {
+async function record(cfg: FanoutConfig, regKey: string, fields: Partial<AgentRecord> & { phase?: string; runId?: string | null; status?: string | null; agentId?: string | null }, item: PlannedItem): Promise<LaunchResultRow> {
   return update(cfg, (reg) => {
     const rec = reg.agents[regKey];
-    if (!rec) return { label: item.label, ...fields };
+    if (!rec) return { label: item.label, ...fields } as LaunchResultRow;
     Object.assign(rec, fields);
     rec.attempts = (rec.attempts || 0) + 1;
     if (fields.phase === 'created') {
@@ -237,7 +270,7 @@ async function record(cfg, regKey, fields, item) {
       if (fields.runId) rec.runs[fields.runId] ??= { status: fields.status ?? null, createdAt: nowIso() };
       if (fields.status) rec.statusChangedAt = nowIso();
       rec.poll.nextAt = Date.now() + cfg.intervals.CREATING;
-      if (regKey !== fields.agentId) { delete reg.agents[regKey]; reg.agents[fields.agentId] = rec; }
+      if (regKey !== fields.agentId) { delete reg.agents[regKey]; reg.agents[fields.agentId as string] = rec; }
     }
     return { label: rec.label, agentId: rec.agentId, runId: rec.runId, phase: rec.phase, error: rec.createError?.message };
   });
@@ -250,27 +283,27 @@ async function record(cfg, regKey, fields, item) {
 // - Third-party: prepaid credit at API list price from the first request.
 // Observed 2026-11: with the pool unavailable, creates are refused with usage_limit_exceeded.
 const CURSOR_MODELS = /^(composer|grok)/i;
-export function billingClass(modelId) {
+export function billingClass(modelId: string | null | undefined): string {
   if (!modelId) return 'account default (user → team → system; not visible via API)';
   if (/^(auto|default)$/i.test(modelId)) return 'Auto: weekly pool (individual plans); Teams Router may route to third-party';
   return CURSOR_MODELS.test(modelId) ? 'Cursor model: weekly pool, then prepaid' : 'third-party: prepaid credit at API list price';
 }
 
 /** Resolve spec model ids/aliases against GET /v1/models (free). Throws before any create on unknown ids. */
-export async function validateModels(api, items) {
-  const wanted = [...new Set(items.map((i) => i.model?.id).filter(Boolean))];
+export async function validateModels(api: CursorApi, items: PlannedItem[]): Promise<Record<string, string>> {
+  const wanted = [...new Set(items.map((i) => i.model?.id).filter((id): id is string => Boolean(id)))];
   if (!wanted.length) return {};
-  const res = await api.request('GET', '/v1/models');
-  const index = new Map();
+  const res = await api.request<ModelsResponse>('GET', '/v1/models');
+  const index = new Map<string, string>();
   for (const m of res?.items || []) for (const k of [m.id, ...(m.aliases || [])]) if (!index.has(k)) index.set(k, m.id);
   const unknown = wanted.filter((w) => !index.has(w));
   if (unknown.length) {
     throw new Error(`unknown model id(s): ${unknown.join(', ')} — see GET /v1/models (e.g. auto, grok-4.7, composer-2.5)`);
   }
-  return Object.fromEntries(wanted.map((w) => [w, index.get(w)]));
+  return Object.fromEntries(wanted.map((w) => [w, index.get(w) as string]));
 }
 
-export function readSpec(file) {
+export function readSpec(file: string): LaunchSpec {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
@@ -280,15 +313,17 @@ export function readSpec(file) {
 // Webhooks have no client-supplied id, so a lost response is AMBIGUOUS: we never auto-repost it
 // (phase post_ambiguous); the agent's reply line FANOUT_KEY=<key> lets you reconcile afterwards.
 import { randomUUID as uuid } from 'node:crypto';
-import { postWebhook, acquireInflight, releaseInflight } from './automation.mjs';
+import { postWebhook, acquireInflight, releaseInflight } from './automation.ts';
 
-export async function launchViaAutomation(ctx, spec, { yes = false, retryFailed = false, webhook, automationRepo = null, gapMs = 800 } = {}) {
+export async function launchViaAutomation(ctx: LaunchCtx, spec: LaunchSpec, { yes = false, retryFailed = false, webhook, automationRepo = null, gapMs = 800 }: {
+  yes?: boolean; retryFailed?: boolean; webhook: { url: string; key: string }; automationRepo?: string | null; gapMs?: number;
+}): Promise<LaunchSummary> {
   const { cfg, log } = ctx;
   const p = plan(cfg, spec, { retryFailed });
   const rows = p.rows.map((r) => ({ ...r, action: r.rec?.phase === 'post_ambiguous' ? 'skip:ambiguous' : r.action }));
   const todo = rows.filter((r) => r.action === 'create' || r.action === 'resume');
   const mismatch = automationRepo ? todo.filter((r) => r.item.repo && norm(r.item.repo) !== norm(automationRepo)) : [];
-  const summary = {
+  const summary: LaunchSummary = {
     batch: p.batch, via: 'automation', total: rows.length, toCreate: todo.length, approved: yes,
     skipped: rows.filter((r) => r.action.startsWith('skip')).map((r) => ({ label: r.item.label, agentId: r.rec?.agentId, action: r.action })),
     results: [],
@@ -314,12 +349,12 @@ export async function launchViaAutomation(ctx, spec, { yes = false, retryFailed 
         repo: automationRepo || item.repo, promptPreview: oneLine(item.prompt, 120), promptSha: sha256(item.prompt).slice(0, 16),
       });
     });
-    let res; let err = null;
+    let res: { status: number; headers: Record<string, string>; body: { backgroundComposerId?: string } | null; text: string } | undefined; let err: ReturnType<typeof caught> | null = null;
     const payload = { fanout_key: fanoutKey, label: item.label, summary: item.summary, instruction: item.instruction ?? item.prompt, output: item.output };
-    try { res = await postWebhook(webhook, payload); } catch (e) { err = e; }
+    try { res = await postWebhook(webhook, payload); } catch (e: unknown) { err = caught(e); }
     const agentId = res?.body?.backgroundComposerId;
     const fields = agentId
-      ? { phase: 'created', agentId, requestId: res.headers['x-request-id'] ?? null }
+      ? { phase: 'created', agentId, requestId: res!.headers['x-request-id'] ?? null }
       : err || !res || res.status >= 500
         ? { phase: 'post_ambiguous', createError: { at: nowIso(), status: res?.status ?? 0, message: err?.message || `HTTP ${res?.status}`, requestId: res?.headers?.['x-request-id'] ?? null } }
         : { phase: 'create_failed', createError: { at: nowIso(), status: res.status, message: res.text?.slice(0, 200), requestId: res.headers['x-request-id'] ?? null } };
@@ -337,4 +372,4 @@ export async function launchViaAutomation(ctx, spec, { yes = false, retryFailed 
   return summary;
 }
 
-const norm = (u) => String(u).replace(/^(https?:\/\/)?(www\.)?github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '').toLowerCase();
+const norm = (u: string) => String(u).replace(/^(https?:\/\/)?(www\.)?github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '').toLowerCase();

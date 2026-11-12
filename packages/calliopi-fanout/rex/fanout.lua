@@ -2,10 +2,10 @@
 --
 -- Thin by design: it only (1) starts the multiplexer-agnostic tracker detached,
 -- (2) places panes, and (3) reacts to `terminal.child_exited` events. All state
--- is read from the tracker's registry through `tracker.mjs ... --json`; this
+-- is read from the tracker's registry through `tracker.ts ... --json`; this
 -- script never talks to the Cursor API and never sees the API key.
 --
---   rex do rex/fanout.lua tracker=/abs/bin/tracker.mjs dir=/abs/.cursor-fanout node=/abs/node
+--   rex do rex/fanout.lua tracker=/abs/bin/tracker.ts dir=/abs/.cursor-fanout node=/abs/node
 --        [daemon=lua|none] [panes=true|false] [listen=true|false]
 --        [zoom_failures=true] [stop_when_done=false] [cols=3] [max_panes=9]
 --
@@ -14,7 +14,7 @@
 -- the server do NOT inherit the caller's environment.
 
 local A = rex.args or {}
-local TRACKER = A.tracker or error("tracker=/abs/path/to/bin/tracker.mjs is required", 0)
+local TRACKER = A.tracker or error("tracker=/abs/path/to/bin/tracker.ts is required", 0)
 local DIR = A.dir or error("dir=/abs/path/to/state-dir is required", 0)
 local NODE = A.node or "node"
 local CWD = A.cwd

@@ -76,11 +76,11 @@ review: {
 
 ## 현재 코드에서 확인된 제약
 
-1. `lib/registry.mjs: trackable()`은 finalized agent를 제외한다.
-2. `bin/tracker.mjs: watch --exit-when-done`은 전체 실행 종료 후 멈춘다.
+1. `lib/registry.ts: trackable()`은 finalized agent를 제외한다.
+2. `bin/tracker.ts: watch --exit-when-done`은 전체 실행 종료 후 멈춘다.
 3. 따라서 완료 후 PR 생성·병합·외부에서 시작한 후속 Run은 자동 발견하지 못한다. 로컬 followup 명령으로 재개하는 경로와 다르다.
-4. `lib/poller.mjs`는 실행 종료 때 결과를 최종화하지만 GitHub PR 상태는 조회하지 않는다.
-5. `lib/stream.mjs`는 status 이벤트를 출력하며, 결과 이벤트의 레지스트리 반영과 실시간 상태 이벤트 반영은 구분돼 있다.
+4. `lib/poller.ts`는 실행 종료 때 결과를 최종화하지만 GitHub PR 상태는 조회하지 않는다.
+5. `lib/stream.ts`는 status 이벤트를 출력하며, 결과 이벤트의 레지스트리 반영과 실시간 상태 이벤트 반영은 구분돼 있다.
 6. 현황 리뷰는 현재 branches[0]을 사용한다. 다중 브랜치 작업에서는 산출물 선택 단계가 필요하다.
 7. 기존 하단 strip을 우측 상단 비포커스 floating 목록으로 교체했다. 실행/검토/보관을 분리한다.
 

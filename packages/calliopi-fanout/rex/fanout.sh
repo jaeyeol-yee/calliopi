@@ -13,7 +13,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PKG=$(dirname "$HERE")
-TRACKER="$PKG/bin/tracker.mjs"
+TRACKER="$PKG/bin/tracker.ts"
 LUA="$HERE/fanout.lua"
 NODE=${NODE:-$(command -v node)}
 REX=${REX:-$(command -v rex)}

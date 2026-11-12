@@ -78,4 +78,4 @@
 
 ## 구현 상태
 
-`lib/github-review.mjs`와 `bin/review-watch.mjs`에 metadata cache, 조건부 요청, 인증 scope별 공유 예산/lease, 3분 주기, 상세 30초 TTL, 오류 시 기존 상태 보존을 구현했다. 테스트는 모의 HTTP 응답으로 수행하며 유료 Cursor 실행을 만들지 않는다. 리뷰 상태는 로컬 registry에 복사하고 UI는 그 값만 읽는다. 여러 머신 간 큐 공유와 webhook 수신은 구현하지 않는다.
+`lib/github-review.ts`와 `bin/review-watch.ts`에 metadata cache, 조건부 요청, 인증 scope별 공유 예산/lease, 3분 주기, 상세 30초 TTL, 오류 시 기존 상태 보존을 구현했다. 테스트는 모의 HTTP 응답으로 수행하며 유료 Cursor 실행을 만들지 않는다. 리뷰 상태는 로컬 registry에 복사하고 UI는 그 값만 읽는다. 여러 머신 간 큐 공유와 webhook 수신은 구현하지 않는다.
