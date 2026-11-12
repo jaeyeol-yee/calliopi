@@ -1,0 +1,45 @@
+{
+  "name": "@calliopi/calliopi-workflows",
+  "version": "0.0.0",
+  "private": true,
+  "description": "fzf-driven workflows in Pi's floating terminal: /calliopi-edit (file → Vim) and /calliopi-log (commit → file → diff).",
+  "type": "module",
+  "imports": {
+    "#lib/*": "./lib/*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "smoke": "node scripts/smoke.ts",
+    "typecheck": "tsc -p ."
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@calliopi/core": "*",
+    "@calliopi/ui": "*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@xterm/headless": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "@types/node": "^22",
+    "typescript": "^5.9"
+  },
+  "keywords": [
+    "pi-package"
+  ]
+}

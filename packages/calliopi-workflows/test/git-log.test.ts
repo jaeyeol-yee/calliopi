@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseNumstat, parseCommits, listCommits, listFiles, commitBase, browseLog, repositoryRoot } from '#lib/git-log.ts';
-import { TerminalOverlay } from '#lib/terminal-overlay.ts';
+import { TerminalOverlay } from '@calliopi/ui/terminal-overlay';
 import type { Terminal } from '@xterm/headless';
 
 const has = (command: string) => spawnSync('/bin/sh', ['-c', 'command -v "$1"', 'sh', command]).status === 0;

@@ -2,7 +2,7 @@
 
 Pi 위에 얹는 모듈형 로컬 하네스. 브랜드는 Calliopi, 내부 패키지는 역할을 드러내는 이름을 사용합니다.
 
-현재 Cursor Cloud Agents 팬아웃·추적 확장과 Pi 내부 floating 파일 편집기를 제공합니다. `core`, `context`는 아직 스켈레톤입니다.
+현재 Cursor Cloud Agents 팬아웃·추적 확장과 Pi 내부 floating terminal 워크플로우(파일 편집, git 기록 탐색)를 제공합니다. `context`는 아직 스켈레톤입니다.
 
 ## 이름의 유래
 
@@ -22,6 +22,7 @@ calliopi/
 └── packages/
     ├── core/
     │   ├── package.json
+    │   ├── lib/              # fzf 선택·실행기 타입 (의존성 없음)
     │   └── extensions/       # 기본 명령·초기화·공통 설정
     ├── context/
     │   ├── package.json
@@ -30,16 +31,20 @@ calliopi/
     │   └── prompts/          # 반복 요청 템플릿
     ├── ui/
     │   ├── package.json
-    │   ├── extensions/       # 상태 표시·알림·TUI
+    │   ├── lib/              # floating terminal·표·키 입력 부품
+    │   ├── extensions/       # 대화 기록 헤더
     │   └── themes/           # Pi 테마 JSON
-    └── calliopi-fanout/      # Cursor Cloud Agents 팬아웃·추적 (Pi 확장·rex 레이어 포함)
+    ├── calliopi-fanout/      # Cursor Cloud Agents 팬아웃·추적 (Pi 확장·rex 레이어 포함)
+    └── calliopi-workflows/   # fzf 워크플로우: /calliopi-edit, /calliopi-log
 ```
 
 `calliopi-fanout`은 Pi manifest에 등록된 확장으로 `/calliopi-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/calliopi-fanout/README.md](packages/calliopi-fanout/README.md)를 보세요.
 
-`ui`의 `/calliopi-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/calliopi-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 대화 기록에는 사용자 입력과 Pi 답변 앞에 헤더를 붙입니다(`/calliopi-headers`). 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
+`calliopi-workflows`의 `/calliopi-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/calliopi-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
 
-`core`, `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
+`ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙입니다(`/calliopi-headers`). 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
+
+`core/extensions`와 `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
 
 ## 패키지 연결 구조
 
@@ -51,13 +56,14 @@ calliopi/package.json 의 pi manifest
           ├── packages/core/extensions
           ├── packages/context/{extensions,skills,prompts}
           ├── packages/ui/{extensions,themes}
-          └── packages/calliopi-fanout/extensions
+          ├── packages/calliopi-fanout/extensions
+          └── packages/calliopi-workflows/extensions
 ```
 
 - Pi는 루트 manifest에 명시된 리소스 경로를 읽습니다. 하위 `package.json`의 `pi` 선언을 재귀 탐색하는 구조가 아닙니다.
 - `workspaces`는 개발용 패키지 경계입니다. Pi의 리소스 발견과는 별개입니다.
 - 하위 패키지에도 자체 `pi` 선언을 두어 각 패키지의 리소스를 설명합니다. 전체 하네스를 쓸 때는 루트만 등록하세요. 루트와 하위 패키지를 중복 등록할 필요가 없습니다.
-- 패키지 사이의 코드 의존성은 현재 `calliopi-fanout → ui` 하나입니다(`@calliopi/ui/table`). 의존 방향은 한쪽으로만 둡니다. 향후 `core`가 생기면 다른 패키지를 참조하지 않도록 합니다.
+- 패키지 사이의 코드 의존성은 `calliopi-fanout → ui`, `calliopi-workflows → ui, core`, `ui → core`입니다. 의존 방향은 한쪽으로만 두고, `core`는 다른 패키지를 참조하지 않습니다.
 
 ### import 규칙
 

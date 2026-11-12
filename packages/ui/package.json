@@ -2,13 +2,16 @@
   "name": "@calliopi/ui",
   "version": "0.0.0",
   "private": true,
-  "description": "Status display, notifications, terminal UI, and themes for Calliopi.",
+  "description": "Presentation for Calliopi: floating terminal overlays, tables, transcript headers, themes.",
   "type": "module",
   "imports": {
     "#lib/*": "./lib/*"
   },
   "exports": {
     "./table": "./lib/table.ts",
+    "./overlay-session": "./lib/overlay-session.ts",
+    "./terminal-overlay": "./lib/terminal-overlay.ts",
+    "./terminal-input": "./lib/terminal-input.ts",
     "./package.json": "./package.json"
   },
   "pi": {
@@ -22,7 +25,6 @@
   "scripts": {
     "postinstall": "node scripts/prepare-pty.ts",
     "test": "node --test test/*.test.ts",
-    "smoke": "node scripts/smoke-picker.ts",
     "typecheck": "tsc -p ."
   },
   "engines": {

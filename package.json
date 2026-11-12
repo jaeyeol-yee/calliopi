@@ -15,7 +15,8 @@
       "./packages/core/extensions",
       "./packages/context/extensions",
       "./packages/ui/extensions",
-      "./packages/calliopi-fanout/extensions"
+      "./packages/calliopi-fanout/extensions",
+      "./packages/calliopi-workflows/extensions"
     ],
     "skills": [
       "./packages/context/skills"

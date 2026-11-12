@@ -3,9 +3,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fzfSelect, shellQuote, cleanDisplay, fzfEnv, nodePreview, parseSelectResult, type FzfSelection } from '@calliopi/core/fzf';
-import { keyName } from '#lib/terminal-input.ts';
+import { keyName } from '@calliopi/ui/terminal-input';
 import type { RunProgram } from '@calliopi/core/types';
-import type { TerminalOverlay } from '#lib/terminal-overlay.ts';
+import type { TerminalOverlay } from '@calliopi/ui/terminal-overlay';
 
 const previewScript = fileURLToPath(new URL('../bin/git-preview.ts', import.meta.url));
 export const MAX_COMMITS = 2000;
