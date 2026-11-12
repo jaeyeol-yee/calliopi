@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { listFiles } from '../lib/file-edit.ts';
-import { editOneFile } from '../lib/editor-flow.ts';
+import { editOneFile, type EditResult } from '../lib/editor-flow.ts';
 import { preflight, openOverlaySession } from '../lib/overlay-session.ts';
 
 export default function (pi: ExtensionAPI) {
@@ -30,23 +30,24 @@ export default function (pi: ExtensionAPI) {
         if (!candidates.length) return ctx.ui.notify('선택할 파일이 없습니다. ignored·hidden·민감 파일은 제외합니다.', 'info');
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-edit-'));
         const privateDirectory = directory;
-        const result: any = await openOverlaySession(ctx, {
+        const result = await openOverlaySession<EditResult | null>(ctx, {
           cwd: ctx.cwd, inputLog,
           title: ' Calliopi · fzf → Vim ', footer: ' Esc: fzf 취소 · :q: 편집 종료 ',
           blocked: { kind: 'question', message: '파일 선택 또는 Vim 편집 중' },
-          isShuttingDown: () => shuttingDown, setClose: (fn: any) => { close = fn; },
-          flow: ({ run, cancelled }: any) => editOneFile({ cwd: ctx.cwd, candidates, directory: privateDirectory, run, cancelled }),
+          isShuttingDown: () => shuttingDown, setClose: (fn) => { close = fn; },
+          flow: ({ run, cancelled }) => editOneFile({ cwd: ctx.cwd, candidates, directory: privateDirectory, run, cancelled }),
         });
         if (shuttingDown) return;
         if (inputLog) ctx.ui.notify(`입력 진단 로그: ${inputLog}`, 'info');
-        if (result?.error) throw new Error(result.error);
+        if (result && 'error' in result) throw new Error(result.error);
         if (result?.content) {
           pi.sendMessage({ customType: 'calliopi-file-edit', content: result.content, display: false, details: { file: result.file } }, { deliverAs: 'nextTurn' });
           ctx.ui.notify(`${result.file} 변경 사항을 다음 대화에 전달합니다.`, 'info');
         } else if (result?.file) ctx.ui.notify(`${result.file}: 변경 없음`, 'info');
         if (result?.exitCode) ctx.ui.notify(`Vim이 코드 ${result.exitCode}로 종료했습니다. 저장된 변경은 반영했습니다.`, 'warning');
-      } catch (error: any) {
-        if (!shuttingDown) ctx.ui.notify(`파일 편집기: ${error.message}`, 'error');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!shuttingDown) ctx.ui.notify(`파일 편집기: ${message}`, 'error');
       } finally {
         close?.(); close = undefined;
         if (directory) fs.rmSync(directory, { recursive: true, force: true });

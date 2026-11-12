@@ -2,10 +2,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pickerCommand, parseSelection, snapshot, changeMessage, resolveProjectFile } from './file-edit.ts';
+import type { RunProgram } from './types.ts';
 
-const preview = fileURLToPath(new URL('../bin/file-preview.mjs', import.meta.url));
+const preview = fileURLToPath(new URL('../bin/file-preview.ts', import.meta.url));
 
-export async function editOneFile({ cwd, candidates, directory, run, cancelled = () => false }) {
+export interface EditResult {
+  file: string;
+  content: string | null;
+  exitCode: number;
+}
+
+export interface EditOneFileOptions {
+  cwd: string;
+  candidates: readonly string[];
+  directory: string;
+  run: RunProgram;
+  cancelled?: () => boolean;
+}
+
+export async function editOneFile({ cwd, candidates, directory, run, cancelled = () => false }: EditOneFileOptions): Promise<EditResult | null> {
   const list = path.join(directory, 'files');
   const selection = path.join(directory, 'selection');
   fs.writeFileSync(list, `${candidates.join('\0')}\0`, { mode: 0o600 });

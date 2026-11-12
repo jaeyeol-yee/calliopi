@@ -1,6 +1,6 @@
 // Offline end-to-end smoke test against an installed Pi. Never sends a prompt to a model.
 // PI_BINARY=/path/to/pi npm run smoke --workspace @calliopi/ui
-import pty from 'node-pty';
+import pty, { type IPty } from 'node-pty';
 import xterm from '@xterm/headless';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,14 +10,14 @@ import { spawnSync } from 'node:child_process';
 
 const extension = fileURLToPath(new URL('../extensions/file-picker.ts', import.meta.url));
 const logExtension = fileURLToPath(new URL('../extensions/git-log.ts', import.meta.url));
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 for (const mode of ['fullscreen', 'regular']) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-pi-smoke-'));
   const term = new xterm.Terminal({ cols: 110, rows: 38, allowProposedApi: true, scrollback: 3000, logLevel: 'off' });
-  let child;
+  let child: IPty | undefined;
   const screen = () => Array.from({ length: term.rows }, (_, y) => term.buffer.active.getLine(term.buffer.active.viewportY + y)?.translateToString(true) || '').join('\n');
-  const wait = async (predicate, label) => {
+  const wait = async (predicate: () => boolean, label: string) => {
     const start = Date.now();
     while (!predicate()) {
       if (Date.now() - start > 12_000) throw new Error(`${mode}: ${label}\n${screen()}`);
@@ -31,7 +31,7 @@ for (const mode of ['fullscreen', 'regular']) {
       '--no-context-files', '--no-mcp', '--no-approve', '--tui-mode', mode, '-e', extension, '-e', logExtension,
     ], { cwd, cols: 110, rows: 38, env: { ...process.env, TERM: 'xterm-256color' } });
     child.onData(data => term.write(data));
-    term.onData(data => child.write(data));
+    term.onData(data => child?.write(data));
     await wait(() => screen().includes(path.basename(cwd)) && screen().includes('git-log.ts'), 'Pi startup');
     child.write('/calliopi-edit\r');
     await wait(() => screen().includes('File >') && screen().includes('sample.txt'), 'fzf overlay');
@@ -48,7 +48,7 @@ for (const mode of ['fullscreen', 'regular']) {
     console.log(`${mode}: fzf → Vim → save → Pi notification → reopen → Esc: OK`);
 
     // /calliopi-log: commit → file → pager → q → Esc → Esc back to Pi.
-    const git = (...args) => spawnSync('git', args, { cwd, stdio: 'ignore' });
+    const git = (...args: string[]) => spawnSync('git', args, { cwd, stdio: 'ignore' });
     git('init', '-q'); git('-c', 'user.name=t', '-c', 'user.email=t@e', 'add', 'sample.txt');
     git('-c', 'user.name=t', '-c', 'user.email=t@e', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'smoke commit');
     // Split view (110 columns ≥ 100): commits left, files + diff right.

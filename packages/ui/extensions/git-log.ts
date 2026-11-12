@@ -28,20 +28,21 @@ export default function (pi: ExtensionAPI) {
       active = true;
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-log-'));
       try {
-        const result: any = await openOverlaySession(ctx, {
+        const result = await openOverlaySession<{ empty: true } | null>(ctx, {
           // Run at the repository root: diff paths are root-relative.
           cwd: root, title: ' Calliopi · git log ', footer: ' Enter: 변경 파일 · Esc: 닫기 ',
-          isShuttingDown: () => shuttingDown, setClose: (fn: any) => { close = fn; },
+          isShuttingDown: () => shuttingDown, setClose: (fn) => { close = fn; },
           // Split view needs room for two fzf panes; narrow terminals use one step at a time.
-          flow: ({ run, setFooter, cancelled, view }: any) => !steps && view.tui.terminal.columns >= 100
+          flow: ({ run, setFooter, cancelled, view }) => !steps && view.tui.terminal.columns >= 100
             ? browseLogSplit({ root, directory, view, setFooter, cancelled })
             : browseLog({ root, directory, run, setFooter, cancelled }),
         });
         if (shuttingDown) return;
-        if (result?.error) throw new Error(result.error);
+        if (result && 'error' in result) throw new Error(result.error);
         if (result?.empty) ctx.ui.notify('아직 커밋이 없습니다.', 'info');
-      } catch (error: any) {
-        if (!shuttingDown) ctx.ui.notify(`git 기록: ${error.message}`, 'error');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!shuttingDown) ctx.ui.notify(`git 기록: ${message}`, 'error');
       } finally {
         close?.(); close = undefined;
         fs.rmSync(directory, { recursive: true, force: true });
