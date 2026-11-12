@@ -1,4 +1,4 @@
-const specials = {
+const specials: Record<number, string> = {
   27: '\x1b', 13: '\r', 9: '\t', 127: '\x7f',
   57348: '\x1b[2~', 57349: '\x1b[3~',
   57350: '\x1b[D', 57351: '\x1b[C', 57352: '\x1b[A', 57353: '\x1b[B',
@@ -7,10 +7,15 @@ const specials = {
   57368: '\x1b[15~', 57369: '\x1b[17~', 57370: '\x1b[18~', 57371: '\x1b[19~',
   57372: '\x1b[20~', 57373: '\x1b[21~', 57374: '\x1b[23~', 57375: '\x1b[24~',
 };
-const shifted = Object.fromEntries([..."`1234567890-=[]\\;',./"].map((key, i) => [key, '~!@#$%^&*()_+{}|:"<>?'[i]]));
+const shifted: Record<string, string> = Object.fromEntries([..."`1234567890-=[]\\;',./"].map((key, i) => [key, '~!@#$%^&*()_+{}|:"<>?'[i]]));
+
+export interface TerminalInputModes {
+  bracketedPasteMode?: boolean;
+  applicationCursorKeysMode?: boolean;
+}
 
 // The outer terminal uses Pi's Kitty keyboard protocol; the inner PTY advertises xterm-256color.
-export function terminalInput(data, modes = {}) {
+export function terminalInput(data: string, modes: TerminalInputModes = {}): string {
   if (data.includes('\x1b[200~') || data.includes('\x1b[201~')) {
     return modes.bracketedPasteMode ? data : data.replaceAll('\x1b[200~', '').replaceAll('\x1b[201~', '');
   }
@@ -33,8 +38,8 @@ export function terminalInput(data, modes = {}) {
     if (mod && /^\x1bO[PQRS]$/.test(text)) return `\x1b[1;${mod + 1}${text.at(-1)}`;
     if ((mod & 4) && text.length === 1) {
       const n = text.toUpperCase().charCodeAt(0);
-      text = n >= 64 && n <= 95 ? String.fromCharCode(n - 64)
-        : ({ ' ': '\0', '2': '\0', '3': '\x1b', '4': '\x1c', '5': '\x1d', '6': '\x1e', '7': '\x1f', '8': '\x7f', '\x7f': '\x08' }[text] ?? text);
+      const controls: Record<string, string> = { ' ': '\0', '2': '\0', '3': '\x1b', '4': '\x1c', '5': '\x1d', '6': '\x1e', '7': '\x1f', '8': '\x7f', '\x7f': '\x08' };
+      text = n >= 64 && n <= 95 ? String.fromCharCode(n - 64) : (controls[text] ?? text);
     }
     if ((mod & 1) && code === 9) text = '\x1b[Z';
     if (mod & 2) text = `\x1b${text}`;
@@ -56,14 +61,15 @@ export function terminalInput(data, modes = {}) {
 
 // Key names for keys the overlay itself handles (pane focus, closing). Press/repeat only;
 // releases return null and are dropped by terminalInput() anyway.
-export function keyName(data) {
-  const legacy = { '\r': 'enter', '\x1b': 'escape', '\t': 'tab', '\x1b[Z': 'shift+tab', '\x03': 'ctrl+c' }[data];
-  if (legacy) return legacy;
+export function keyName(data: string): string | null {
+  const legacy: Record<string, string> = { '\r': 'enter', '\x1b': 'escape', '\t': 'tab', '\x1b[Z': 'shift+tab', '\x03': 'ctrl+c' };
+  const named = legacy[data];
+  if (named) return named;
   const kitty = /^\x1b\[(\d+)(?::\d*)?(?::\d*)?(?:;(\d*)(?::(\d+))?)?(?:;[\d:]*)?u$/.exec(data);
   if (!kitty || kitty[3] === '3') return null;
   const code = Number(kitty[1]);
   const mod = (Number(kitty[2] || 1) - 1) & ~(64 | 128); // ignore Caps/Num Lock
-  if (mod === 0) return { 13: 'enter', 27: 'escape', 9: 'tab' }[code] ?? null;
+  if (mod === 0) return ({ 13: 'enter', 27: 'escape', 9: 'tab' } as Record<number, string | undefined>)[code] ?? null;
   if (mod === 1 && code === 9) return 'shift+tab';
   if (mod === 4 && code === 99) return 'ctrl+c';
   return null;

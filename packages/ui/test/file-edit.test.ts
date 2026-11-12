@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { changeMessage, snapshot, resolveProjectFile, sensitivePath, parseSelection, listFiles, MAX_FILE_BYTES } from '../lib/file-edit.ts';
 import { editOneFile } from '../lib/editor-flow.ts';
 
-function fixture(t) {
+function fixture(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-ui-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
@@ -20,6 +20,7 @@ test('compare against the pre-editor snapshot, not Git HEAD; no-op produces no m
   assert.equal(changeMessage(file, before, snapshot(dir, file)), null);
   fs.writeFileSync(path.join(dir, file), 'new edit\n');
   const message = changeMessage(file, before, snapshot(dir, file));
+  if (message === null) throw new Error('expected a change message');
   assert.match(message, /-already dirty/);
   assert.match(message, /\+new edit/);
   assert.match(message, /Do not start work solely/);
@@ -31,12 +32,16 @@ test('deletion is reported and binary/large/non-UTF-8 content is not attached', 
   fs.writeFileSync(absolute, 'before\n');
   const before = snapshot(dir, 'file');
   fs.unlinkSync(absolute);
-  assert.match(changeMessage('file', before, snapshot(dir, 'file')), /deleted/);
+  const deleted = changeMessage('file', before, snapshot(dir, 'file'));
+  if (deleted === null) throw new Error('expected a deletion message');
+  assert.match(deleted, /deleted/);
   for (const data of [Buffer.from([0, 255]), Buffer.from([255]), Buffer.alloc(MAX_FILE_BYTES + 1, 65)]) {
     fs.writeFileSync(absolute, data);
     const after = snapshot(dir, 'file');
     assert.equal(after.text, null);
-    assert.match(changeMessage('file', before, after), /Diff omitted/);
+    const omitted = changeMessage('file', before, after);
+    if (omitted === null) throw new Error('expected an omission message');
+    assert.match(omitted, /Diff omitted/);
   }
 });
 
@@ -45,7 +50,9 @@ test('large diffs are summarized, not truncated into misleading patches', t => {
   fs.writeFileSync(file, 'before\n');
   const before = snapshot(dir, 'file');
   fs.writeFileSync(file, 'after\n'.repeat(500));
-  assert.match(changeMessage('file', before, snapshot(dir, 'file')), /over 24 KiB or 400 lines/);
+  const summary = changeMessage('file', before, snapshot(dir, 'file'));
+  if (summary === null) throw new Error('expected a summary');
+  assert.match(summary, /over 24 KiB or 400 lines/);
 });
 
 test('sensitive names, traversal and symlinks outside project are rejected', t => {
@@ -93,6 +100,7 @@ test('flow returns on fzf cancellation and only launches Vim after valid selecti
     return { exitCode: 0 };
   } });
   assert.equal(calls, 2);
+  if (result === null || result.content === null) throw new Error('expected an edit');
   assert.match(result.content, /\+after/);
   calls = 0;
   assert.equal(await editOneFile({ cwd: dir, candidates: ['-file with spaces'], directory: temp, run: async () => { calls++; return { exitCode: 130 }; } }), null);
@@ -109,6 +117,7 @@ test('failed editor still reports saved changes; lifecycle cancellation skips re
     return { exitCode: calls === 1 ? 0 : 1 };
   };
   const result = await editOneFile({ cwd: dir, candidates: ['file'], directory: temp, run });
+  if (result === null || result.content === null) throw new Error('expected an edit');
   assert.equal(result.exitCode, 1);
   assert.match(result.content, /saved before failure/);
   assert.equal(await editOneFile({ cwd: dir, candidates: ['file'], directory: temp, run: async () => ({ exitCode: 0 }), cancelled: () => true }), null);

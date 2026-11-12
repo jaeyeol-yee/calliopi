@@ -13,9 +13,13 @@
     ]
   },
   "scripts": {
-    "postinstall": "node scripts/prepare-pty.mjs",
-    "test": "node --test test/*.test.mjs",
-    "smoke": "node scripts/smoke-picker.mjs"
+    "postinstall": "node scripts/prepare-pty.ts",
+    "test": "node --test test/*.test.ts",
+    "smoke": "node scripts/smoke-picker.ts",
+    "typecheck": "tsc -p ."
+  },
+  "engines": {
+    "node": ">=22.18"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -28,5 +32,11 @@
   "dependencies": {
     "@xterm/headless": "^6.0.0",
     "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2",
+    "@types/node": "^22",
+    "typescript": "^5.9"
   }
 }

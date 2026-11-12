@@ -8,6 +8,7 @@ import { isUtf8 } from 'node:buffer';
 const MAX_BYTES = 1024 * 1024;
 const [listPath, file] = process.argv.slice(2);
 try {
+  if (!listPath) throw new Error('not a candidate');
   const candidates = fs.readFileSync(listPath, 'utf8').split('\0');
   if (!file || !candidates.includes(file)) throw new Error('not a candidate');
   const absolute = path.resolve(process.cwd(), file);

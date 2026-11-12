@@ -69,18 +69,20 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 
 ### 구조
 
+`lib`은 `.mjs`를 쓰지 않습니다. Pi의 `/reload`가 Node ESM 캐시에 남아 있는 `.mjs`를 다시 읽지 않기 때문입니다.
+
 ```text
 extensions/file-picker.ts   /calliopi-edit · 다음 턴 메시지
 extensions/git-log.ts       /calliopi-log
 lib/overlay-session.ts      공용 overlay 수명·키 입력 점유·사전 확인
 lib/fzf.ts                  번호 기반 fzf 선택(검색어·커서 복원)
 lib/git-log.ts              커밋·파일 목록, 분할/단계별 탐색 흐름
-bin/git-preview.mjs         커밋/파일 미리보기
+bin/git-preview.ts          커밋/파일 미리보기
 lib/terminal-overlay.ts    pane(node-pty ↔ @xterm/headless) ↔ Pi 렌더러, 단일/분할 배치
 lib/terminal-input.ts      외부 Kitty 키 입력 → 내부 xterm 키 입력
 lib/editor-flow.ts         fzf → 스냅샷 → Vim → 변경 비교
 lib/file-edit.ts           파일 목록·경로 검사·스냅샷·diff
-bin/file-preview.mjs        bat preview / plain-text fallback
+bin/file-preview.ts         bat preview / plain-text fallback
 ```
 
 자식 프로세스의 ANSI 출력은 headless 터미널이 해석하고 Pi에는 화면 셀과 SGR 스타일만 전달합니다. 자식의 커서 이동·alternate screen·OSC clipboard 명령을 실제 Pi 터미널로 직접 쓰지 않습니다.

@@ -4,18 +4,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import xterm from '@xterm/headless';
+import xterm, { type Terminal } from '@xterm/headless';
 import { terminalInput } from '../lib/terminal-input.ts';
-import { TerminalOverlay, screenLines } from '../lib/terminal-overlay.ts';
+import { TerminalOverlay, screenLines, type OverlayUi } from '../lib/terminal-overlay.ts';
 import { editOneFile } from '../lib/editor-flow.ts';
 
-const ui = { CURSOR_MARKER: '<cursor>', renderFakeCursor: text => `<fake>${text}</fake>`, truncateToWidth: (s, n, _ellipsis, pad) => s.slice(0, n).padEnd(pad ? n : 0) };
-const theme = { fg: (_name, text) => text };
-const write = (terminal, data) => new Promise(resolve => terminal.write(data, resolve));
-const plain = terminal => Array.from({ length: terminal.rows }, (_, y) => terminal.buffer.active.getLine(terminal.buffer.active.viewportY + y)?.translateToString(true) || '').join('\n');
+const ui: OverlayUi = { CURSOR_MARKER: '<cursor>', renderFakeCursor: text => `<fake>${text}</fake>`, truncateToWidth: (s, n, _ellipsis, pad) => s.slice(0, n).padEnd(pad ? n : 0) };
+const theme = { fg: (_name: string, text: string) => text };
+const write = (terminal: Terminal, data: string) => new Promise<void>(resolve => terminal.write(data, resolve));
+const plain = (terminal: Terminal) => Array.from({ length: terminal.rows }, (_, y) => terminal.buffer.active.getLine(terminal.buffer.active.viewportY + y)?.translateToString(true) || '').join('\n');
 
-function waitFor(predicate, ms = 8000) {
-  return new Promise((resolve, reject) => {
+function waitFor(predicate: () => boolean, ms = 8000) {
+  return new Promise<void>((resolve, reject) => {
     const start = Date.now();
     const timer = setInterval(() => {
       if (predicate()) { clearInterval(timer); resolve(); }
@@ -103,6 +103,7 @@ test('real fzf → real Vim → diff, entirely through the overlay PTY', { timeo
     }
     return running;
   } });
+  if (result === null || result.content === null) throw new Error('expected an edit');
   assert.equal(result.exitCode, 0);
   assert.equal(fs.readFileSync(path.join(cwd, file), 'utf8'), 'after\n');
   assert.match(result.content, /-before/);
@@ -111,9 +112,10 @@ test('real fzf → real Vim → diff, entirely through the overlay PTY', { timeo
 
 test('overlay key names: press only, legacy and Kitty forms, Caps/Num Lock ignored', async () => {
   const { keyName } = await import('../lib/terminal-input.ts');
-  for (const [input, name] of [['\r', 'enter'], ['\x1b[13u', 'enter'], ['\x1b[13;65u', 'enter'], ['\x1b', 'escape'], ['\x1b[27u', 'escape'],
+  const cases: Array<[string, string | null]> = [['\r', 'enter'], ['\x1b[13u', 'enter'], ['\x1b[13;65u', 'enter'], ['\x1b', 'escape'], ['\x1b[27u', 'escape'],
     ['\t', 'tab'], ['\x1b[9u', 'tab'], ['\x1b[Z', 'shift+tab'], ['\x1b[9;2u', 'shift+tab'], ['\x03', 'ctrl+c'], ['\x1b[99;5u', 'ctrl+c'],
-    ['\x1b[13;1:3u', null], ['\x1b[27;1:3u', null], ['a', null], ['\x1b[13;3u', null]]) assert.equal(keyName(input), name, JSON.stringify(input));
+    ['\x1b[13;1:3u', null], ['\x1b[27;1:3u', null], ['a', null], ['\x1b[13;3u', null]];
+  for (const [input, name] of cases) assert.equal(keyName(input), name, JSON.stringify(input));
   // Caps Lock (64) must not make ordinary keys disappear.
   assert.equal(terminalInput('\x1b[97;65u'), 'a');
   assert.equal(terminalInput('\x1b[99;69u'), '\x03');

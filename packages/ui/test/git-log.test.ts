@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,13 +7,14 @@ import { spawnSync } from 'node:child_process';
 import { parseNumstat, parseCommits, listCommits, listFiles, commitBase, browseLog, repositoryRoot } from '../lib/git-log.ts';
 import { selectCommand, parseSelectResult, fzfSelect } from '../lib/fzf.ts';
 import { TerminalOverlay } from '../lib/terminal-overlay.ts';
+import type { Terminal } from '@xterm/headless';
 
-const has = command => spawnSync('/bin/sh', ['-c', 'command -v "$1"', 'sh', command]).status === 0;
+const has = (command: string) => spawnSync('/bin/sh', ['-c', 'command -v "$1"', 'sh', command]).status === 0;
 
-function repo(t) {
+function repo(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-git-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const g = (...args) => {
+  const g = (...args: string[]) => {
     const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-02T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-02T00:00:00Z' } });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout;
@@ -59,7 +60,11 @@ test('real repo: root, rename, merge first-parent; unborn branch has no commits'
   g('merge', '-q', '--no-ff', '-m', 'merge side', 'side');
   const root = repositoryRoot(dir);
   const commits = listCommits(root);
-  const bySubject = s => commits.find(c => c.display.endsWith(s)).hash;
+  const bySubject = (subject: string) => {
+    const commit = commits.find(c => c.display.endsWith(subject));
+    if (!commit) throw new Error(subject);
+    return commit.hash;
+  };
   assert.equal(commits.length, 5);
   const rootHash = bySubject('root');
   assert.deepEqual(listFiles(root, commitBase(root, rootHash), rootHash).map(f => f.paths), [['a.txt']]);
@@ -74,13 +79,15 @@ test('navigation: commit → files → pager → back keeps query/position; Esc 
   fs.writeFileSync(path.join(dir, 'x.txt'), 'x\n'); fs.writeFileSync(path.join(dir, 'y.txt'), 'y\n'); g('add', '.'); g('commit', '-qm', 'two files');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-log-flow-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
-  const script = [
-    ['commits', 'two\x000\ttwo files\0', 0], ['files', '\x001\ty\0', 0], ['pager'],
+  const script: ReadonlyArray<readonly [string, string | null, number, RegExp?]> = [
+    ['commits', 'two\x000\ttwo files\0', 0], ['files', '\x001\ty\0', 0], ['pager', null, 0],
     ['files', null, 130, /load:pos\(2\)/], ['commits', null, 130, /--query='two'/],
   ];
-  const calls = [];
+  const calls: string[] = [];
   const result = await browseLog({ root: repositoryRoot(dir), directory: temp, run: async (command, args) => {
-    const [step, output, exitCode, expect] = script[calls.length];
+    const current = script[calls.length];
+    if (!current) throw new Error('unexpected call');
+    const [step, output, exitCode, expect] = current;
     calls.push(step);
     if (step === 'pager') {
       assert.equal(command, 'git');
@@ -97,8 +104,8 @@ test('navigation: commit → files → pager → back keeps query/position; Esc 
   assert.deepEqual(calls, ['commits', 'files', 'pager', 'files', 'commits']);
 });
 
-const screen = term => Array.from({ length: term.rows }, (_, y) => term.buffer.active.getLine(term.buffer.active.viewportY + y)?.translateToString(true) || '').join('\n');
-const waitFor = async (predicate, label, view) => {
+const screen = (term: Terminal) => Array.from({ length: term.rows }, (_, y) => term.buffer.active.getLine(term.buffer.active.viewportY + y)?.translateToString(true) || '').join('\n');
+const waitFor = async (predicate: () => boolean, label: string, view: { terminal: Terminal }) => {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > 8000) throw new Error(`${label}\n${screen(view.terminal)}`);
@@ -118,7 +125,7 @@ test('real fzf → real fzf → real pager → back → back, entirely through t
   view.focused = true;
   view.render(110);
   t.after(() => { view.dispose(); fs.rmSync(temp, { recursive: true, force: true }); });
-  const steps = [];
+  const steps: string[] = [];
   const result = await browseLog({ root: repositoryRoot(dir), directory: temp, run: async (command, args, env) => {
     const running = view.run(command, args, env);
     const step = command === 'git' ? 'pager' : /commits\.list/.test(args[1]) ? 'commits' : 'files';
@@ -157,8 +164,8 @@ test('split view: left cursor drives right files; Tab into files, Enter → page
     cwd: dir, ui: { CURSOR_MARKER: '', renderFakeCursor: s => s, truncateToWidth: (s, n) => s.slice(0, n).padEnd(n) } });
   view.focused = true;
   t.after(() => { view.dispose(); fs.rmSync(temp, { recursive: true, force: true }); });
-  const pane = name => ({ terminal: view.pane(name).terminal });
-  const footers = [];
+  const pane = (name: string) => ({ terminal: view.pane(name).terminal });
+  const footers: string[] = [];
   const done = browseLogSplit({ root: repositoryRoot(dir), directory: temp, view, setFooter: f => footers.push(f) });
   const tick = setInterval(() => view.render(130), 20); // keep pane sizes applied, like Pi's renderer
   t.after(() => clearInterval(tick));
@@ -177,6 +184,7 @@ test('split view: left cursor drives right files; Tab into files, Enter → page
   view.handleInput('\x1b[27u'); // Esc → commits (left fzf kept its cursor)
   assert.equal(view.active, 'left');
   const cursorRow = screen(view.pane('left').terminal).split('\n').find(line => line.includes('older commit'));
+  if (!cursorRow) throw new Error('cursor row missing');
   assert.match(cursorRow, /^[>▌▍]/, 'fzf pointer stays on the older commit');
   view.handleInput('\x1b[27u'); // Esc → close
   assert.equal(await done, null);
