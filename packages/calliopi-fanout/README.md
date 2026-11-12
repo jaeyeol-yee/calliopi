@@ -63,7 +63,13 @@ packages/calliopi-fanout/
 │   ├── follow.ts         에이전트별 뷰 (레지스트리만 읽음, 종료 코드 = raw status)
 │   ├── stream.ts         SSE 실시간 (Last-Event-ID 재연결, 410 → GET Run 폴링)
 │   ├── report.ts         aggregator (summary·PR·토큰 합산)
+│   ├── plan.ts           배치 이름·plan 검증·승인 표·계획 지시문 (순수 함수)
 │   └── pijournal.ts      Pi 라이프사이클 저널에서 ID만 발견 (선택)
+├── extensions/            Pi 확장 (index.ts는 연결만, 하위 디렉터리에 index.ts를 두지 않음)
+│   ├── runtime/          공유 상태·tracker 실행·레지스트리 감시·floating 마운트·launch 흐름·세션 수명주기
+│   ├── components/       TUI 컴포넌트 (floating 목록, inspector 오버레이)
+│   ├── commands/         /calliopi-fanout 명령
+│   └── tools/            calliopi_fanout_* 도구
 ├── rex/
 │   ├── fanout.sh          rex CLI + Server API 레이어 (launch·up·add·watch·down)
 │   ├── fanout.lua         rex do: detach 데몬 + pane 그리드 + child_exited 반응
