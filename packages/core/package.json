@@ -2,9 +2,30 @@
   "name": "@calliopi/core",
   "version": "0.0.0",
   "private": true,
-  "description": "Shared configuration, initialization, and base commands for Calliopi.",
+  "description": "Execution primitives shared by Calliopi layers: fzf selection, program runners, workflows. No dependencies.",
   "type": "module",
+  "imports": {
+    "#lib/*": "./lib/*"
+  },
+  "exports": {
+    "./fzf": "./lib/fzf.ts",
+    "./types": "./lib/types.ts",
+    "./package.json": "./package.json"
+  },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.9"
   }
 }

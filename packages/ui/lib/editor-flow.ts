@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pickerCommand, parseSelection, snapshot, changeMessage, resolveProjectFile } from '#lib/file-edit.ts';
-import type { RunProgram } from '#lib/types.ts';
+import { fzfSelect, nodePreview } from '@calliopi/core/fzf';
+import type { RunProgram } from '@calliopi/core/types';
+import { snapshot, changeMessage, resolveProjectFile } from '#lib/file-edit.ts';
 
 const preview = fileURLToPath(new URL('../bin/file-preview.ts', import.meta.url));
 
@@ -21,17 +22,14 @@ export interface EditOneFileOptions {
 }
 
 export async function editOneFile({ cwd, candidates, directory, run, cancelled = () => false }: EditOneFileOptions): Promise<EditResult | null> {
-  const list = path.join(directory, 'files');
-  const selection = path.join(directory, 'selection');
+  // fzf shows sanitized names; the preview and the result refer to candidates by index.
+  const list = path.join(directory, 'candidates');
   fs.writeFileSync(list, `${candidates.join('\0')}\0`, { mode: 0o600 });
-  fs.writeFileSync(selection, '', { mode: 0o600 });
-  const result = await run('/bin/sh', ['-c', pickerCommand(list, selection, preview)], {
-    ...process.env, SHELL: '/bin/sh', FZF_DEFAULT_OPTS: '', FZF_DEFAULT_OPTS_FILE: '', FZF_DEFAULT_COMMAND: '',
-  });
-  if (cancelled()) return null;
-  if (result.exitCode === 1 || result.exitCode === 130) return null;
-  if (result.exitCode !== 0) throw new Error(`fzf 종료 코드: ${result.exitCode}`);
-  const file = parseSelection(fs.readFileSync(selection), candidates);
+  // A closed overlay kills fzf mid-way: cancellation wins over whatever it left in the output.
+  const picked = await fzfSelect({ run, directory, name: 'files', items: candidates, prompt: 'File > ', preview: nodePreview(preview, list) })
+    .catch((error: unknown) => { if (cancelled()) return null; throw error; });
+  if (!picked || cancelled()) return null;
+  const file = candidates[picked.index]!;
   const absolute = resolveProjectFile(cwd, file);
   const before = snapshot(cwd, file);
   const editor = await run('vim', ['--', absolute]);

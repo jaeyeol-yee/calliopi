@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { changeMessage, snapshot, resolveProjectFile, sensitivePath, parseSelection, listFiles, MAX_FILE_BYTES } from '#lib/file-edit.ts';
+import { changeMessage, snapshot, resolveProjectFile, sensitivePath, listFiles, MAX_FILE_BYTES } from '#lib/file-edit.ts';
 import { editOneFile } from '#lib/editor-flow.ts';
 
 function fixture(t: TestContext) {
@@ -66,11 +66,25 @@ test('sensitive names, traversal and symlinks outside project are rejected', t =
   assert.equal(sensitivePath('src/environment.ts'), false);
 });
 
-test('NUL selection preserves whitespace/newlines and must belong to candidate list', () => {
+test('selection by index preserves whitespace/newlines in names; preview reads the candidate list', async t => {
+  const dir = fixture(t);
   const file = "한글 '\n spaced.txt";
-  assert.equal(parseSelection(Buffer.from(`${file}\0`), [file]), file);
-  assert.throws(() => parseSelection(Buffer.from('other\0'), [file]));
-  assert.throws(() => parseSelection(Buffer.from('a\0b\0'), ['a', 'b']));
+  fs.writeFileSync(path.join(dir, file), 'x');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-edit-test-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const calls: string[] = [];
+  const result = await editOneFile({ cwd: dir, candidates: ['other', file], directory, run: async (command, args) => {
+    calls.push(command);
+    if (command === '/bin/sh') {
+      assert.match(args[1], /--preview=.*file-preview\.ts.*candidates.*\{1\}/);
+      fs.writeFileSync(path.join(directory, 'files.out'), '\x001\tignored display\0');
+    }
+    return { exitCode: 0 };
+  } });
+  assert.deepEqual(calls, ['/bin/sh', 'vim']);
+  assert.equal(result?.file, file);
+  assert.equal(result?.content, null);
+  assert.deepEqual(fs.readFileSync(path.join(directory, 'candidates'), 'utf8').split('\0'), ['other', file, '']);
 });
 
 test('rg respects ignore rules and filters sensitive files before preview', t => {
@@ -90,8 +104,8 @@ test('flow returns on fzf cancellation and only launches Vim after valid selecti
     calls++;
     if (calls === 1) {
       assert.equal(command, '/bin/sh');
-      assert.match(args[1], /--read0 --print0 --no-multi/);
-      fs.writeFileSync(path.join(temp, 'selection'), '-file with spaces\0');
+      assert.match(args[1], /--read0 --print0 --print-query --no-multi/);
+      fs.writeFileSync(path.join(temp, 'files.out'), '\x000\t-file with spaces\0');
     } else {
       assert.equal(command, 'vim');
       assert.deepEqual(args, ['--', path.join(fs.realpathSync(dir), '-file with spaces')]);
@@ -112,7 +126,7 @@ test('failed editor still reports saved changes; lifecycle cancellation skips re
   fs.writeFileSync(path.join(dir, 'file'), 'before\n');
   let calls = 0;
   const run = async () => {
-    if (++calls === 1) fs.writeFileSync(path.join(temp, 'selection'), 'file\0');
+    if (++calls === 1) fs.writeFileSync(path.join(temp, 'files.out'), '\x000\tfile\0');
     else fs.writeFileSync(path.join(dir, 'file'), 'saved before failure\n');
     return { exitCode: calls === 1 ? 0 : 1 };
   };

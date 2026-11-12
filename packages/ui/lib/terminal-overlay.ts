@@ -3,7 +3,7 @@ import pty, { type IDisposable, type IPty } from 'node-pty';
 import xterm, { type IBufferCell, type Terminal as XTerminal } from '@xterm/headless';
 import type { Component, Focusable, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
 import { terminalInput, type TerminalInputModes } from '#lib/terminal-input.ts';
-import type { PtyRunResult } from '#lib/types.ts';
+import type { PtyRunResult } from '@calliopi/core/types';
 
 type StyleFlag = 'isBold' | 'isDim' | 'isItalic' | 'isUnderline' | 'isBlink' | 'isInverse' | 'isInvisible' | 'isStrikethrough';
 

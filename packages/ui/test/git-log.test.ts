@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseNumstat, parseCommits, listCommits, listFiles, commitBase, browseLog, repositoryRoot } from '#lib/git-log.ts';
-import { selectCommand, parseSelectResult, fzfSelect } from '#lib/fzf.ts';
 import { TerminalOverlay } from '#lib/terminal-overlay.ts';
 import type { Terminal } from '@xterm/headless';
 
@@ -37,17 +36,6 @@ test('commit records parse subject/author with spaces and reject non-hash junk',
   const commits = parseCommits(`${hash}\x1faaaaaaa\x1f2026-01-02\x1f김 철수\x1fFix: tabs\tand stuff\0\n${'z'.repeat(40)}\x1fx\x1fy\x1fz\x1fw\0`);
   assert.deepEqual(commits.map(c => c.hash), [hash]);
   assert.equal(commits[0].display, 'aaaaaaa  2026-01-02  김 철수  Fix: tabs\tand stuff');
-});
-
-test('fzf command hides the index column, ignores user defaults and restores cursor only without query', () => {
-  const cmd = selectCommand({ listPath: "/tmp/it's", outPath: '/tmp/o', prompt: 'Commit > ', preview: 'p {1}', query: '', position: 3 });
-  assert.match(cmd, /--read0 --print0 --print-query --no-multi/);
-  assert.match(cmd, /--with-nth=2\.\./);
-  assert.match(cmd, /load:pos\(3\)/);
-  assert.match(cmd, /'\/tmp\/it'\\''s'/);
-  assert.doesNotMatch(selectCommand({ listPath: 'l', outPath: 'o', prompt: '>', query: 'fix', position: 3 }), /pos\(/);
-  assert.deepEqual(parseSelectResult(Buffer.from('fix\x002\tdisplay\0'), 3), { index: 2, query: 'fix' });
-  for (const bad of ['q\x003\tx\0', 'q\x00-1\tx\0', 'q\x00\0', 'q\x00x\ty\0']) assert.throws(() => parseSelectResult(Buffer.from(bad), 3));
 });
 
 test('real repo: root, rename, merge first-parent; unborn branch has no commits', t => {

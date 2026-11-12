@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fzfSelect, shellQuote, cleanDisplay, fzfEnv, parseSelectResult, type FzfSelection } from '#lib/fzf.ts';
+import { fzfSelect, shellQuote, cleanDisplay, fzfEnv, nodePreview, parseSelectResult, type FzfSelection } from '@calliopi/core/fzf';
 import { keyName } from '#lib/terminal-input.ts';
-import type { RunProgram } from '#lib/types.ts';
+import type { RunProgram } from '@calliopi/core/types';
 import type { TerminalOverlay } from '#lib/terminal-overlay.ts';
 
 const previewScript = fileURLToPath(new URL('../bin/git-preview.ts', import.meta.url));
@@ -88,7 +88,7 @@ interface PreviewState {
 }
 
 function writeState(file: string, state: PreviewState): void { fs.writeFileSync(file, JSON.stringify(state), { mode: 0o600 }); }
-function previewCommand(statePath: string): string { return `${shellQuote(process.execPath)} ${shellQuote(previewScript)} ${shellQuote(statePath)} {1}`; }
+function previewCommand(statePath: string): string { return nodePreview(previewScript, statePath); }
 
 export function pagerCommand(): string {
   return spawnSync('/bin/sh', ['-c', 'command -v delta']).status === 0 ? 'delta --paging=always' : 'less -R';

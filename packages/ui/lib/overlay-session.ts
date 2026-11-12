@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { CURSOR_MARKER, renderFakeCursor, truncateToWidth, type ProgramStatus } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { TerminalOverlay } from '#lib/terminal-overlay.ts';
-import type { RunProgram } from '#lib/types.ts';
+import type { RunProgram } from '@calliopi/core/types';
 
 type PreflightContext = Pick<ExtensionContext, 'mode' | 'isIdle'>;
 

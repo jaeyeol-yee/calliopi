@@ -1,3 +1,5 @@
+// fzf as a selection primitive. The program runner is injected (a PTY pane in Pi, a fake in tests),
+// so nothing here depends on a terminal implementation.
 import fs from 'node:fs';
 import path from 'node:path';
 import type { RunProgram } from '#lib/types.ts';
@@ -10,6 +12,11 @@ export function cleanDisplay(text: string): string { return String(text).replace
 // Ignore the user's fzf defaults: they could add --multi, change key bindings or the output format.
 export function fzfEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return { ...process.env, SHELL: '/bin/sh', FZF_DEFAULT_OPTS: '', FZF_DEFAULT_OPTS_FILE: '', FZF_DEFAULT_COMMAND: '', ...extra };
+}
+
+// fzf --preview command that runs a Node script with the focused item's index as its last argument.
+export function nodePreview(script: string, ...args: string[]): string {
+  return [process.execPath, script, ...args].map(shellQuote).join(' ') + ' {1}';
 }
 
 export interface SelectCommandOptions {

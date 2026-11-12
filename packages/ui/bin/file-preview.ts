@@ -1,16 +1,18 @@
 // Standalone (no imports from lib/) so it runs under any Node that Pi was started with.
-// Only files already present in the picker's filtered candidate list can be previewed.
+// Only files already present in the picker's filtered candidate list can be previewed; fzf passes
+// just the item index, so file names never go through the shell.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isUtf8 } from 'node:buffer';
 
 const MAX_BYTES = 1024 * 1024;
-const [listPath, file] = process.argv.slice(2);
+const [listPath, index] = process.argv.slice(2);
 try {
-  if (!listPath) throw new Error('not a candidate');
-  const candidates = fs.readFileSync(listPath, 'utf8').split('\0');
-  if (!file || !candidates.includes(file)) throw new Error('not a candidate');
+  if (!listPath || !/^\d+$/.test(index ?? '')) throw new Error('not a candidate');
+  const candidates = fs.readFileSync(listPath, 'utf8').split('\0').slice(0, -1);
+  const file = candidates[Number(index)];
+  if (!file) throw new Error('not a candidate');
   const absolute = path.resolve(process.cwd(), file);
   if (fs.statSync(absolute).size > MAX_BYTES) {
     process.stdout.write('Preview omitted: file over 1 MiB.');

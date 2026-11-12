@@ -106,18 +106,3 @@ export function changeMessage(file: string, before: FileSnapshot, after: FileSna
       ? 'Diff omitted (over 24 KiB or 400 lines).' : null;
   return `${intro}\n${stats}\n${omitted ? `${omitted} Read the current file if needed.` : `\n<file-edit-diff>\n${diff}</file-edit-diff>`}`;
 }
-
-export function shellQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
-
-// fzf opens /dev/tty for interaction while its candidate input and selection output use private files.
-export function pickerCommand(listPath: string, selectionPath: string, previewScript: string): string {
-  const preview = `${shellQuote(process.execPath)} ${shellQuote(previewScript)} ${shellQuote(listPath)} {}`;
-  return `exec fzf --read0 --print0 --no-multi --no-mouse --layout=reverse --border=none --prompt='File > ' --preview=${shellQuote(preview)} --preview-window=right:55%:wrap < ${shellQuote(listPath)} > ${shellQuote(selectionPath)}`;
-}
-
-export function parseSelection(data: Buffer, candidates: readonly string[]): string {
-  const entries = data.toString('utf8').split('\0').filter(Boolean);
-  const selected = entries[0];
-  if (entries.length !== 1 || selected === undefined || !candidates.includes(selected)) throw new Error('올바르지 않은 picker 선택입니다.');
-  return selected;
-}
