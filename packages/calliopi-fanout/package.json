@@ -15,6 +15,9 @@
     "mock": "node test/mock-cursor.ts",
     "typecheck": "tsc -p ."
   },
+  "dependencies": {
+    "@calliopi/ui": "*"
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.5.2",
     "@earendil-works/pi-tui": "1.5.2",

@@ -115,6 +115,7 @@ extensions/git-log.ts       /calliopi-log
 extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /calliopi-headers
 lib/turn-headers.ts         헤더 줄, render 감싸기, Markdown 대체 경로
 lib/thinking-frame.ts       thinking 테두리 컴포넌트, updateContent 감싸기
+lib/table.ts                키/값 표 (export `@calliopi/ui/table`, calliopi-fanout이 사용)
 lib/overlay-session.ts      공용 overlay 수명·키 입력 점유·사전 확인
 lib/fzf.ts                  번호 기반 fzf 선택(검색어·커서 복원)
 lib/git-log.ts              커밋·파일 목록, 분할/단계별 탐색 흐름

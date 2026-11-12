@@ -11,7 +11,7 @@ import { createReviewService, syncReviews, prTarget } from "../lib/github-review
 import { taskState, freshness, visibleByDefault } from "../lib/floating-model.ts";
 import { stampArchive, archiveTime } from "../lib/archive.ts";
 import { floatingList } from "./components/floating.ts";
-import { metadataTable, type MetadataValue } from "./components/metadata.ts";
+import { metadataTable, type MetadataValue } from "@calliopi/ui/table";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
