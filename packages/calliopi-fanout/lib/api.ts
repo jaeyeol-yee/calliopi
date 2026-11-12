@@ -1,9 +1,9 @@
 // Minimal Cursor Cloud Agents v1 REST client (fetch only). Spec: cursor.com/docs-static/cloud-agents-openapi.yaml
-import { caught, sleep, jitter, redact } from './util.ts';
+import { caught, sleep, jitter, redact } from '#lib/util.ts';
 import type {
   AgentSummary, ApiRun, CreateAgentResponse, CreateRunResponse, ListAgentsResponse, ListRunsResponse,
   Logger, MeResponse, UsageResponse,
-} from './types.ts';
+} from '#lib/types.ts';
 
 export class ApiError extends Error {
   status: number;

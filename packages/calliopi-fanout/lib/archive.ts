@@ -1,5 +1,5 @@
 // Local display retention is independent of Cursor archive/delete operations.
-import type { AgentView } from './types.ts';
+import type { AgentView } from '#lib/types.ts';
 
 export const ARCHIVE_RETENTION_MS = 24 * 60 * 60 * 1000;
 

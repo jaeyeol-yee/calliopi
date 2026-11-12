@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AssistantMessageComponent, UserMessageComponent, initTheme } from '@earendil-works/pi-coding-agent';
 import { Container, visibleWidth } from '@earendil-works/pi-tui';
-import { headerLines, installHeader, uninstallHeader } from '../lib/turn-headers.ts';
-import { frameThinking, installAfterUpdate, uninstallAfterUpdate, ThinkingFrame } from '../lib/thinking-frame.ts';
+import { headerLines, installHeader, uninstallHeader } from '#lib/turn-headers.ts';
+import { frameThinking, installAfterUpdate, uninstallAfterUpdate, ThinkingFrame } from '#lib/thinking-frame.ts';
 
 initTheme('dark');
 const strip = (s: string) => s.replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b_[^\x07]*\x07/g, '').replace(/\x1b\[[0-9;]*m/g, '');

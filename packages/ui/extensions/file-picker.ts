@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { listFiles } from '../lib/file-edit.ts';
-import { editOneFile, type EditResult } from '../lib/editor-flow.ts';
-import { preflight, openOverlaySession } from '../lib/overlay-session.ts';
+import { listFiles } from '#lib/file-edit.ts';
+import { editOneFile, type EditResult } from '#lib/editor-flow.ts';
+import { preflight, openOverlaySession } from '#lib/overlay-session.ts';
 
 export default function (pi: ExtensionAPI) {
   let active = false;

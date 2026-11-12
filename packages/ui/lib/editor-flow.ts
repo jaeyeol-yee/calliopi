@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pickerCommand, parseSelection, snapshot, changeMessage, resolveProjectFile } from './file-edit.ts';
-import type { RunProgram } from './types.ts';
+import { pickerCommand, parseSelection, snapshot, changeMessage, resolveProjectFile } from '#lib/file-edit.ts';
+import type { RunProgram } from '#lib/types.ts';
 
 const preview = fileURLToPath(new URL('../bin/file-preview.ts', import.meta.url));
 

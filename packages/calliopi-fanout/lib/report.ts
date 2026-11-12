@@ -1,8 +1,8 @@
 // Aggregator: summaries, PRs and tokens of tracked agents in one report.
-import { load } from './registry.ts';
-import { fmtDur, isTerminal, short, cleanResult, keyVerifiedRuns, understoodRuns } from './util.ts';
-import { icon } from './dashboard.ts';
-import type { AgentView, FanoutConfig, GitBranch, UsageStats } from './types.ts';
+import { load } from '#lib/registry.ts';
+import { fmtDur, isTerminal, short, cleanResult, keyVerifiedRuns, understoodRuns } from '#lib/util.ts';
+import { icon } from '#lib/dashboard.ts';
+import type { AgentView, FanoutConfig, GitBranch, UsageStats } from '#lib/types.ts';
 
 const TOKEN_KEYS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'totalTokens'] as const;
 

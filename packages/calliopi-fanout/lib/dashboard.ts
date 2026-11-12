@@ -2,8 +2,8 @@
 // the file grows past `maxBytes` it is truncated to the latest frame. Follow it with
 // `tail -F` (by name), which survives truncation.
 import fs from 'node:fs';
-import { fmtDur, oneLine, short, isTerminal, cleanResult } from './util.ts';
-import type { AgentRecord, Registry, StatusEvent } from './types.ts';
+import { fmtDur, oneLine, short, isTerminal, cleanResult } from '#lib/util.ts';
+import type { AgentRecord, Registry, StatusEvent } from '#lib/types.ts';
 
 const ICON: Record<string, string> = {
   CREATING: '…', RUNNING: '▶', WAITING_FOR_BACKGROUND_WORK: '⏳',

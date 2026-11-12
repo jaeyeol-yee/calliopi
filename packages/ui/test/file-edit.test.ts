@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { changeMessage, snapshot, resolveProjectFile, sensitivePath, parseSelection, listFiles, MAX_FILE_BYTES } from '../lib/file-edit.ts';
-import { editOneFile } from '../lib/editor-flow.ts';
+import { changeMessage, snapshot, resolveProjectFile, sensitivePath, parseSelection, listFiles, MAX_FILE_BYTES } from '#lib/file-edit.ts';
+import { editOneFile } from '#lib/editor-flow.ts';
 
 function fixture(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-ui-test-'));

@@ -4,10 +4,10 @@ import { AssistantMessageComponent, UserMessageComponent, getAgentDir } from '@e
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
   DEFAULT_CONFIG, LiveTurns, NO_PAINT, headerLines, headerMarkdown, installHeader, persistedHeaders, uninstallHeader, withHeader,
-} from '../lib/turn-headers.ts';
-import type { HeaderPaint, HeaderStyle, TurnHeaderConfig } from '../lib/turn-headers.ts';
-import { PLAIN_FRAME, frameThinking, installAfterUpdate, uninstallAfterUpdate } from '../lib/thinking-frame.ts';
-import type { FramePaint } from '../lib/thinking-frame.ts';
+} from '#lib/turn-headers.ts';
+import type { HeaderPaint, HeaderStyle, TurnHeaderConfig } from '#lib/turn-headers.ts';
+import { PLAIN_FRAME, frameThinking, installAfterUpdate, uninstallAfterUpdate } from '#lib/thinking-frame.ts';
+import type { FramePaint } from '#lib/thinking-frame.ts';
 
 // Global preference (all projects): <agentDir>/calliopi-ui.json → { "turnHeaders": { ... } }
 const configFile = () => path.join(getAgentDir(), 'calliopi-ui.json');

@@ -29,5 +29,8 @@
   },
   "devDependencies": {
     "@cursor/sdk": "^1.3.1"
+  },
+  "scripts": {
+    "check:imports": "node scripts/check-imports.ts"
   }
 }

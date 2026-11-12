@@ -4,6 +4,11 @@
   "private": true,
   "description": "Fan out Cursor Cloud Agents and track raw run status / summaries in the background (rex layer optional).",
   "type": "module",
+  "imports": {
+    "#extensions/*": "./extensions/*",
+    "#lib/*": "./lib/*",
+    "#test/*": "./test/*"
+  },
   "bin": {
     "calliopi-fanout": "./bin/tracker.ts"
   },

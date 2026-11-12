@@ -57,7 +57,21 @@ calliopi/package.json 의 pi manifest
 - Pi는 루트 manifest에 명시된 리소스 경로를 읽습니다. 하위 `package.json`의 `pi` 선언을 재귀 탐색하는 구조가 아닙니다.
 - `workspaces`는 개발용 패키지 경계입니다. Pi의 리소스 발견과는 별개입니다.
 - 하위 패키지에도 자체 `pi` 선언을 두어 각 패키지의 리소스를 설명합니다. 전체 하네스를 쓸 때는 루트만 등록하세요. 루트와 하위 패키지를 중복 등록할 필요가 없습니다.
-- 현재 패키지 사이의 코드 의존성은 없습니다. 향후 필요하면 `context → core`, `ui → core` 방향으로 추가하고, `core`가 다른 두 패키지를 참조하지 않도록 합니다.
+- 패키지 사이의 코드 의존성은 현재 `calliopi-fanout → ui` 하나입니다(`@calliopi/ui/table`). 의존 방향은 한쪽으로만 둡니다. 향후 `core`가 생기면 다른 패키지를 참조하지 않도록 합니다.
+
+### import 규칙
+
+상대 경로(`./`, `../`) import는 쓰지 않습니다. `npm run check:imports`가 아래 규칙을 검사합니다.
+
+| 대상 | 쓰는 형태 | 근거 |
+|---|---|---|
+| 같은 패키지 | `#lib/util.ts`, `#extensions/…`, `#test/…` | 그 패키지 `package.json`의 `imports` |
+| 다른 패키지 | `@calliopi/ui/table` | 상대 패키지 `exports`에 있는 경로만, 내 `dependencies`에 선언 후 |
+
+- `exports`에 없는 내부 파일(`@calliopi/ui/lib/…`)은 Node가 `ERR_PACKAGE_PATH_NOT_EXPORTED`로 막습니다. 공개할 것만 `exports`에 추가합니다.
+- `#` 별칭은 **그 파일이 속한 패키지** 기준으로 풀립니다. fanout이 불러온 `@calliopi/ui/table` 안의 `#lib/…`는 ui의 `lib`입니다(Node와 Pi 로더 양쪽에서 확인).
+- 패키지 디렉터리를 가로지르는 경로, 자기 패키지 이름으로 자기를 import하기, 패키지 간 순환도 검사에서 실패합니다.
+- 실행용 파일 경로(`new URL('../bin/x.ts', import.meta.url)`)는 import가 아니라 같은 패키지 안의 파일 위치이므로 그대로 둡니다.
 - manifest는 리소스 목록이지 실행 순서나 의존성 주입 설정이 아닙니다. 패키지 로딩 순서에 의존하는 초기화는 피합니다.
 
 ## 로컬 등록과 수정 반영

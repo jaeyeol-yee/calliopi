@@ -1,7 +1,7 @@
 import { truncateToWidth, visibleWidth, matchesKey } from '@earendil-works/pi-tui';
 import type { Theme, ThemeColor } from '@earendil-works/pi-coding-agent';
-import { TABS, taskState, freshness, plain, defaultTasks } from '../../lib/floating-model.ts';
-import type { AgentView } from '../../lib/types.ts';
+import { TABS, taskState, freshness, plain, defaultTasks } from '#lib/floating-model.ts';
+import type { AgentView } from '#lib/types.ts';
 
 // No timers or I/O: all state comes from the local registry subscription.
 export function floatingList({ agents, theme, render, open, unfocus }: {

@@ -3,28 +3,28 @@
 // nothing here knows about rex (or tmux). Multiplexer layers only call these commands.
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
-import { loadConfig } from '../lib/config.ts';
-import { stampArchive } from '../lib/archive.ts';
-import { resolveApiKey, ensureLogin, AuthError } from '../lib/auth.ts';
-import { CursorApi, Limiter, ApiError } from '../lib/api.ts';
-import { load, update, ensureDir, findAgent, newAgentRecord, pushHistory } from '../lib/registry.ts';
-import { tick, FatalAuth, type TickCtx } from '../lib/poller.ts';
-import { render, DashboardWriter, counts } from '../lib/dashboard.ts';
-import { launch, launchViaAutomation } from '../lib/launch.ts';
-import type { PromptSwap } from '../lib/launch.ts';
-import { readSpec } from '../lib/launch.ts';
-import { follow, summaryBlock, exitCodeFor } from '../lib/follow.ts';
-import { stream, waitForAck } from '../lib/stream.ts';
-import { aggregate, toMarkdown } from '../lib/report.ts';
-import { findJournals, scanJournals } from '../lib/pijournal.ts';
-import { diffTrees, renderTree, outline, renderOutline } from '../lib/arch.ts';
-import { gitRefSource, localSource, ghRefSource } from '../lib/workspace.ts';
-import * as auto from '../lib/automation.ts';
+import { loadConfig } from '#lib/config.ts';
+import { stampArchive } from '#lib/archive.ts';
+import { resolveApiKey, ensureLogin, AuthError } from '#lib/auth.ts';
+import { CursorApi, Limiter, ApiError } from '#lib/api.ts';
+import { load, update, ensureDir, findAgent, newAgentRecord, pushHistory } from '#lib/registry.ts';
+import { tick, FatalAuth, type TickCtx } from '#lib/poller.ts';
+import { render, DashboardWriter, counts } from '#lib/dashboard.ts';
+import { launch, launchViaAutomation } from '#lib/launch.ts';
+import type { PromptSwap } from '#lib/launch.ts';
+import { readSpec } from '#lib/launch.ts';
+import { follow, summaryBlock, exitCodeFor } from '#lib/follow.ts';
+import { stream, waitForAck } from '#lib/stream.ts';
+import { aggregate, toMarkdown } from '#lib/report.ts';
+import { findJournals, scanJournals } from '#lib/pijournal.ts';
+import { diffTrees, renderTree, outline, renderOutline } from '#lib/arch.ts';
+import { gitRefSource, localSource, ghRefSource } from '#lib/workspace.ts';
+import * as auto from '#lib/automation.ts';
 import { randomUUID } from 'node:crypto';
 import { execFileSync, execFile } from 'node:child_process';
-import * as prs from '../lib/pr.ts';
-import { EXIT, caught, makeLogger, nowIso, processAlive, short, sleep, isTerminal, redact } from '../lib/util.ts';
-import type { AgentRecord, Logger, Registry } from '../lib/types.ts';
+import * as prs from '#lib/pr.ts';
+import { EXIT, caught, makeLogger, nowIso, processAlive, short, sleep, isTerminal, redact } from '#lib/util.ts';
+import type { AgentRecord, Logger, Registry } from '#lib/types.ts';
 
 const HELP = `usage: tracker.ts [--dir DIR] <command> [options]
 

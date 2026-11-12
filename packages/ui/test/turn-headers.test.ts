@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui';
-import { DEFAULT_CONFIG, LiveTurns, firstText, headerMarkdown, persistedHeaders, withHeader } from '../lib/turn-headers.ts';
+import { DEFAULT_CONFIG, LiveTurns, firstText, headerMarkdown, persistedHeaders, withHeader } from '#lib/turn-headers.ts';
 
 const id = (s: string) => s;
 const theme = { heading: id, link: id, linkUrl: id, code: id, codeBlock: id, codeBlockBorder: id, quote: id, quoteBorder: id, hr: id, listBullet: id, bold: id, italic: id, strikethrough: id, underline: id } as never;

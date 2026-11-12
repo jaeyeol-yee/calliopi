@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { caught } from './util.ts';
-import type { SidecarMessage, SidecarOwner, SidecarSession } from './types.ts';
+import { caught } from '#lib/util.ts';
+import type { SidecarMessage, SidecarOwner, SidecarSession } from '#lib/types.ts';
 
 export function owner(dir: string): SidecarOwner | null {
   try {

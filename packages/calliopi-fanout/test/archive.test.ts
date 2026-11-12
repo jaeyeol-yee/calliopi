@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ARCHIVE_RETENTION_MS, archiveTime, stampArchive } from '../lib/archive.ts';
-import type { AgentView } from '../lib/types.ts';
-import { defaultTasks, visibleByDefault, taskState } from '../lib/floating-model.ts';
+import { ARCHIVE_RETENTION_MS, archiveTime, stampArchive } from '#lib/archive.ts';
+import type { AgentView } from '#lib/types.ts';
+import { defaultTasks, visibleByDefault, taskState } from '#lib/floating-model.ts';
 
 const now = Date.parse('2026-01-02T12:00:00Z');
 const archived = (extra = {}) => ({ agentId: 'a', runId: 'run-a', status: 'FINISHED', reviewAckRunId: 'run-a', archivedRunId: 'run-a', archivedAt: new Date(now - ARCHIVE_RETENTION_MS).toISOString(), ...extra });

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { registerSecret } from './util.ts';
-import type { Logger } from './types.ts';
+import { registerSecret } from '#lib/util.ts';
+import type { Logger } from '#lib/types.ts';
 
 interface StoredLogin {
   apiKey?: string;

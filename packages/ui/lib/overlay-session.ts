@@ -3,8 +3,8 @@
 import { spawnSync } from 'node:child_process';
 import { CURSOR_MARKER, renderFakeCursor, truncateToWidth, type ProgramStatus } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
-import type { TerminalOverlay } from './terminal-overlay.ts';
-import type { RunProgram } from './types.ts';
+import type { TerminalOverlay } from '#lib/terminal-overlay.ts';
+import type { RunProgram } from '#lib/types.ts';
 
 type PreflightContext = Pick<ExtensionContext, 'mode' | 'isIdle'>;
 
@@ -42,7 +42,7 @@ export interface OverlaySessionOptions<T> {
 // Resolves with the flow's value, null when closed externally, or { error }.
 export async function openOverlaySession<T>(ctx: ExtensionContext, { cwd, title, footer, blocked, inputLog, isShuttingDown, setClose, flow }: OverlaySessionOptions<T>): Promise<T | { error: string } | null> {
   // Lazy import: other UI resources still load when native PTY dependencies are unavailable.
-  const { TerminalOverlay } = await import('./terminal-overlay.ts');
+  const { TerminalOverlay } = await import('#lib/terminal-overlay.ts');
   let unsubscribe: (() => void) | undefined;
   try {
     return await ctx.ui.custom<T | { error: string } | null>((tui, theme, _keys, done) => {

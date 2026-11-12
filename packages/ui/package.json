@@ -4,6 +4,9 @@
   "private": true,
   "description": "Status display, notifications, terminal UI, and themes for Calliopi.",
   "type": "module",
+  "imports": {
+    "#lib/*": "./lib/*"
+  },
   "exports": {
     "./table": "./lib/table.ts",
     "./package.json": "./package.json"

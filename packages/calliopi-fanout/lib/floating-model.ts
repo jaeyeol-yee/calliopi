@@ -1,6 +1,6 @@
-import { reviewSummary } from './github-review.ts';
-import { ARCHIVE_RETENTION_MS, archiveTime } from './archive.ts';
-import type { AgentView } from './types.ts';
+import { reviewSummary } from '#lib/github-review.ts';
+import { ARCHIVE_RETENTION_MS, archiveTime } from '#lib/archive.ts';
+import type { AgentView } from '#lib/types.ts';
 
 /** Hide only explicitly archived, resolved entries of the same run after a full 24h. */
 export function visibleByDefault(agent: AgentView, now = Date.now()): boolean {

@@ -4,11 +4,11 @@
 // 409 agent_id_conflict (already created) → recovered via GET /v1/agents/{id}. No duplicates.
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { load, update, newAgentRecord } from './registry.ts';
-import { ApiError } from './api.ts';
-import { caught, nowIso, oneLine, sha256, short } from './util.ts';
-import type { AgentRecord, FanoutConfig, LaunchSpec, Logger, ModelsResponse, PlannedItem } from './types.ts';
-import type { CursorApi } from './api.ts';
+import { load, update, newAgentRecord } from '#lib/registry.ts';
+import { ApiError } from '#lib/api.ts';
+import { caught, nowIso, oneLine, sha256, short } from '#lib/util.ts';
+import type { AgentRecord, FanoutConfig, LaunchSpec, Logger, ModelsResponse, PlannedItem } from '#lib/types.ts';
+import type { CursorApi } from '#lib/api.ts';
 
 export interface LaunchCtx {
   cfg: FanoutConfig;
@@ -313,8 +313,8 @@ export function readSpec(file: string): LaunchSpec {
 // Webhooks have no client-supplied id, so a lost response is AMBIGUOUS: we never auto-repost it
 // (phase post_ambiguous); the agent's reply line FANOUT_KEY=<key> lets you reconcile afterwards.
 import { randomUUID as uuid } from 'node:crypto';
-import { postWebhook, acquireInflight, releaseInflight, taskPrompt, withPrompt, IDLE_PROMPT } from './automation.ts';
-import type { AckRecord } from './types.ts';
+import { postWebhook, acquireInflight, releaseInflight, taskPrompt, withPrompt, IDLE_PROMPT } from '#lib/automation.ts';
+import type { AckRecord } from '#lib/types.ts';
 
 /** Per-task prompt swap on the shared automation (see automation.ts). Omit to post with the idle prompt as-is. */
 export interface PromptSwap {

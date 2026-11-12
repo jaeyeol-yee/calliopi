@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createReviewService, parseGhResponse, prTarget, retryTime, reviewSummary, syncReviews } from '../lib/github-review.ts';
-import { taskState, freshness, plain } from '../lib/floating-model.ts';
-import { load, update } from '../lib/registry.ts';
-import type { AgentRecord, AgentView, GhResponse, PrTarget } from '../lib/types.ts';
+import { createReviewService, parseGhResponse, prTarget, retryTime, reviewSummary, syncReviews } from '#lib/github-review.ts';
+import { taskState, freshness, plain } from '#lib/floating-model.ts';
+import { load, update } from '#lib/registry.ts';
+import type { AgentRecord, AgentView, GhResponse, PrTarget } from '#lib/types.ts';
 
 const url = 'https://github.com/test/repo/pull/1';
 const response = (state = 'open', merged = false, sha = 'a') => ({ status: 200, headers: { etag: '"test"' }, data: { state, merged, merged_at: merged ? '2026-01-01' : null, head: { sha }, base: { ref: 'main' } } });

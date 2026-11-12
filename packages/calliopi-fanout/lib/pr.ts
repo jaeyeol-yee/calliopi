@@ -2,8 +2,8 @@
 //  B: fix requests go to Cursor as a PR comment (`@cursor …`, Cursor GitHub integration);
 //  A: merging stays local and explicit (`gh pr merge --match-head-commit`, refused if the head moved).
 // All GitHub access goes through the user's `gh` (no tokens handled here).
-import { prTarget } from './github-review.ts';
-import type { AgentView } from './types.ts';
+import { prTarget } from '#lib/github-review.ts';
+import type { AgentView } from '#lib/types.ts';
 
 export type GhRun = (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
 

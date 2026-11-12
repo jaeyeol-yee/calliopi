@@ -1,10 +1,10 @@
 // One polling pass. Network calls happen outside the registry lock; results are applied
 // as per-agent patch functions inside a short locked update so concurrent writers
 // (launcher, `add`, pane mapping) are never clobbered.
-import { load, update, trackable, pushHistory } from './registry.ts';
-import { ApiError, type CursorApi, type Limiter } from './api.ts';
-import { KNOWN, caught, isTerminal, jitter, nowIso, short } from './util.ts';
-import type { AgentRecord, ApiRun, FanoutConfig, GitBranch, Logger, UsageStats } from './types.ts';
+import { load, update, trackable, pushHistory } from '#lib/registry.ts';
+import { ApiError, type CursorApi, type Limiter } from '#lib/api.ts';
+import { KNOWN, caught, isTerminal, jitter, nowIso, short } from '#lib/util.ts';
+import type { AgentRecord, ApiRun, FanoutConfig, GitBranch, Logger, UsageStats } from '#lib/types.ts';
 
 export class FatalAuth extends Error {}
 

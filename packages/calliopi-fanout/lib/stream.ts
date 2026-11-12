@@ -1,11 +1,11 @@
 // Optional real-time view of ONE run via SSE. Opt-in because each stream is a long-lived
 // request per run. Reconnects with Last-Event-ID; on 410 stream_expired /
 // stream_unavailable falls back to GET Run polling (slow, budgeted).
-import { update, load, findAgent, pushHistory } from './registry.ts';
-import { ApiError } from './api.ts';
-import { EXIT, caught, isTerminal, nowIso, short, sleep } from './util.ts';
-import type { FanoutConfig, GitSnapshot, Logger } from './types.ts';
-import type { CursorApi } from './api.ts';
+import { update, load, findAgent, pushHistory } from '#lib/registry.ts';
+import { ApiError } from '#lib/api.ts';
+import { EXIT, caught, isTerminal, nowIso, short, sleep } from '#lib/util.ts';
+import type { FanoutConfig, GitSnapshot, Logger } from '#lib/types.ts';
+import type { CursorApi } from '#lib/api.ts';
 
 export async function* parseSSE(body: ReadableStream<Uint8Array> | null, signal?: AbortSignal): AsyncGenerator<{ id: string | null; event: string; data: string }> {
   const decoder = new TextDecoder();
@@ -153,8 +153,8 @@ async function pollFallback(ctx: StreamCtx, agentId: string, runId: string, out:
 // ---------------------------------------------------------------------------
 // Launch-time round trip for automation prompt swaps: wait until the new agent's first reply line
 // `<calliopi_ack body_key prompt_key/>` shows up in the run stream (or its final result).
-import { parseAck } from './util.ts';
-import type { AckRecord } from './types.ts';
+import { parseAck } from '#lib/util.ts';
+import type { AckRecord } from '#lib/types.ts';
 
 export async function waitForAck(api: CursorApi, agentId: string, fanoutKey: string, { timeoutMs = 180_000, pollMs = 3000, signal }: {
   timeoutMs?: number; pollMs?: number; signal?: AbortSignal;

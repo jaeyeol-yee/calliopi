@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fzfSelect, shellQuote, cleanDisplay, fzfEnv, parseSelectResult, type FzfSelection } from './fzf.ts';
-import { keyName } from './terminal-input.ts';
-import type { RunProgram } from './types.ts';
-import type { TerminalOverlay } from './terminal-overlay.ts';
+import { fzfSelect, shellQuote, cleanDisplay, fzfEnv, parseSelectResult, type FzfSelection } from '#lib/fzf.ts';
+import { keyName } from '#lib/terminal-input.ts';
+import type { RunProgram } from '#lib/types.ts';
+import type { TerminalOverlay } from '#lib/terminal-overlay.ts';
 
 const previewScript = fileURLToPath(new URL('../bin/git-preview.ts', import.meta.url));
 export const MAX_COMMITS = 2000;

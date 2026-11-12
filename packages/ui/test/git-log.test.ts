@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { parseNumstat, parseCommits, listCommits, listFiles, commitBase, browseLog, repositoryRoot } from '../lib/git-log.ts';
-import { selectCommand, parseSelectResult, fzfSelect } from '../lib/fzf.ts';
-import { TerminalOverlay } from '../lib/terminal-overlay.ts';
+import { parseNumstat, parseCommits, listCommits, listFiles, commitBase, browseLog, repositoryRoot } from '#lib/git-log.ts';
+import { selectCommand, parseSelectResult, fzfSelect } from '#lib/fzf.ts';
+import { TerminalOverlay } from '#lib/terminal-overlay.ts';
 import type { Terminal } from '@xterm/headless';
 
 const has = (command: string) => spawnSync('/bin/sh', ['-c', 'command -v "$1"', 'sh', command]).status === 0;
@@ -158,7 +158,7 @@ test('split view: left cursor drives right files; Tab into files, Enter → page
   const { dir, g } = repo(t);
   fs.writeFileSync(path.join(dir, 'older.txt'), 'older-marker\n'); g('add', '.'); g('commit', '-qm', 'older commit');
   fs.writeFileSync(path.join(dir, '한글 new.txt'), 'newer-marker\n'); g('add', '.'); g('commit', '-qm', 'newer commit');
-  const { browseLogSplit } = await import('../lib/git-log.ts');
+  const { browseLogSplit } = await import('#lib/git-log.ts');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-split-'));
   const view = new TerminalOverlay({ tui: { terminal: { columns: 140, rows: 40 }, requestRender() {} }, theme: { fg: (_n, s) => s },
     cwd: dir, ui: { CURSOR_MARKER: '', renderFakeCursor: s => s, truncateToWidth: (s, n) => s.slice(0, n).padEnd(n) } });

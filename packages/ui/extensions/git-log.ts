@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { repositoryRoot, browseLog, browseLogSplit } from '../lib/git-log.ts';
-import { preflight, openOverlaySession } from '../lib/overlay-session.ts';
+import { repositoryRoot, browseLog, browseLogSplit } from '#lib/git-log.ts';
+import { preflight, openOverlaySession } from '#lib/overlay-session.ts';
 
 export default function (pi: ExtensionAPI) {
   let active = false;

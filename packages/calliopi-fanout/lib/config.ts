@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { FanoutConfig } from './types.ts';
+import type { FanoutConfig } from '#lib/types.ts';
 
 /**
  * All paths derive from one state directory so that every process

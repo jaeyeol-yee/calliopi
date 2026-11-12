@@ -1,7 +1,7 @@
 // Shared helpers. No dependencies, no knowledge of rex or any multiplexer.
 import { createHash } from 'node:crypto';
 import type { WriteStream } from 'node:fs';
-import type { AgentView, Logger, ReplyMeta } from './types.ts';
+import type { AgentView, Logger, ReplyMeta } from '#lib/types.ts';
 
 /** REST Run.status — the only source of truth for state. Never the SDK's 4-value Run.status. */
 export const ACTIVE = new Set(['CREATING', 'RUNNING', 'WAITING_FOR_BACKGROUND_WORK']);

@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { WorkspaceSource } from './types.ts';
+import type { WorkspaceSource } from '#lib/types.ts';
 
 /** Base tree from a local clone at a ref (fetched); stands in for "GitHub at the starting ref". */
 export function gitRefSource(repoDir: string, ref: string): WorkspaceSource {

@@ -3,9 +3,9 @@
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { caught } from './util.ts';
-import { load, update } from './registry.ts';
-import type { AgentView, ExecFn, FanoutConfig, GhResponse, PrTarget, ReviewRecord, StoreConfig } from './types.ts';
+import { caught } from '#lib/util.ts';
+import { load, update } from '#lib/registry.ts';
+import type { AgentView, ExecFn, FanoutConfig, GhResponse, PrTarget, ReviewRecord, StoreConfig } from '#lib/types.ts';
 
 export const REVIEW_INTERVAL = 180_000;
 export const DETAIL_TTL = 30_000;

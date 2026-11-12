@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { RunProgram } from './types.ts';
+import type { RunProgram } from '#lib/types.ts';
 
 export function shellQuote(value: string): string { return `'${String(value).replaceAll("'", "'\\''")}'`; }
 

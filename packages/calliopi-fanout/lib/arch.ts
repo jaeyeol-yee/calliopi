@@ -1,7 +1,7 @@
 // Source-tree & architecture outline. Pure: takes path lists + a file reader, no I/O policy,
 // no multiplexer knowledge. Sources (agent workspace, GitHub base, local git) are adapters.
 import path from 'node:path';
-import type { FileChange } from './types.ts';
+import type { FileChange } from '#lib/types.ts';
 
 const NOISE = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'target', '__pycache__', '.venv', 'vendor', 'coverage']);
 const MANIFESTS: Record<string, string> = {

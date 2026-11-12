@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { attach, detach, owner, enqueue, drain } from '../lib/sidecar.ts';
-import type { SidecarMessage } from '../lib/types.ts';
+import { attach, detach, owner, enqueue, drain } from '#lib/sidecar.ts';
+import type { SidecarMessage } from '#lib/types.ts';
 
 test('dedicated session mailbox: exclusive, targeted, durable across reload, no duplicate delivery', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-sidecar-'));

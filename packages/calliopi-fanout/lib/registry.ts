@@ -4,8 +4,8 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { caught, nowIso, processAlive, sleep } from './util.ts';
-import type { AgentRecord, HistoryEntry, Registry, StoreConfig } from './types.ts';
+import { caught, nowIso, processAlive, sleep } from '#lib/util.ts';
+import type { AgentRecord, HistoryEntry, Registry, StoreConfig } from '#lib/types.ts';
 
 const EMPTY = (): Registry => ({ version: 1, updatedAt: null, meta: { panes: {} }, batches: {}, agents: {} });
 

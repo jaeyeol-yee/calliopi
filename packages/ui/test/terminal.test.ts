@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import xterm, { type Terminal } from '@xterm/headless';
-import { terminalInput } from '../lib/terminal-input.ts';
-import { TerminalOverlay, screenLines, type OverlayUi } from '../lib/terminal-overlay.ts';
-import { editOneFile } from '../lib/editor-flow.ts';
+import { terminalInput } from '#lib/terminal-input.ts';
+import { TerminalOverlay, screenLines, type OverlayUi } from '#lib/terminal-overlay.ts';
+import { editOneFile } from '#lib/editor-flow.ts';
 
 const ui: OverlayUi = { CURSOR_MARKER: '<cursor>', renderFakeCursor: text => `<fake>${text}</fake>`, truncateToWidth: (s, n, _ellipsis, pad) => s.slice(0, n).padEnd(pad ? n : 0) };
 const theme = { fg: (_name: string, text: string) => text };
@@ -111,7 +111,7 @@ test('real fzf → real Vim → diff, entirely through the overlay PTY', { timeo
 });
 
 test('overlay key names: press only, legacy and Kitty forms, Caps/Num Lock ignored', async () => {
-  const { keyName } = await import('../lib/terminal-input.ts');
+  const { keyName } = await import('#lib/terminal-input.ts');
   const cases: Array<[string, string | null]> = [['\r', 'enter'], ['\x1b[13u', 'enter'], ['\x1b[13;65u', 'enter'], ['\x1b', 'escape'], ['\x1b[27u', 'escape'],
     ['\t', 'tab'], ['\x1b[9u', 'tab'], ['\x1b[Z', 'shift+tab'], ['\x1b[9;2u', 'shift+tab'], ['\x03', 'ctrl+c'], ['\x1b[99;5u', 'ctrl+c'],
     ['\x1b[13;1:3u', null], ['\x1b[27;1:3u', null], ['a', null], ['\x1b[13;3u', null]];

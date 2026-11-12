@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { metadataTable } from '../lib/table.ts';
-import type { TableTheme } from '../lib/table.ts';
+import { metadataTable } from '#lib/table.ts';
+import type { TableTheme } from '#lib/table.ts';
 
 const theme: TableTheme = { fg: (_token, s) => s };
 const strip = (s: string) => s.replace(/\x1b\]8;[^\x07\x1b]*(\x07|\x1b\\)/g, '');

@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { redact, registerSecret, sha256, processAlive } from './util.ts';
+import { redact, registerSecret, sha256, processAlive } from '#lib/util.ts';
 
 const API2 = (process.env.CURSOR_ENDPOINT || 'https://api2.cursor.sh').replace(/\/+$/, '');
 export const CONFIG_DIR = process.env.CALLIOPI_CONFIG_DIR || path.join(os.homedir(), '.config', 'calliopi');

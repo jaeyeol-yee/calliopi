@@ -3,10 +3,10 @@
 // with an exit code that encodes the raw status — so any multiplexer's "child exited"
 // event carries the outcome. WAITING_FOR_BACKGROUND_WORK keeps it running.
 import fs from 'node:fs';
-import { load, findAgent } from './registry.ts';
-import { EXIT, caught, fmtDur, isTerminal, processAlive, short, cleanResult, keyVerifiedRuns, understood } from './util.ts';
-import { icon } from './dashboard.ts';
-import type { AgentView, FanoutConfig } from './types.ts';
+import { load, findAgent } from '#lib/registry.ts';
+import { EXIT, caught, fmtDur, isTerminal, processAlive, short, cleanResult, keyVerifiedRuns, understood } from '#lib/util.ts';
+import { icon } from '#lib/dashboard.ts';
+import type { AgentView, FanoutConfig } from '#lib/types.ts';
 
 export function exitCodeFor(a: AgentView | null | undefined): number {
   if (!a || a.missing) return EXIT.MISSING;

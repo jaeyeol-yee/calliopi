@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { pickPr, summarizeChecks, mergeBlockers, mergePr, askCursor, prState, REBASE_REQUEST } from '../lib/pr.ts';
-import type { GhRun, PrState } from '../lib/pr.ts';
+import { pickPr, summarizeChecks, mergeBlockers, mergePr, askCursor, prState, REBASE_REQUEST } from '#lib/pr.ts';
+import type { GhRun, PrState } from '#lib/pr.ts';
 
 const URL1 = 'https://github.com/o/r/pull/1';
 const SHA = 'a'.repeat(40);

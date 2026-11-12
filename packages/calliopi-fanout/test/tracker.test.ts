@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startMock, type MockHandle } from './mock-cursor.ts';
+import { startMock, type MockHandle } from '#test/mock-cursor.ts';
 
 const TRACKER = fileURLToPath(new URL('../bin/tracker.ts', import.meta.url));
 let mock: MockHandle;
@@ -410,7 +410,7 @@ test('automation prompt swap: each task is staged before its POST, acked, and th
 });
 
 test('key check spans runs: a follow-up run without the envelope is not a mismatch', async () => {
-  const u = await import('../lib/util.ts');
+  const u = await import('#lib/util.ts');
   const env = '<calliopi_ack body_key="k" prompt_key="k"/>\n<calliopi_result fanout_key="k" agent_id="bc-1">\n<understood>do it</understood>\n</calliopi_result>\n\nbody';
   const a = { fanoutKey: 'k', runs: { r1: { result: env }, r2: { result: 'PR opened: https://github.com/o/r/pull/2' } } };
   assert.equal(u.keyVerifiedRuns(a), true);
@@ -422,7 +422,7 @@ test('key check spans runs: a follow-up run without the envelope is not a mismat
 });
 
 test('reply envelope: XML parsed, legacy lines still parsed, both hidden from summaries', async () => {
-  const u = await import('../lib/util.ts');
+  const u = await import('#lib/util.ts');
   const xml = '<calliopi_result fanout_key="k1" agent_id="bc-1">\n<understood>check the README</understood>\n</calliopi_result>\n\nREADME title is X.';
   assert.deepEqual(u.replyMeta(xml), { fanoutKey: 'k1', agentId: 'bc-1', understood: 'check the README' });
   assert.equal(u.cleanResult(xml), 'README title is X.');
