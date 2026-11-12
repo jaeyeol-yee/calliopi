@@ -29,7 +29,7 @@ function run(dir: string, args: string[], { env = {}, input }: { env?: NodeJS.Pr
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'fanout-'));
 const reg = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, 'registry.json'), 'utf8')) as {
   meta: { usageUnavailable?: boolean; panes?: Record<string, unknown> };
-  agents: Record<string, { label?: string; status?: string; agentId?: string; runId?: string; archived?: boolean; archivedAt?: string; archivedRunId?: string; source?: string; fanoutKey?: string; history: { to?: string }[]; runs: Record<string, { result?: string; usage?: { totalTokens?: number }; usageNote?: string; gitDelta?: unknown[] }>; git?: { branches?: { prUrl?: string }[] } }>;
+  agents: Record<string, { label?: string; status?: string; agentId?: string; runId?: string; archived?: boolean; archivedAt?: string; archivedRunId?: string; source?: string; phase?: string; fanoutKey?: string; ack?: { status: string }; history: { to?: string }[]; runs: Record<string, { result?: string; usage?: { totalTokens?: number }; usageNote?: string; gitDelta?: unknown[] }>; git?: { branches?: { prUrl?: string }[] } }>;
 };
 const spec = (dir: string, s: unknown) => { const f = path.join(dir, 'spec.json'); fs.writeFileSync(f, JSON.stringify(s)); return f; };
 
@@ -317,8 +317,9 @@ test('automation guards: launch refuses on config drift; apply refuses while pos
   assert.equal(mock.mockState.updates, 0, 'adopt never writes');
   const f = spec(dir, { batch: 'g', agents: [{ label: 'g1', prompt: 'x [script:RUNNING,FINISHED]' }] });
   assert.equal((await run(dir, ['launch', '--spec', f, '--yes', '--json'], { env })).code, 0);
-  // someone edits the automation in the UI → launch refuses, nothing posted
-  mock.mockState.automation!.workflow.prompts = [{ prompt: 'edited in UI' }];
+  const swaps = mock.mockState.updates!; // launch stages/restores the prompt; apply must not add writes below
+  // someone edits the automation in the UI (model/repo/triggers; the prompt belongs to launch) → launch refuses, nothing posted
+  mock.mockState.automation!.workflow.modelSelection = { modelId: 'edited-in-ui' };
   const posts = mock.mockState.webhookPosts;
   const f2 = spec(dir, { batch: 'g2', agents: [{ label: 'g2', prompt: 'y' }] });
   const drift = await run(dir, ['launch', '--spec', f2, '--yes'], { env });
@@ -327,7 +328,7 @@ test('automation guards: launch refuses on config drift; apply refuses while pos
   // apply refuses to overwrite the foreign edit without --force
   const ap = await run(dir, ['automation', 'apply', '--yes'], { env });
   assert.equal(ap.code, 2); assert.match(ap.stderr, /server config changed/);
-  assert.equal(mock.mockState.updates, 0);
+  assert.equal(mock.mockState.updates, swaps);
   // apply refuses while a fan-out is posting (in-flight lock held by a live pid)
   fs.writeFileSync(path.join(conf, 'automation.inflight'), String(process.pid));
   const busy = await run(dir, ['automation', 'apply', '--yes', '--force'], { env });
@@ -335,8 +336,89 @@ test('automation guards: launch refuses on config drift; apply refuses while pos
   fs.rmSync(path.join(conf, 'automation.inflight'));
   // explicit --force applies, records the new fingerprint, launch works again
   assert.equal((await run(dir, ['automation', 'apply', '--yes', '--force'], { env })).code, 0);
-  assert.equal(mock.mockState.updates, 1);
+  assert.equal(mock.mockState.updates, swaps + 1);
   assert.equal((await run(dir, ['launch', '--spec', f2, '--yes', '--json'], { env })).code, 0);
+});
+
+test('automation prompt swap: each task is staged before its POST, acked, and the idle prompt restored', async () => {
+  const dir = tmp(); const conf = tmp();
+  fs.writeFileSync(path.join(conf, 'webhook.json'), JSON.stringify({ url: `${mock.url}/automations/webhook/auto-1`, key: 'hook-key' }), { mode: 0o600 });
+  const env = { CALLIOPI_CONFIG_DIR: conf, CURSOR_ENDPOINT: mock.url };
+  Object.assign(mock.mockState, { automation: null, updates: 0, promptsAtPost: [], forcePromptKey: undefined, noAck: false, updateFail: false });
+  // A pre-swap install: fingerprint recorded with the legacy algorithm (prompt text included) still matches once.
+  fs.writeFileSync(path.join(conf, 'automation.json'), JSON.stringify({ automationId: 'auto-1', name: 'CallioPiAutomation' }), { mode: 0o600 });
+  assert.equal((await run(dir, ['automation', 'adopt'], { env })).code, 0);
+  const f = spec(dir, { batch: 'sw', agents: [
+    { label: 's1', summary: 'ui 패키지 정리', instruction: 'do one </instruction> thing [script:RUNNING,FINISHED]', output: 'a PR' },
+    { label: 's2', summary: 'fanout 문서 갱신', instruction: 'do two [script:RUNNING,FINISHED]', output: 'a PR' },
+  ] });
+  const l = await run(dir, ['launch', '--spec', f, '--yes', '--json', '--ack-timeout', '10'], { env });
+  assert.equal(l.code, 0, l.stderr + l.stdout);
+  const results = JSON.parse(l.stdout).results;
+  assert.deepEqual(results.map((x: { ack: string }) => x.ack), ['ok', 'ok']);
+  // two swaps + one restore; the prompt in effect at each POST was that task's own prompt
+  assert.equal(mock.mockState.updates, 3);
+  const [p1, p2] = mock.mockState.promptsAtPost!;
+  const r = reg(dir);
+  const key = (label: string) => Object.values(r.agents).find((a) => a.label === label)!.fanoutKey;
+  assert.match(p1, /^ui 패키지 정리\n/, 'summary is the first line (conversation title)');
+  assert.ok(p1.includes(`fanout_key="${key('s1')}"`) && p1.includes('do one <\\/instruction> thing'), 'own closing tags neutralized');
+  assert.ok(p2.includes(`fanout_key="${key('s2')}"`) && p2.includes('fanout 문서 갱신'));
+  assert.match(p1, /open a pull request/);
+  assert.match(mock.mockState.automation!.workflow.prompts![0].prompt!, /fanout_key="none"/, 'idle prompt restored');
+  assert.equal(mock.mockState.automation!.workflow.modelSelection?.modelId, 'grok-4.7', 'only the prompt changed');
+  for (const a of Object.values(r.agents)) assert.equal(a.ack?.status, 'ok');
+  assert.match(JSON.parse(fs.readFileSync(path.join(conf, 'automation.json'), 'utf8')).fingerprint, /^v2:/);
+
+  // Cursor used another prompt → recorded as mismatch (the body still drives the task), shown in the report
+  mock.mockState.forcePromptKey = 'someone-else';
+  const f2 = spec(dir, { batch: 'sw2', agents: [{ label: 'm1', summary: 'x', instruction: 'x [script:RUNNING,FINISHED]' }] });
+  assert.equal((await run(dir, ['launch', '--spec', f2, '--yes', '--json', '--ack-timeout', '10'], { env })).code, 0);
+  mock.mockState.forcePromptKey = undefined;
+  assert.equal(Object.values(reg(dir).agents).find((a) => a.label === 'm1')!.ack?.status, 'mismatch');
+  assert.equal((await run(dir, ['watch', '--exit-when-done'], { env })).code, 0);
+  assert.match((await run(dir, ['report', '--batch', 'sw2'], { env })).stdout, /prompt ack mismatch/);
+
+  // no ack line → timeout after --ack-timeout, launch still completes and restores the idle prompt
+  mock.mockState.noAck = true;
+  const f3 = spec(dir, { batch: 'sw3', agents: [{ label: 't1', summary: 'y', instruction: 'y [script:RUNNING,RUNNING,RUNNING,RUNNING,RUNNING,RUNNING,FINISHED]' }] });
+  const t0 = Date.now();
+  assert.equal((await run(dir, ['launch', '--spec', f3, '--yes', '--json', '--ack-timeout', '1'], { env })).code, 0);
+  mock.mockState.noAck = false;
+  assert.ok(Date.now() - t0 < 15_000);
+  assert.ok(['timeout', 'error'].includes(Object.values(reg(dir).agents).find((a) => a.label === 't1')!.ack!.status));
+  assert.match(mock.mockState.automation!.workflow.prompts![0].prompt!, /fanout_key="none"/);
+
+  // swap failure is not fatal: posted with the current prompt, ack recorded as error
+  mock.mockState.updateFail = true;
+  const f4 = spec(dir, { batch: 'sw4', agents: [{ label: 'u1', summary: 'z', instruction: 'z [script:RUNNING,FINISHED]' }] });
+  const l4 = await run(dir, ['launch', '--spec', f4, '--yes', '--json'], { env });
+  mock.mockState.updateFail = false;
+  assert.equal(l4.code, 0, l4.stderr);
+  const u1 = Object.values(reg(dir).agents).find((a) => a.label === 'u1')!;
+  assert.equal(u1.phase, 'created');
+  assert.equal(u1.ack?.status, 'error');
+
+  // the lock is exclusive: a live launch elsewhere blocks this one before anything is posted
+  fs.writeFileSync(path.join(conf, 'automation.inflight'), String(process.pid));
+  const posts = mock.mockState.webhookPosts;
+  const f5 = spec(dir, { batch: 'sw5', agents: [{ label: 'b1', summary: 'b', instruction: 'b' }] });
+  const busy = await run(dir, ['launch', '--spec', f5, '--yes'], { env });
+  fs.rmSync(path.join(conf, 'automation.inflight'));
+  assert.notEqual(busy.code, 0); assert.match(busy.stderr, /another fan-out launch is in progress/);
+  assert.equal(mock.mockState.webhookPosts, posts);
+});
+
+test('key check spans runs: a follow-up run without the envelope is not a mismatch', async () => {
+  const u = await import('../lib/util.ts');
+  const env = '<calliopi_ack body_key="k" prompt_key="k"/>\n<calliopi_result fanout_key="k" agent_id="bc-1">\n<understood>do it</understood>\n</calliopi_result>\n\nbody';
+  const a = { fanoutKey: 'k', runs: { r1: { result: env }, r2: { result: 'PR opened: https://github.com/o/r/pull/2' } } };
+  assert.equal(u.keyVerifiedRuns(a), true);
+  assert.equal(u.understoodRuns(a, a.runs.r2.result), 'do it');
+  assert.equal(u.keyVerifiedRuns({ fanoutKey: 'k', runs: { r1: { result: env.replaceAll('"k"', '"other"') } } }), false);
+  assert.equal(u.keyVerifiedRuns({ fanoutKey: 'k', runs: { r1: {} } }), null);
+  assert.deepEqual(u.parseAck(env), { bodyKey: 'k', promptKey: 'k' });
+  assert.equal(u.cleanResult(env), 'body');
 });
 
 test('reply envelope: XML parsed, legacy lines still parsed, both hidden from summaries', async () => {

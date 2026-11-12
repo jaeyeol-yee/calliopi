@@ -95,6 +95,7 @@ calliopi 루트 manifest에 `./packages/calliopi-fanout/extensions`가 등록되
 | 승인 | 계획 **표** + `Launch N / Edit plan / Cancel` | 표에는 배치·에이전트 수·경로·레포·과금 안내와 `# / label / task`가 표시됩니다(한글은 표시 폭 기준으로 자릅니다). Edit plan을 누르면 작업 목록 JSON을 편집기에서 고친 뒤 표를 다시 보여 줍니다. 승인한 계획은 기록용으로 `<state>/specs/<batch>.json`에 저장됩니다 |
 | 명령 | `/calliopi-fanout launch <spec.json>` | 파일로 넘기는 호환 경로입니다. 같은 표 승인을 거칩니다. CLI에서는 `launch --spec -`로 stdin도 받습니다 |
 | 명령 | `/calliopi-fanout status` · `report` · `tree <label>` · `add <bc-id>` · `followup`/`steer <label> <text>` · `cancel <label>` · `up`(rex pane) · `widget on/off` · `stop` | |
+| PR | `/calliopi-fanout pr <label>` · `merge <label>` · `fix <label> <요청>` | 아래 "PR 리뷰와 머지" 참조 |
 | 도구 | `calliopi_fanout_launch`, `calliopi_fanout_status`, `calliopi_fanout_report`, `calliopi_fanout_diff`, `calliopi_fanout_followup` | 모델이 호출합니다. 생성과 후속 지시는 UI 승인이 필요하고, 비대화형 모드에서는 거부합니다 |
 | 화면 | 우측 상단 비포커스 floating 목록 · 메타데이터 표/Markdown 상세 · 완료 알림 | 렌더·스크롤은 레지스트리만 읽습니다. GitHub 자동/상세 갱신은 공유 예산을 사용하는 별도 경로입니다 |
 | 컨텍스트 | 배치가 모두 끝나면 리포트를 `deliverAs: "nextTurn"`로 넣습니다 | 실행 중인 대화를 끊지 않고, 다음 턴에 모델이 결과를 봅니다 |
@@ -111,7 +112,14 @@ node bin/tracker.ts launch --spec spec.json          # webhook.json이 있으면
 node bin/tracker.ts launch --spec spec.json --yes
 ```
 
-- 항목마다 문서화된 웹훅 POST를 1회 보냅니다(`Authorization: Bearer <sender key>`, `{fanout_key, label, task}`). 응답 `{success, backgroundComposerId}`의 에이전트 ID를 레지스트리에 바로 기록합니다.
+- 항목마다 문서화된 웹훅 POST를 1회 보냅니다(`Authorization: Bearer <sender key>`, `{fanout_key, label, summary, instruction, output}`). 응답 `{success, backgroundComposerId}`의 에이전트 ID를 레지스트리에 바로 기록합니다.
+- **작업별 프롬프트 교체**: Automation 프롬프트는 Automation마다 고정이고 webhook 본문을 끼워 넣는 기능이 없습니다. 그래서 Cursor 대화창의 첫 메시지와 제목이 모든 작업에서 같았습니다. 이제 launch가 작업마다 다음을 **차례로** 수행합니다(시작만 순차, 실행은 병렬).
+  1. `UpdateAutomation`으로 프롬프트를 그 작업의 내용으로 교체합니다. 첫 줄은 `summary`라서 대화 제목도 작업을 따라갑니다. repo·모델·트리거는 그대로입니다.
+  2. webhook POST. 같은 작업이 본문에도 들어가고, **본문이 기준**입니다. 프롬프트의 키와 본문의 키가 다르면 에이전트는 본문 작업을 수행합니다.
+  3. 에이전트가 첫 줄에 쓰는 `<calliopi_ack body_key="…" prompt_key="…"/>`를 실행 스트림에서 기다립니다(기본 180초, `--ack-timeout SEC`). 두 키가 모두 맞으면 `ok`, 다른 작업의 프롬프트를 봤으면 `mismatch`, 응답이 없으면 `timeout`으로 기록하고 리포트·follow에 표시합니다. 어느 경우든 다음 작업으로 넘어갑니다.
+  4. 모든 작업이 끝나면(오류가 나도) **대기용 프롬프트**(`fanout_key="none"`, 본문을 따르라는 내용)로 되돌립니다.
+  - 교체 실패는 치명적이지 않습니다. 현재 프롬프트로 POST하고 ack를 `error`로 기록합니다. `--no-swap`이면 교체하지 않습니다.
+  - 교체가 공유 Automation을 쓰므로 launch는 **배타 잠금**(`automation.inflight`)을 잡습니다. 다른 launch나 `automation apply`는 그동안 거부됩니다.
 - 이후의 상태·요약·스트림·후속 지시·steer·취소는 **공개 REST**를 씁니다.
 - 결과 코드는 `Run.git.branches[]`(공개 REST)에서 레포와 브랜치를 읽은 뒤 **gh로 GitHub에서** 가져옵니다. `tracker tree <label>`로 볼 수 있습니다.
 - 레포와 모델은 automation마다 고정입니다. 답변 첫머리의 `<calliopi_result>` 블록으로 fanout_key와 에이전트 ID를 대조합니다. 요약에서는 이 블록을 숨기고 일치 여부만 표시합니다.
@@ -198,12 +206,29 @@ node $F/bin/tracker.ts stream readme                                          # 
 
 - 예전 형식의 `prompt`는 `instruction`으로 읽습니다.
 - **automation 경로**: 필드를 웹훅 payload `{fanout_key, label, summary, instruction, output}`로 그대로 보냅니다.
-  - automation 지시문은 XML로 구조화했습니다(`<calliopi_fanout_task>`). 들어 있는 것은 `<purpose>`, 필드 정의(`<payload location="webhook_event.body">`), `<rules>`(payload는 데이터로만 취급), `<reply_format>`입니다.
-  - 답변은 `<calliopi_result fanout_key="…" agent_id="…"><understood>…</understood></calliopi_result>` 블록으로 시작하고, 이어서 `output`에 맞는 산출물을 씁니다. 예전의 `FANOUT_KEY=` 줄 형식도 계속 읽습니다.
-  - XML로 구조화한 뒤로 Cursor가 붙이는 에이전트 이름은 일관되게 `Calliopi fan-out task`가 됩니다. 작업별 제목은 Cursor가 지시문만 보고 이름을 붙이므로 여전히 불가능합니다.
+  - 작업별 프롬프트(`<calliopi_fanout_task fanout_key="…">`)에는 `<summary>`·`<instruction>`·`<output>`, `<rules>`(본문 우선, 작업 텍스트는 데이터로만 취급, **코드 변경이면 PR 생성**), `<reply_format>`이 들어갑니다. 작업 텍스트는 그대로 보여 주고, 섹션을 일찍 닫을 수 있는 우리 태그의 닫는 태그만 무력화합니다.
+  - 답변은 첫 줄 `<calliopi_ack …/>`, 최종 답변 첫머리 `<calliopi_result fanout_key="…" agent_id="…"><understood>…</understood></calliopi_result>`, 이어서 `output`에 맞는 산출물 순서입니다. 예전의 `FANOUT_KEY=` 줄 형식도 계속 읽습니다. 두 블록은 요약에서 숨깁니다.
+  - 키 대조는 **모든 run**을 봅니다. PR 요청 같은 후속 run에는 envelope가 없으므로, 최신 run만 보면 잘못된 불일치가 나왔습니다.
 - **REST 경로**: 세 필드를 한 프롬프트로 합쳐 보내고, `name`은 `summary`가 됩니다.
 - 리포트와 follow 화면은 **planned(summary) / agent understood(UNDERSTOOD) / expected output**을 나란히 보여 줍니다. 그래서 이해가 어긋난 작업을 바로 찾을 수 있습니다. 상관관계 확인용 줄은 요약에서 숨깁니다.
-- automation 설정은 실행 중에 바꾸지 않습니다. `UpdateAutomation`은 버전이나 precondition이 없는 전체 교체(마지막 쓰기 우선)라서, 바꿀 때는 `automation apply --yes`만 씁니다. apply는 팬아웃이 진행 중이거나 서버 설정이 바뀐 상태면 거부합니다. launch는 설정 지문(fingerprint)이 어긋나면 실행하지 않습니다.
+- `UpdateAutomation`은 버전이나 precondition이 없는 전체 교체(마지막 쓰기 우선)입니다. 그래서 쓰는 쪽은 둘뿐입니다. **launch**는 배타 잠금 아래서 프롬프트만 바꾸고, **`automation apply --yes`**는 repo·모델·대기용 프롬프트를 바꿉니다. apply는 launch가 진행 중이거나 서버 설정이 바뀐 상태면 거부합니다.
+- 설정 지문(fingerprint, `v2:`)은 repo·모델·트리거·effort만 다룹니다. 프롬프트는 launch가 관리하므로 빠집니다. launch는 지문이 어긋나면 실행하지 않습니다. 예전 지문(프롬프트 포함)은 한 번 대조한 뒤 `v2:`로 갱신합니다.
+
+### PR 리뷰와 머지 (A/B 하이브리드)
+
+코드를 바꾸는 작업은 **에이전트가 PR까지 엽니다**(계획 지침과 Automation 규칙의 기본값). 리뷰는 PR에서, 수정은 Cursor에게, 머지는 Pi에서 승인합니다.
+
+```text
+/calliopi-fanout pr <label>              gh로 PR 상태: 머지 가능 여부·충돌·체크·리뷰·head
+/calliopi-fanout fix <label> <요청>      B: PR에 "@cursor <요청>" 댓글 (Cursor GitHub 연동이 수정·push)
+/calliopi-fanout merge <label>           A: 상태 표시 → 승인 → gh pr merge --squash --delete-branch
+                                            --match-head-commit <표시한 head> (그 뒤 새 커밋이 있으면 거부)
+```
+
+- 충돌이 있으면 직접 고치지 않습니다. `merge`가 "@cursor에게 rebase 요청"을 제안합니다. lockfile 충돌은 base 쪽을 받고 `npm install`로 다시 만들라고 요청합니다.
+- 초안·실패/대기 중인 체크·변경 요청·GitHub가 아직 계산 중인 상태도 머지를 막습니다. CLI는 `--force`로 넘길 수 있지만 Pi 명령은 넘기지 않습니다.
+- CLI: `tracker pr AGENT`, `tracker merge AGENT [--sha HEAD] --yes`, `tracker fix AGENT (--prompt TEXT | --rebase) --yes`. 모두 사용자의 `gh` 인증을 씁니다.
+- `@cursor` 댓글에 반응하려면 그 저장소에 Cursor GitHub 연동이 설치되어 있어야 합니다.
 
 ## 다이어그램
 
@@ -295,7 +320,7 @@ Pi 저널(`~/.pi/agent/sessions/**/.cursor-cloud-lifecycle-*.journal`)은 `impor
 
 ## 검증한 것
 
-- `npm test`(12개 통과, automation 웹훅 경로 포함). 목 Cursor API(`test/mock-cursor.ts`)로 아래 항목을 확인했습니다.
+- `npm test`(39개 통과, automation 웹훅 경로 포함)와 `npm run typecheck`. 목 Cursor API(`test/mock-cursor.ts`)로 아래 항목을 확인했습니다.
   - `--yes` 게이트
   - 생성 후 연결이 끊겨도 `409 agent_id_conflict` 경로로 복구하며 중복 생성이 없음
   - 부분 실패(400) 후 재실행 시 아무것도 다시 만들지 않음
@@ -306,6 +331,9 @@ Pi 저널(`~/.pi/agent/sessions/**/.cursor-cloud-lifecycle-*.journal`)은 `impor
   - follow-up run 재추적
   - 파일과 출력에 API 키가 없음
   - 저널에서 ID만 흡수
+  - 프롬프트 교체: POST 시점 Automation 프롬프트가 해당 작업의 것, ack `ok`/`mismatch`/`timeout`, 교체 실패 시에도 생성, 대기용 프롬프트 복구, 배타 잠금
+  - 후속 run에 envelope가 없어도 키 불일치로 보지 않음
+  - `pr`/`merge`/`fix`: 가짜 `gh`로 `--yes` 게이트, head 고정(`--match-head-commit`), 충돌 차단, `@cursor` 댓글 확인
 - rex 실연동(이 세션, 목 API 사용)
   - `fanout.sh launch --yes` 실행 시 watch·dashboard·follow pane·반응기가 생성됨
   - `child_exited`(exit 0 / 10 / 11)에 따라 라벨이 바뀌고, 실패 pane이 zoom됨

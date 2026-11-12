@@ -99,6 +99,8 @@ export interface AgentView {
   repo?: string | null;
   ref?: string | null;
   fanoutKey?: string | null;
+  /** Round-trip check of the per-task automation prompt (automation launches only). */
+  ack?: AckRecord | null;
   createError?: AgentError | null;
   lastError?: AgentError | null;
   pane?: PaneInfo | null;
@@ -112,6 +114,19 @@ export interface AgentView {
   requestId?: string | null;
   recovered?: string;
   pid?: number;
+}
+
+/**
+ * `<calliopi_ack body_key prompt_key/>` seen at the start of the agent's first reply.
+ * ok: both keys equal the task's fanout_key (prompt swap took effect). mismatch: the agent saw another
+ * task's prompt (it still follows the webhook body). timeout/error: not confirmed; display only.
+ */
+export interface AckRecord {
+  status: 'ok' | 'mismatch' | 'timeout' | 'error';
+  bodyKey?: string | null;
+  promptKey?: string | null;
+  at: string;
+  message?: string;
 }
 
 export interface PollState {

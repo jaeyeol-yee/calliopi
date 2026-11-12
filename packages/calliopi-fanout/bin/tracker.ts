@@ -11,16 +11,18 @@ import { load, update, ensureDir, findAgent, newAgentRecord, pushHistory } from 
 import { tick, FatalAuth, type TickCtx } from '../lib/poller.ts';
 import { render, DashboardWriter, counts } from '../lib/dashboard.ts';
 import { launch, launchViaAutomation } from '../lib/launch.ts';
+import type { PromptSwap } from '../lib/launch.ts';
 import { readSpec } from '../lib/launch.ts';
 import { follow, summaryBlock, exitCodeFor } from '../lib/follow.ts';
-import { stream } from '../lib/stream.ts';
+import { stream, waitForAck } from '../lib/stream.ts';
 import { aggregate, toMarkdown } from '../lib/report.ts';
 import { findJournals, scanJournals } from '../lib/pijournal.ts';
 import { diffTrees, renderTree, outline, renderOutline } from '../lib/arch.ts';
 import { gitRefSource, localSource, ghRefSource } from '../lib/workspace.ts';
 import * as auto from '../lib/automation.ts';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import * as prs from '../lib/pr.ts';
 import { EXIT, caught, makeLogger, nowIso, processAlive, short, sleep, isTerminal, redact } from '../lib/util.ts';
 import type { AgentRecord, Logger, Registry } from '../lib/types.ts';
 
@@ -31,13 +33,18 @@ state dir: --dir, $CURSOR_FANOUT_DIR, or ./.cursor-fanout   (registry.json 0600)
 network (needs CURSOR_API_KEY or ~/.cursor/sdk/auth.json):
   login [--force]                                          ensure credentials (Cursor.auth.login browser flow if missing)
   whoami                                                   GET /v1/me — free auth check
-  launch --spec FILE [--yes] [--via automation|rest] [--retry-failed] [--max N]
+  launch --spec FILE [--yes] [--via automation|rest] [--retry-failed] [--max N] [--no-swap] [--ack-timeout SEC]
                                                            create N agents (plan only without --yes); default via
-                                                           automation when ~/.config/calliopi/webhook.json exists
+                                                           automation when ~/.config/calliopi/webhook.json exists.
+                                                           automation: each task is staged as the automation prompt
+                                                           and its first-line ack awaited (default 180s) before the next
   watch [--log FILE] [--exit-when-done] [--no-index]       polling daemon (single instance per dir)
   tick                                                     one polling pass
   stream AGENT [--thinking]                                SSE live view of current run (410 → poll)
   followup AGENT --prompt TEXT [--steer] --yes             new run / steer (paid)
+  pr AGENT [--pr URL]                                      PR state via gh: mergeable, checks, head, blockers
+  merge AGENT [--sha HEAD] [--pr URL] --yes                squash-merge exactly HEAD (default: head just read), delete branch
+  fix AGENT (--prompt TEXT | --rebase) [--pr URL] --yes   ask Cursor on the PR: comment \"@cursor …\"
   cancel AGENT --yes | archive AGENT --yes                 lifecycle (destructive)
 
 local only (no API calls):
@@ -82,7 +89,8 @@ const OPTS = {
   prompt: { type: 'string' }, steer: { type: 'boolean' }, thinking: { type: 'boolean' }, rpm: { type: 'string' },
   force: { type: 'boolean' }, 'issue-key': { type: 'boolean' }, 'prompt-file': { type: 'string' },
   name: { type: 'string' }, repo: { type: 'string' }, branch: { type: 'string' }, model: { type: 'string' }, task: { type: 'string' },
-  gh: { type: 'string' }, ref: { type: 'string' },
+  gh: { type: 'string' }, ref: { type: 'string' }, 'no-swap': { type: 'boolean' }, 'ack-timeout': { type: 'string' },
+  pr: { type: 'string' }, sha: { type: 'string' }, rebase: { type: 'boolean' },
   'base-repo': { type: 'string' }, 'base-ref': { type: 'string' }, depth: { type: 'string' }, local: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 } as const;
@@ -101,6 +109,10 @@ function apiCtx(log: Logger): TickCtx {
   const limiter = new Limiter(cfg.rpm);
   return { cfg, log, limiter, api: new CursorApi({ key, base: cfg.apiBase, limiter, log }) };
 }
+
+const gh: prs.GhRun = (args) => new Promise((resolve) => {
+  execFile('gh', args, { maxBuffer: 16 << 20, timeout: 60_000 }, (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout, stderr }));
+});
 
 function needAgent(reg: Registry, needle: string | undefined): AgentRecord {
   const a = findAgent(reg, needle);
@@ -123,20 +135,31 @@ const commands: Record<string, () => Promise<number>> = {
     if (via === 'automation') {
       if (!hook?.url || !hook?.key) throw new UsageError(`--via automation needs ${auto.WEBHOOK_STATE} (tracker automation create --issue-key)`);
       let automationRepo = null;
+      let swap: PromptSwap | null = null;
       const st = auto.readJson(auto.AUTOMATION_STATE);
       if (st?.automationId) {
         try {
           // official GetAutomation (free): repo/model are fixed per automation, show them in the plan too
-          const a = (await (await auto.automationsClient(resolveApiKey().key)).get(st.automationId)).workflow?.workflow;
+          const client = await auto.automationsClient(resolveApiKey().key);
+          const a = (await client.get(st.automationId)).workflow?.workflow;
           if (o.yes && !a?.enabled) throw new UsageError(`automation ${st.name} is disabled`);
-          const fp = auto.fingerprint(a?.workflow);
-          if (o.yes && st.fingerprint && fp !== st.fingerprint) {
-            throw new UsageError(`automation ${st.name} changed outside the harness (fingerprint ${st.fingerprint} → ${fp}); review it, then run \`tracker automation adopt\` (keep server version) or \`tracker automation apply --yes\``);
+          if (o.yes && !auto.fingerprintMatches(st.fingerprint, a?.workflow)) {
+            throw new UsageError(`automation ${st.name} changed outside the harness (fingerprint ${st.fingerprint} → ${auto.fingerprint(a?.workflow)}); review it, then run \`tracker automation adopt\` (keep server version) or \`tracker automation apply --yes\``);
           }
+          if (o.yes && st.fingerprint && !st.fingerprint.startsWith('v2:')) auto.saveAutomationState({ ...st, fingerprint: auto.fingerprint(a?.workflow) }); // one-time upgrade
           automationRepo = a?.workflow?.gitConfig?.repo ?? null;
+          // Stage each task as the automation prompt (first message + title), with an ack round trip.
+          if (o.yes && a?.workflow && !o['no-swap']) {
+            const { api } = apiCtx(log);
+            swap = {
+              workflow: a.workflow,
+              update: (workflow) => client.update({ automationId: st.automationId, workflow }),
+              waitAck: (agentId, fanoutKey) => waitForAck(api, agentId, fanoutKey, { timeoutMs: Number(o['ack-timeout'] ?? 180) * 1000 }),
+            };
+          }
         } catch (e) { if (o.yes || e instanceof UsageError) throw e; }
       }
-      res = await launchViaAutomation({ cfg, log }, spec, { yes: o.yes, retryFailed: o['retry-failed'], webhook: hook as { url: string; key: string }, automationRepo });
+      res = await launchViaAutomation({ cfg, log }, spec, { yes: o.yes, retryFailed: o['retry-failed'], webhook: hook as { url: string; key: string }, automationRepo, swap });
     } else {
       if (o.yes) await ensureLogin(); // interactive only; daemons never prompt
       const ctx = o.yes ? apiCtx(log) : { cfg, log };
@@ -340,7 +363,7 @@ const commands: Record<string, () => Promise<number>> = {
       if (owner) throw new UsageError(`a fan-out is posting webhooks (pid ${owner}); retry when it finishes`);
       const cur = (await api.get(state.automationId)).workflow?.workflow;
       const serverFp = auto.fingerprint(cur?.workflow);
-      if (state.fingerprint && serverFp !== state.fingerprint && !o.force) {
+      if (!auto.fingerprintMatches(state.fingerprint, cur?.workflow) && !o.force) {
         throw new UsageError(`server config changed since it was recorded (${state.fingerprint} → ${serverFp}); \`automation adopt\` to keep it, or --force to overwrite`);
       }
       const prompt = o['prompt-file'] ? fs.readFileSync(o['prompt-file'], 'utf8') : auto.DEFAULT_PROMPT;
@@ -407,6 +430,43 @@ const commands: Record<string, () => Promise<number>> = {
     const d = daemonInfo();
     if (d.running) process.kill(d.pid as number, 'SIGTERM');
     out(d.running ? `sent SIGTERM to ${d.pid}` : 'not running');
+    return 0;
+  },
+
+  // ---- PR actions (A/B hybrid): inspect, merge exactly the shown head, or ask @cursor for changes.
+  async pr() {
+    const a = needAgent(load(cfg), pos[0]);
+    const url = prs.pickPr(a, o.pr);
+    const s = await prs.prState(gh, url);
+    const blockers = prs.mergeBlockers(s);
+    out(o.json ? { ...s, blockers } : `${prs.describePr(s)}${blockers.length ? `\nblocked: ${blockers.join('; ')}` : '\nready to merge'}`);
+    return 0;
+  },
+
+  async merge() {
+    const a = needAgent(load(cfg), pos[0]);
+    const url = prs.pickPr(a, o.pr);
+    const s = await prs.prState(gh, url);
+    const blockers = prs.mergeBlockers(s);
+    if (blockers.length && !o.force) throw new UsageError(`not merging ${url}: ${blockers.join('; ')}`);
+    // --sha pins the head the user reviewed; without it we pin the head we just read.
+    const sha = o.sha || s.headRefOid;
+    if (o.sha && o.sha !== s.headRefOid) throw new UsageError(`head moved since review (${o.sha.slice(0, 7)} → ${s.headRefOid.slice(0, 7)}); review again`);
+    requireYes(`squash-merge ${url} at ${sha.slice(0, 7)} and delete ${s.headRefName}`);
+    await prs.mergePr(gh, url, sha);
+    out(o.json ? { merged: true, url, sha } : `merged ${url} (${sha.slice(0, 7)})`);
+    return 0;
+  },
+
+  async fix() {
+    const a = needAgent(load(cfg), pos[0]);
+    const url = prs.pickPr(a, o.pr);
+    let request = o.prompt;
+    if (o.rebase) request = prs.REBASE_REQUEST((await prs.prState(gh, url)).baseRefName);
+    if (!request) throw new UsageError('--prompt TEXT or --rebase required');
+    requireYes(`comment "@cursor ${request.slice(0, 60)}…" on ${url}`);
+    await prs.askCursor(gh, url, request);
+    out(`asked @cursor on ${url}`);
     return 0;
   },
 

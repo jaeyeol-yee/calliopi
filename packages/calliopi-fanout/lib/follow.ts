@@ -4,7 +4,7 @@
 // event carries the outcome. WAITING_FOR_BACKGROUND_WORK keeps it running.
 import fs from 'node:fs';
 import { load, findAgent } from './registry.ts';
-import { EXIT, caught, fmtDur, isTerminal, processAlive, short, cleanResult, keyVerified, understood } from './util.ts';
+import { EXIT, caught, fmtDur, isTerminal, processAlive, short, cleanResult, keyVerifiedRuns, understood } from './util.ts';
 import { icon } from './dashboard.ts';
 import type { AgentView, FanoutConfig } from './types.ts';
 
@@ -27,7 +27,8 @@ export function summaryBlock(a: AgentView): string {
   } else if (run.usageNote) out.push(`tokens n/a (${run.usageNote})`);
   if (a.summary) out.push(`planned     ${a.summary}`);
   if (understood(run.result)) out.push(`understood  ${understood(run.result)}`);
-  if (a.fanoutKey) out.push(`fanout key ${keyVerified(a, run.result) ? 'verified ✓' : 'NOT found in reply ⚠'}`);
+  if (a.fanoutKey) out.push(`fanout key ${keyVerifiedRuns(a) ? 'verified ✓' : 'NOT found in reply ⚠'}`);
+  if (a.ack) out.push(`prompt ack ${a.ack.status === 'ok' ? 'verified ✓' : `${a.ack.status} ⚠${a.ack.message ? ` (${a.ack.message})` : ''}`}`);
   out.push('', '── summary ──', cleanResult(run.result) || '(no result text)');
   return out.join('\n');
 }

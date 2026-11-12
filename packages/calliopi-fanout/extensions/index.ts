@@ -494,7 +494,9 @@ export default function (pi: ExtensionAPI) {
 		"- Each task has: label (short unique kebab-case), summary (one line: the goal, in the user's language),",
 		"  instruction (self-contained: what to do, where, constraints, how to verify), output (the concrete deliverable:",
 		"  e.g. 'a pushed commit that adds X', or 'a one-line report in Korean'). The cloud agent sees only these fields.",
-		"- The cloud agents commit and push their own branches; do not ask them to open pull requests unless the goal says so.",
+		"- When a task changes code, its output is a pull request: the cloud agent commits, pushes its own branch and opens a PR",
+		"  against the base branch (title/body in the user's language: what changed, how it was verified, loose ends).",
+		"  Only say 'do not open a PR' when the goal asks for that or the task produces no code (e.g. a report).",
 		"- Do not do the work locally and do not inspect files beyond what you need to write good prompts.",
 		"- The user approves or edits the plan in a table before anything starts.",
 		"",
@@ -502,9 +504,9 @@ export default function (pi: ExtensionAPI) {
 	].join("\n");
 
 	// ---------------------------------------------------------------- /calliopi-fanout command
-	const SUBS = ["attach", "detach", "show", "inbox", "history", "archive", "focus", "reviews", "diff", "launch", "status", "report", "up", "add", "followup", "steer", "cancel", "tree", "widget", "stop"];
+	const SUBS = ["attach", "detach", "show", "inbox", "history", "archive", "focus", "reviews", "diff", "launch", "status", "report", "up", "add", "followup", "steer", "cancel", "tree", "widget", "stop", "pr", "merge", "fix"];
 	pi.registerCommand("calliopi-fanout", {
-		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | history (all records) | archive <label> (Cursor archive) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | up | widget on|off | stop",
+		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | history (all records) | archive <label> (Cursor archive) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | pr <label> | merge <label> (gh, approval) | fix <label> <request> (@cursor on the PR) | up | widget on|off | stop",
 		getArgumentCompletions: (prefix: string) => {
 			const items = SUBS.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
 			return items.length ? items : null;
@@ -563,6 +565,38 @@ export default function (pi: ExtensionAPI) {
 						if (!label || !words.length) return say(`usage: /calliopi-fanout ${sub} <label> <text>`, "warning");
 						const r = await T(ctx, ["followup", label, "--prompt", words.join(" "), "--yes", ...(sub === "steer" ? ["--steer"] : [])]);
 						ensureDaemon(ctx);
+						return say(r.out || r.err, r.ok ? "info" : "error");
+					}
+					case "pr": {
+						if (!rest[0]) return say("usage: /calliopi-fanout pr <label>", "warning");
+						const r = await T(ctx, ["pr", rest[0]]); return show(`PR ${rest[0]}`, r.out || r.err);
+					}
+					case "merge": {
+						// A: merge locally with explicit approval, pinned to the head shown in the dialog.
+						if (!rest[0]) return say("usage: /calliopi-fanout merge <label>", "warning");
+						const r = await T(ctx, ["pr", rest[0], "--json"]);
+						const s = r.ok ? json(r.out) : null;
+						if (!s) return say(r.err || r.out || "PR 상태를 읽지 못했습니다.", "error");
+						const head = `#${s.number} ${s.title}\n${s.headRefName} → ${s.baseRefName} @ ${String(s.headRefOid).slice(0, 7)}\n${s.url}`;
+						if (s.mergeable === "CONFLICTING") {
+							// B: conflicts are resolved by Cursor on the PR, not locally.
+							if (await ctx.ui.confirm("충돌이 있어 머지할 수 없습니다", `${head}\n\n@cursor에게 ${s.baseRefName} 기준 rebase와 충돌 해결을 요청할까요?`)) {
+								const f = await T(ctx, ["fix", rest[0], "--rebase", "--yes"]);
+								return say(f.ok ? "@cursor에게 rebase를 요청했습니다. 새 커밋이 올라오면 다시 merge하세요." : f.err || f.out, f.ok ? "info" : "error");
+							}
+							return;
+						}
+						if (s.blockers?.length) return say(`머지 불가: ${s.blockers.join("; ")}`, "warning");
+						if (!(await ctx.ui.confirm("PR 머지", `${head}\n\nsquash 머지하고 브랜치를 삭제할까요? 표시된 커밋(${String(s.headRefOid).slice(0, 7)}) 이후 변경이 있으면 거부됩니다.`))) return;
+						const m = await T(ctx, ["merge", rest[0], "--sha", s.headRefOid, "--yes"]);
+						return say(m.out || m.err, m.ok ? "info" : "error");
+					}
+					case "fix": {
+						// B: delegate a change on the PR to Cursor's GitHub integration.
+						const [label, ...words] = rest;
+						if (!label || !words.length) return say("usage: /calliopi-fanout fix <label> <request>", "warning");
+						if (!(await ctx.ui.confirm("@cursor에게 수정 요청", `${label}의 PR에 다음 댓글을 답니다:\n\n@cursor ${words.join(" ")}`))) return;
+						const r = await T(ctx, ["fix", label, "--prompt", words.join(" "), "--yes"]);
 						return say(r.out || r.err, r.ok ? "info" : "error");
 					}
 					case "cancel": {

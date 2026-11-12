@@ -149,3 +149,58 @@ async function pollFallback(ctx: StreamCtx, agentId: string, runId: string, out:
     await sleep(run.status === 'WAITING_FOR_BACKGROUND_WORK' ? 60_000 : 15_000);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Launch-time round trip for automation prompt swaps: wait until the new agent's first reply line
+// `<calliopi_ack body_key prompt_key/>` shows up in the run stream (or its final result).
+import { parseAck } from './util.ts';
+import type { AckRecord } from './types.ts';
+
+export async function waitForAck(api: CursorApi, agentId: string, fanoutKey: string, { timeoutMs = 180_000, pollMs = 3000, signal }: {
+  timeoutMs?: number; pollMs?: number; signal?: AbortSignal;
+} = {}): Promise<AckRecord> {
+  const deadline = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]);
+  const verdict = (ack: { bodyKey: string | null; promptKey: string | null }): AckRecord => ({
+    status: ack.bodyKey === fanoutKey && ack.promptKey === fanoutKey ? 'ok' : 'mismatch', bodyKey: ack.bodyKey, promptKey: ack.promptKey, at: nowIso(),
+  });
+  try {
+    // The webhook returns only the agent id; its first run appears shortly after.
+    let runId: string | undefined;
+    while (!runId) {
+      if (deadline.aborted) return { status: 'timeout', at: nowIso(), message: 'run did not appear' };
+      runId = (await api.getAgent(agentId)).latestRunId;
+      if (!runId) await sleep(pollMs, deadline);
+    }
+    let text = '', lastEventId: string | null = null;
+    for (;;) {
+      let res: Response;
+      try { res = await api.streamRun(agentId, runId, { lastEventId, signal: deadline }); }
+      catch (e: unknown) {
+        // No stream (expired/unavailable): the ack can still be read from the finished run's result.
+        if (!(e instanceof ApiError) || deadline.aborted) throw e;
+        const run = await api.getRun(agentId, runId);
+        const ack = parseAck(run.result);
+        if (ack) return verdict(ack);
+        if (isTerminal(run.status)) return { status: 'error', at: nowIso(), message: `run ${run.status} without ack` };
+        await sleep(pollMs, deadline);
+        continue;
+      }
+      for await (const ev of parseSSE(res.body, deadline)) {
+        if (ev.id) lastEventId = ev.id;
+        let data: SseResult = {};
+        try { data = ev.data ? JSON.parse(ev.data) as SseResult : {}; } catch { /* raw */ }
+        if (ev.event === 'assistant') text += data.text ?? '';
+        else if (ev.event === 'result') text += `\n${data.text ?? ''}`;
+        const ack = parseAck(text);
+        if (ack) return verdict(ack);
+        if (ev.event === 'done') return { status: 'error', at: nowIso(), message: 'run finished without ack' };
+      }
+      if (deadline.aborted) break;
+      await sleep(pollMs, deadline); // stream closed without `done`: reconnect from lastEventId
+    }
+    return { status: 'timeout', at: nowIso() };
+  } catch (e: unknown) {
+    if (deadline.aborted) return { status: 'timeout', at: nowIso(), message: `no ack within ${Math.round(timeoutMs / 1000)}s` };
+    return { status: 'error', at: nowIso(), message: caught(e).message };
+  }
+}

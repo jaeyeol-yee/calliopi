@@ -1,6 +1,6 @@
 // Aggregator: summaries, PRs and tokens of tracked agents in one report.
 import { load } from './registry.ts';
-import { fmtDur, isTerminal, short, cleanResult, keyVerified, understood } from './util.ts';
+import { fmtDur, isTerminal, short, cleanResult, keyVerifiedRuns, understoodRuns } from './util.ts';
 import { icon } from './dashboard.ts';
 import type { AgentView, FanoutConfig, GitBranch, UsageStats } from './types.ts';
 
@@ -16,6 +16,7 @@ export interface ReportRow {
   result: string | null;
   usage: UsageStats | null;
   keyVerified: boolean | null;
+  ack: string | null;
   summary: string | null;
   understood: string | null;
   expectedOutput: string | null;
@@ -63,8 +64,8 @@ export function aggregate(cfg: { registryPath: string }, { batch }: { batch?: st
     return {
       label: a.label, agentId: a.agentId, runId: a.runId, status: st, url: a.url,
       durationMs: cur.durationMs ?? null, result: cleanResult(cur.result) ?? null, usage: cur.usage ?? null,
-      keyVerified: keyVerified(a, cur.result),
-      summary: a.summary || null, understood: understood(cur.result), expectedOutput: a.output || null,
+      keyVerified: keyVerifiedRuns(a), ack: a.ack?.status ?? null,
+      summary: a.summary || null, understood: understoodRuns(a, cur.result), expectedOutput: a.output || null,
       branches: a.git?.branches || [], runCount: runs.length, error: a.createError?.message || a.lastError?.message || null,
     };
   });
@@ -103,7 +104,8 @@ export function toMarkdown(agg: Report): string {
   }
   L.push('');
   for (const r of agg.rows) {
-    L.push(`### ${icon(r.status)} ${r.label || short(r.agentId)} — ${r.status}${r.keyVerified === false ? '  ⚠ fanout key mismatch' : ''}`, '');
+    const ack = r.ack && r.ack !== 'ok' ? `  ⚠ prompt ack ${r.ack}` : '';
+    L.push(`### ${icon(r.status)} ${r.label || short(r.agentId)} — ${r.status}${r.keyVerified === false ? '  ⚠ fanout key mismatch' : ''}${ack}`, '');
     if (r.summary) L.push(`- **planned:** ${r.summary}`);
     if (r.understood) L.push(`- **agent understood:** ${r.understood}`);
     if (r.expectedOutput) L.push(`- **expected output:** ${r.expectedOutput}`);

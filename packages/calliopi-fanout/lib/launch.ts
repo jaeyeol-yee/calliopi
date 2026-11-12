@@ -313,10 +313,19 @@ export function readSpec(file: string): LaunchSpec {
 // Webhooks have no client-supplied id, so a lost response is AMBIGUOUS: we never auto-repost it
 // (phase post_ambiguous); the agent's reply line FANOUT_KEY=<key> lets you reconcile afterwards.
 import { randomUUID as uuid } from 'node:crypto';
-import { postWebhook, acquireInflight, releaseInflight } from './automation.ts';
+import { postWebhook, acquireInflight, releaseInflight, taskPrompt, withPrompt, IDLE_PROMPT } from './automation.ts';
+import type { AckRecord } from './types.ts';
 
-export async function launchViaAutomation(ctx: LaunchCtx, spec: LaunchSpec, { yes = false, retryFailed = false, webhook, automationRepo = null, gapMs = 800 }: {
-  yes?: boolean; retryFailed?: boolean; webhook: { url: string; key: string }; automationRepo?: string | null; gapMs?: number;
+/** Per-task prompt swap on the shared automation (see automation.ts). Omit to post with the idle prompt as-is. */
+export interface PromptSwap {
+  workflow: Parameters<typeof withPrompt>[0];
+  update: (workflow: Parameters<typeof withPrompt>[0]) => Promise<unknown>;
+  /** Round trip: resolve once the agent's first line acknowledges the prompt it saw. */
+  waitAck: (agentId: string, fanoutKey: string) => Promise<AckRecord>;
+}
+
+export async function launchViaAutomation(ctx: LaunchCtx, spec: LaunchSpec, { yes = false, retryFailed = false, webhook, automationRepo = null, gapMs = 800, swap = null }: {
+  yes?: boolean; retryFailed?: boolean; webhook: { url: string; key: string }; automationRepo?: string | null; gapMs?: number; swap?: PromptSwap | null;
 }): Promise<LaunchSummary> {
   const { cfg, log } = ctx;
   const p = plan(cfg, spec, { retryFailed });
@@ -334,10 +343,13 @@ export async function launchViaAutomation(ctx: LaunchCtx, spec: LaunchSpec, { ye
     summary.plan = todo.map((r) => ({ label: r.item.label, summary: r.item.summary, output: r.item.output, repo: automationRepo || r.item.repo, action: r.action, prompt: oneLine(r.item.instruction ?? r.item.prompt, 80), model: '(automation)', billing: 'automation run: plan usage (weekly pool)' }));
     return summary;
   }
-  acquireInflight(); // marks "posting" so `automation apply` refuses to mutate the automation meanwhile
+  // Exclusive: launches swap the shared automation prompt, and `automation apply` must not write meanwhile.
+  if (!acquireInflight()) throw new Error('another fan-out launch is in progress (automation prompt is in use); retry when it finishes');
+  let swapped = false;
   try {
   for (const { item } of todo) {
     const fanoutKey = uuid();
+    const instruction = item.instruction ?? item.prompt;
     const regKey = `pending:${item.key}`;
     await update(cfg, (reg) => {
       reg.batches[p.batch] ??= { createdAt: nowIso(), via: 'automation', title: spec.title || null };
@@ -350,7 +362,15 @@ export async function launchViaAutomation(ctx: LaunchCtx, spec: LaunchSpec, { ye
       });
     });
     let res: { status: number; headers: Record<string, string>; body: { backgroundComposerId?: string } | null; text: string } | undefined; let err: ReturnType<typeof caught> | null = null;
-    const payload = { fanout_key: fanoutKey, label: item.label, summary: item.summary, instruction: item.instruction ?? item.prompt, output: item.output };
+    const payload = { fanout_key: fanoutKey, label: item.label, summary: item.summary, instruction, output: item.output };
+    // 1) Stage this task as the automation prompt, so the conversation opens with it (and is titled after it).
+    //    A failed swap is not fatal: the body carries the task, only the first message/title stay generic.
+    let swapError: string | null = null;
+    if (swap) {
+      try { await swap.update(withPrompt(swap.workflow, taskPrompt({ fanoutKey, summary: item.summary, instruction, output: item.output }))); swapped = true; }
+      catch (e: unknown) { swapError = caught(e).message; log.warn(`prompt swap failed [${item.label}]: ${swapError} — posting with the current prompt`); }
+    }
+    // 2) The documented webhook trigger. The body stays authoritative.
     try { res = await postWebhook(webhook, payload); } catch (e: unknown) { err = caught(e); }
     const agentId = res?.body?.backgroundComposerId;
     const fields = agentId
@@ -365,10 +385,25 @@ export async function launchViaAutomation(ctx: LaunchCtx, spec: LaunchSpec, { ye
       return { label: rec.label, agentId: rec.agentId, phase: rec.phase, fanoutKey, error: rec.createError?.message };
     });
     log.info(`${out.phase.padEnd(14)} ${short(out.agentId)} [${item.label}]${out.error ? `  ! ${out.error}` : ''}`);
+    // 3) Round trip before the next swap: the agent echoes body_key/prompt_key on its first line, which
+    //    proves which prompt it started from. Not confirmed → recorded, and we still move on after the wait.
+    if (swap && agentId) {
+      const ack: AckRecord = swapError ? { status: 'error', at: nowIso(), message: `prompt swap failed: ${swapError}` } : await swap.waitAck(agentId, fanoutKey);
+      await update(cfg, (reg) => { if (reg.agents[agentId]) reg.agents[agentId].ack = ack; });
+      log.info(`ack ${ack.status.padEnd(9)} ${short(agentId)} [${item.label}]${ack.message ? `  ${ack.message}` : ''}`);
+      Object.assign(out, { ack: ack.status });
+    }
     summary.results.push(out);
     await new Promise((r) => setTimeout(r, gapMs)); // webhook rate limits are undocumented: be gentle
   }
-  } finally { releaseInflight(); }
+  } finally {
+    // 4) Never leave the last task staged: a manual webhook call would otherwise show a stale task.
+    if (swap && swapped) {
+      try { await swap.update(withPrompt(swap.workflow, IDLE_PROMPT)); }
+      catch (e: unknown) { log.warn(`could not restore the idle automation prompt: ${caught(e).message} — run \`tracker automation apply --yes\``); }
+    }
+    releaseInflight();
+  }
   return summary;
 }
 

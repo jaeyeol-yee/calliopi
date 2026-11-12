@@ -111,7 +111,30 @@ export function replyMeta(text: string | null | undefined): ReplyMeta {
   const line = (k: string) => new RegExp(`^${k}=(.+)$`, 'm').exec(t)?.[1]?.trim() || null;
   return { fanoutKey: line('FANOUT_KEY'), agentId: line('AGENT_ID'), understood: line('UNDERSTOOD') };
 }
+/** First line of an automation reply: `<calliopi_ack body_key="…" prompt_key="…"/>`. */
+const ACK = /<calliopi_ack\b([^>]*?)\/?>/;
+export function parseAck(text: string | null | undefined): { bodyKey: string | null; promptKey: string | null } | null {
+  const m = ACK.exec(String(text || ''));
+  return m ? { bodyKey: attr(m[1], 'body_key'), promptKey: attr(m[1], 'prompt_key') } : null;
+}
 export const cleanResult = (text: string | null | undefined): string | null | undefined => (text == null ? text
-  : String(text).replace(ENVELOPE, '').replace(/^(FANOUT_KEY|AGENT_ID|UNDERSTOOD)=.*(\r?\n|$)/gm, '').trim());
+  : String(text).replace(new RegExp(ACK.source, 'g'), '').replace(ENVELOPE, '').replace(/^(FANOUT_KEY|AGENT_ID|UNDERSTOOD)=.*(\r?\n|$)/gm, '').trim());
 export const understood = (text: string | null | undefined): string | null => replyMeta(text).understood;
 export const keyVerified = (a: Pick<AgentView, 'fanoutKey'> | null | undefined, text: string | null | undefined): boolean | null => (a?.fanoutKey ? replyMeta(text).fanoutKey === a.fanoutKey : null);
+
+/**
+ * Key check across ALL runs of an agent. Only the webhook-started run carries the envelope; follow-up
+ * runs (e.g. "now open a PR") don't, so checking just the latest run reports false mismatches.
+ * true: some run echoed this key · false: a run echoed another key, or no finished run echoed any key.
+ */
+export function keyVerifiedRuns(a: Pick<AgentView, 'fanoutKey' | 'runs'> | null | undefined): boolean | null {
+  if (!a?.fanoutKey) return null;
+  const keys = Object.values(a.runs || {}).map((r) => (r?.result ? replyMeta(r.result).fanoutKey : null)).filter(Boolean);
+  if (keys.includes(a.fanoutKey)) return true;
+  return keys.length || Object.values(a.runs || {}).some((r) => r?.result) ? false : null;
+}
+/** `understood` from whichever run carried the envelope. */
+export function understoodRuns(a: Pick<AgentView, 'runs'>, fallback: string | null | undefined): string | null {
+  for (const r of Object.values(a.runs || {})) { const u = r?.result ? understood(r.result) : null; if (u) return u; }
+  return understood(fallback);
+}

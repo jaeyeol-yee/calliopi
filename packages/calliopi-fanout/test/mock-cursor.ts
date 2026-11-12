@@ -17,6 +17,7 @@ interface MockRun {
   durationMs?: number;
   result?: string;
   resultText?: string;
+  ackText?: string;
   fanoutKey?: string;
 }
 interface MockAgent {
@@ -47,6 +48,14 @@ export interface MockState {
   updates?: number;
   webhookPosts?: number;
   webhookFail?: boolean;
+  /** Automation prompt text in effect at each webhook POST (what Cursor would start the run from). */
+  promptsAtPost?: string[];
+  /** Simulate Cursor using another prompt than the staged one (ack mismatch). */
+  forcePromptKey?: string;
+  /** Simulate an agent that never writes the ack line. */
+  noAck?: boolean;
+  /** Make UpdateAutomation fail (prompt swap failure). */
+  updateFail?: boolean;
 }
 export interface MockHandle {
   server: http.Server;
@@ -129,6 +138,7 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
       mockState.automation ??= { automationId: 'auto-1', name: 'CallioPiAutomation', enabled: true,
         workflow: { triggers: [{ webhook: {} }], prompts: [{ prompt: 'p0' }], modelSelection: { modelId: 'grok-4.7' }, gitConfig: { repo: 'https://github.com/o/r', branch: 'main' } } };
       if (m === 'GetAutomation') return send(res, 200, { workflow: { workflow: mockState.automation } });
+      if (m === 'UpdateAutomation' && mockState.updateFail) return err(res, 500, 'internal', 'update failed');
       if (m === 'UpdateAutomation') { mockState.updates = (mockState.updates || 0) + 1; if (json.workflow) mockState.automation.workflow = json.workflow; return send(res, 200, { workflow: { workflow: mockState.automation } }); }
       return err(res, 404, 'not_found', m as string);
     }
@@ -139,12 +149,18 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
       mockState.webhookPosts = (mockState.webhookPosts || 0) + 1;
       if (mockState.webhookFail) { req.socket.destroy(); return; }
       const id = `bc-${randomUUID()}`;
-      const script = (/\[script:([A-Z_,]+)\]/.exec(payload.task || '')?.[1] || 'RUNNING,FINISHED').split(',');
+      const script = (/\[script:([A-Z_,]+)\]/.exec(payload.instruction || payload.task || '')?.[1] || 'RUNNING,FINISHED').split(',');
       const now = new Date().toISOString();
       const a: MockAgent = { id, name: 'Calliopi webhook task', createdAt: now, updatedAt: now, pr: false, num: agents.size + 1, git: null,
         runs: [{ id: `run-${randomUUID()}`, script, step: 0, status: script[0], createdAt: now, updatedAt: now,
           result: undefined, fanoutKey: payload.fanout_key }] };
-      a.runs[0].resultText = `<calliopi_result fanout_key="${payload.fanout_key}" agent_id="${id}">\n<understood>${payload.summary || payload.label}</understood>\n</calliopi_result>\n\ndone: ${payload.label}`;
+      // Like Cursor: the run starts from the automation prompt in effect NOW, plus the webhook body.
+      const prompt = mockState.automation?.workflow.prompts?.[0]?.prompt ?? '';
+      (mockState.promptsAtPost ??= []).push(prompt);
+      const promptKey = mockState.forcePromptKey ?? /fanout_key="([^"]+)"/.exec(prompt)?.[1] ?? 'none';
+      const ack = mockState.noAck ? '' : `<calliopi_ack body_key="${payload.fanout_key}" prompt_key="${promptKey}"/>\n`;
+      a.runs[0].ackText = ack;
+      a.runs[0].resultText = `${ack}<calliopi_result fanout_key="${payload.fanout_key}" agent_id="${id}">\n<understood>${payload.summary || payload.label}</understood>\n</calliopi_result>\n\ndone: ${payload.label}`;
       agents.set(id, a);
       return send(res, 200, { success: true, backgroundComposerId: id });
     }
@@ -180,7 +196,7 @@ export function startMock({ port = 0, key = 'test-key', every429 = 0, usage403 =
       res.writeHead(200, { 'content-type': 'text/event-stream', 'x-cursor-stream-retention-seconds': '3600' });
       const run = ag.runs[0];
       res.write(`event: status\ndata: {"runId":"${run.id}","status":"RUNNING"}\n\n`);
-      res.write('id: 1-0\nevent: assistant\ndata: {"text":"working on it…"}\n\n');
+      res.write(`id: 1-0\nevent: assistant\ndata: ${JSON.stringify({ text: `${run.ackText ?? ''}working on it…` })}\n\n`);
       while (!['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED'].includes(run.status)) advance(ag);
       res.write(`id: 2-0\nevent: result\ndata: ${JSON.stringify({ runId: run.id, status: run.status, text: run.result, durationMs: run.durationMs, git: ag.git })}\n\n`);
       res.end('id: 2-0\nevent: done\ndata: {}\n\n');
