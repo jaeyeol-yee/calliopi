@@ -4,6 +4,8 @@
 //   across packages    @calliopi/<name>/<subpath> only, where the subpath is in that package's
 //                      "exports" and the importer declares @calliopi/<name> as a dependency
 //   never              a path into another package's directory (relative, absolute or packages/…)
+//   layers             package.json "calliopi.layer"; a package imports only strictly lower layers:
+//                        core < ui, context < app   (so app ↛ app, ui ↛ context, core ↛ anything)
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -12,8 +14,10 @@ const PACKAGES = path.join(ROOT, 'packages');
 const SOURCE = /\.(ts|mts|cts|mjs|js|cjs)$/;
 const SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)(['"])([^'"]+)\1/g;
 
+const LAYERS: Record<string, number> = { core: 0, ui: 1, context: 1, app: 2 };
+
 type Pkg = {
-  dir: string; name: string;
+  dir: string; name: string; layer: string;
   imports: Record<string, string>; exports: Record<string, string>;
   deps: Set<string>;
 };
@@ -25,7 +29,7 @@ const pkgs: Pkg[] = fs.readdirSync(PACKAGES)
     const j = readJson(path.join(PACKAGES, d, 'package.json'));
     const exp = typeof j.exports === 'string' ? { '.': j.exports } : (j.exports ?? {});
     return {
-      dir: path.join(PACKAGES, d), name: j.name, imports: j.imports ?? {}, exports: exp,
+      dir: path.join(PACKAGES, d), name: j.name, layer: j.calliopi?.layer, imports: j.imports ?? {}, exports: exp,
       deps: new Set(Object.keys({ ...j.dependencies, ...j.peerDependencies, ...j.optionalDependencies })),
     };
   });
@@ -52,6 +56,9 @@ const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true })
 });
 
 const problems: string[] = [];
+for (const pkg of pkgs) {
+  if (!(pkg.layer in LAYERS)) problems.push(`${pkg.name}: package.json "calliopi.layer" must be one of ${Object.keys(LAYERS).join(', ')}`);
+}
 const edges = new Map<string, Set<string>>();
 for (const pkg of pkgs) {
   for (const file of walk(pkg.dir)) {
@@ -72,6 +79,7 @@ for (const pkg of pkgs) {
         const dep = byName.get(`${scope}/${name}`);
         if (!dep) { problems.push(`${at}: no workspace package ${scope}/${name}`); continue; }
         if (dep === pkg) { problems.push(`${at}: self import; use a # alias`); continue; }
+        if (LAYERS[dep.layer]! >= LAYERS[pkg.layer]!) problems.push(`${at}: ${pkg.name} (${pkg.layer}) may only import lower layers, not ${dep.name} (${dep.layer})`);
         if (!pkg.deps.has(dep.name)) problems.push(`${at}: ${dep.name} is not declared in ${pkg.name} dependencies`);
         const target = match(dep.exports, rest.length ? `./${rest.join('/')}` : '.');
         if (!target) problems.push(`${at}: not in ${dep.name} "exports"`);
@@ -91,9 +99,11 @@ const visit = (name: string, trail: string[]): void => {
 for (const name of edges.keys()) visit(name, []);
 
 if (problems.length) {
-  console.error([...new Set(problems)].join('\n'));
-  console.error(`\n${problems.length} import problem(s).`);
+  const unique = [...new Set(problems)];
+  console.error(unique.join('\n'));
+  console.error(`\n${unique.length} import problem(s).`);
   process.exit(1);
 }
 const cross = [...edges].map(([from, to]) => `${from} → ${[...to].join(', ')}`).join('; ') || 'none';
-console.log(`imports ok: ${pkgs.length} packages; cross-package: ${cross}`);
+const byLayer = Object.keys(LAYERS).map((l) => `${l}: ${pkgs.filter((p) => p.layer === l).map((p) => p.name.replace('@calliopi/', '')).join(', ') || '—'}`).join(' · ');
+console.log(`imports ok: ${pkgs.length} packages (${byLayer}); cross-package: ${cross}`);

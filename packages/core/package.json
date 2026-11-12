@@ -4,6 +4,9 @@
   "private": true,
   "description": "Execution primitives shared by Calliopi layers: fzf selection, program runners, workflows. No dependencies.",
   "type": "module",
+  "calliopi": {
+    "layer": "core"
+  },
   "imports": {
     "#lib/*": "./lib/*"
   },

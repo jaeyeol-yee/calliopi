@@ -63,7 +63,21 @@ calliopi/package.json 의 pi manifest
 - Pi는 루트 manifest에 명시된 리소스 경로를 읽습니다. 하위 `package.json`의 `pi` 선언을 재귀 탐색하는 구조가 아닙니다.
 - `workspaces`는 개발용 패키지 경계입니다. Pi의 리소스 발견과는 별개입니다.
 - 하위 패키지에도 자체 `pi` 선언을 두어 각 패키지의 리소스를 설명합니다. 전체 하네스를 쓸 때는 루트만 등록하세요. 루트와 하위 패키지를 중복 등록할 필요가 없습니다.
-- 패키지 사이의 코드 의존성은 `calliopi-fanout → ui`, `calliopi-workflows → ui, core`, `ui → core`입니다. 의존 방향은 한쪽으로만 두고, `core`는 다른 패키지를 참조하지 않습니다.
+- 패키지 사이의 코드 의존성은 아래 계층을 따릅니다.
+
+### 계층
+
+```text
+app       calliopi-fanout    calliopi-workflows     명령·도구 등록, 무엇을 할지 결정
+              │                 │        │
+ui, context   ui ◄──────────────┘        │           화면과 입력 / 모델이 읽을 자료
+              │                          │
+core          core ◄─────────────────────┘           fzf 선택·워크플로우 엔진·실행기 타입 (의존성 없음)
+```
+
+- 각 패키지는 `package.json`의 `"calliopi": { "layer": … }`로 계층(`core`, `ui`, `context`, `app`)을 선언합니다.
+- **자기보다 낮은 계층만 import합니다.** 그래서 application끼리(`calliopi-fanout` ↔ `calliopi-workflows`), `ui` ↔ `context`는 서로 참조하지 않고 `core`는 아무것도 참조하지 않습니다. 둘이 함께 쓸 것이 생기면 아래 계층으로 내립니다.
+- 새 애플리케이션은 `app` 계층의 새 패키지로 만들고 루트 manifest에 `extensions` 경로를 추가합니다.
 
 ### import 규칙
 
@@ -72,7 +86,7 @@ calliopi/package.json 의 pi manifest
 | 대상 | 쓰는 형태 | 근거 |
 |---|---|---|
 | 같은 패키지 | `#lib/util.ts`, `#extensions/…`, `#test/…` | 그 패키지 `package.json`의 `imports` |
-| 다른 패키지 | `@calliopi/ui/table` | 상대 패키지 `exports`에 있는 경로만, 내 `dependencies`에 선언 후 |
+| 다른 패키지 | `@calliopi/ui/table` | 더 낮은 계층의 `exports`에 있는 경로만, 내 `dependencies`에 선언 후 |
 
 - `exports`에 없는 내부 파일(`@calliopi/ui/lib/…`)은 Node가 `ERR_PACKAGE_PATH_NOT_EXPORTED`로 막습니다. 공개할 것만 `exports`에 추가합니다.
 - `#` 별칭은 **그 파일이 속한 패키지** 기준으로 풀립니다. fanout이 불러온 `@calliopi/ui/table` 안의 `#lib/…`는 ui의 `lib`입니다(Node와 Pi 로더 양쪽에서 확인).
@@ -104,11 +118,11 @@ pi install ~/agent-labs/calliopi
 
 ## 검사
 
-루트에서 모든 패키지를 한 번에 검사합니다. 스크립트가 없는 패키지(`core`, `context`)는 건너뜁니다.
+루트에서 모든 패키지를 한 번에 검사합니다. 스크립트가 없는 패키지(`context`)는 건너뜁니다.
 
 | 명령 | 내용 |
 |---|---|
-| `npm run check:imports` | import 규칙 검사 |
+| `npm run check:imports` | import 규칙·계층 검사 |
 | `npm run typecheck` | 각 패키지 `tsc -p .` |
 | `npm test` | 각 패키지 `node --test` |
 | `npm run check` | 위 세 가지를 순서대로, 첫 실패에서 중단 |
@@ -117,8 +131,8 @@ pi install ~/agent-labs/calliopi
 
 ## 확장 원칙
 
-- **core**: 공통 타입·설정·기본 명령. 다른 패키지의 편의 기능을 모두 모으는 장소로 사용하지 않습니다.
+- **core**: 실행 메커니즘(fzf 선택, 워크플로우 엔진, 실행기 타입)과 공통 설정. 화면 구현(pi-tui·PTY)에 의존하지 않고 실행기를 주입받습니다. 다른 패키지의 편의 기능을 모두 모으는 장소로 사용하지 않습니다.
 - **context**: 모델이 읽을 지침·자료의 구성. 단순한 절차는 TypeScript 대신 skill이나 prompt로 유지합니다.
-- **ui**: 표시와 입력. 실행 정책이나 컨텍스트 선택을 결정하지 않습니다.
-- Pi가 제공하는 SDK 패키지는 필요해질 때 `peerDependencies`로 선언하고 번들에 포함하지 않습니다.
-- 실행 기능은 `calliopi-fanout`에서 제공합니다. 자동 reload는 현재 범위 밖입니다.
+- **ui**: 표시와 입력. 실행 정책이나 컨텍스트 선택을 결정하지 않고, 명령을 등록하지 않는 부품(overlay, 터미널, 표)을 `exports`로 제공합니다. 대화 기록 헤더처럼 표시 방식 자체인 설정 명령은 예외입니다.
+- **app**: 사용자가 쓰는 기능. 명령·도구를 등록하고 아래 계층을 조합합니다. 팬아웃은 `calliopi-fanout`, fzf 워크플로우는 `calliopi-workflows`가 제공합니다.
+- Pi가 제공하는 SDK 패키지는 필요해질 때 `peerDependencies`로 선언하고 번들에 포함하지 않습니다. 자동 reload는 현재 범위 밖입니다.

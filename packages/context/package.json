@@ -4,9 +4,18 @@
   "private": true,
   "description": "Context composition, skills, and prompt templates for Calliopi.",
   "type": "module",
+  "calliopi": {
+    "layer": "context"
+  },
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"],
-    "prompts": ["./prompts"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
   }
 }

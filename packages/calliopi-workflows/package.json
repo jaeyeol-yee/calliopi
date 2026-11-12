@@ -4,6 +4,9 @@
   "private": true,
   "description": "fzf-driven workflows in Pi's floating terminal: /calliopi-edit (file → Vim) and /calliopi-log (commit → file → diff).",
   "type": "module",
+  "calliopi": {
+    "layer": "app"
+  },
   "imports": {
     "#lib/*": "./lib/*"
   },

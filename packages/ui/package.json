@@ -4,6 +4,9 @@
   "private": true,
   "description": "Presentation for Calliopi: floating terminal overlays, tables, transcript headers, themes.",
   "type": "module",
+  "calliopi": {
+    "layer": "ui"
+  },
   "imports": {
     "#lib/*": "./lib/*"
   },
