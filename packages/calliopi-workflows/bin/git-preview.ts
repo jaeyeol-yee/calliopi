@@ -1,4 +1,4 @@
-// fzf preview for /calliopi-log. Standalone (no lib/ imports): runs under whatever Node started Pi.
+// fzf preview for /cl-log. Standalone (no lib/ imports): runs under whatever Node started Pi.
 // Only items from the picker's state file can be previewed; fzf passes just the item index.
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';

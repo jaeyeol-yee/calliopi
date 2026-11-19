@@ -5,12 +5,12 @@ Pi floating terminal에서 fzf로 고르고 이어서 프로그램을 실행하�
 - fzf 선택·실행기 타입: `@calliopi/core`
 - floating terminal·키 입력: `@calliopi/ui`
 
-## /calliopi-edit: 파일 picker + Vim
+## /cl-edit: 파일 picker + Vim
 
 Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다. Rex나 외부 터미널 창을 사용하지 않습니다.
 
 ```text
-/calliopi-edit → fzf → Enter → Vim → :wq 또는 :q → Pi로 복귀
+/cl-edit → fzf → Enter → Vim → :wq 또는 :q → Pi로 복귀
 ```
 
 루트에서 `npm install` 후 Pi에서 `/reload`합니다. 시스템 `PATH`에 `rg`, `fzf`, `vim`이 필요하고 `bat`은 선택 사항입니다. macOS/Linux의 대화형 Pi를 지원합니다. 최소 크기는 40칸 × 12줄이며 fullscreen·regular 모드 모두 사용할 수 있습니다.
@@ -20,7 +20,7 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 - Vim에서 `:wq`는 저장 후 종료, `:q`는 종료, `:q!`는 저장하지 않고 종료입니다. `Esc`는 Vim의 모드 전환이며 창을 닫지 않습니다.
 - fzf/Vim이 열려 있는 동안 키 입력은 Pi 대신 해당 프로그램에 전달합니다. 창 크기 변경은 PTY에도 반영합니다. v1은 키보드 전용이며 마우스 입력은 전달하지 않습니다.
 - 한글 등 IME 입력은 조합이 끝난 글자만 전달합니다. 자모 키 이벤트를 포함해 해석하지 못한 Kitty 키 이벤트는 내부 프로그램에 넘기지 않습니다.
-- 입력 문제 진단: `/calliopi-edit --debug-input`은 받은 키 시퀀스와 변환 결과를 `$TMPDIR/calliopi-input-*.jsonl`(0600)에 기록합니다. **입력한 내용이 그대로 남으므로** 확인 후 삭제하세요.
+- 입력 문제 진단: `/cl-edit --debug-input`은 받은 키 시퀀스와 변환 결과를 `$TMPDIR/calliopi-input-*.jsonl`(0600)에 기록합니다. **입력한 내용이 그대로 남으므로** 확인 후 삭제하세요.
 - 편집기는 시스템 `vim`이며 사용자 Vim 설정은 그대로 읽습니다. `$EDITOR`/`$VISUAL` 선택과 여러 파일 추적은 아직 지원하지 않습니다.
 
 ### Pi로 변경 사항 전달
@@ -35,7 +35,7 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 - 다음 턴 메시지는 Pi의 `nextTurn` 큐를 사용합니다. 전송 전에 종료하거나 `/reload`할 경우까지 별도 복구를 보장하지 않습니다.
 - `/reload`·세션 교체·Pi 종료 시 PTY와 임시 파일을 정리합니다. Vim에서 저장하지 않은 내용의 복구는 보장하지 않습니다.
 
-## /calliopi-log: git 기록 탐색
+## /cl-log: git 기록 탐색
 
 같은 floating terminal에서 커밋 → 변경 파일 → diff 순서로 탐색합니다. **보기 전용**이며 Pi 대화에 아무것도 전달하지 않습니다.
 
@@ -58,7 +58,7 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 - 커밋 fzf는 계속 실행되어 검색어·커서가 그대로 유지됩니다. 파일 fzf는 커밋을 옮길 때마다 다시 띄우며, diff를 보고 돌아오면 검색어·커서를 복원합니다.
 - 커밋 커서는 fzf의 `focus` 이벤트를 개인 임시 파일로 받아 따라갑니다. 다른 로컬 프로세스가 명령을 보낼 수 있는 fzf 원격 제어 서버(`--listen`)는 쓰지 않습니다. 빠르게 스크롤할 때는 80ms 모아서 한 번만 갱신합니다.
 
-폭이 100칸 미만이거나 `/calliopi-log --steps`로 열면 단계별 화면입니다.
+폭이 100칸 미만이거나 `/cl-log --steps`로 열면 단계별 화면입니다.
 
 ```text
  ① 커밋 목록      미리보기: git show --stat     Enter → ② · Esc → Pi 복귀
@@ -75,8 +75,8 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 ## 구조
 
 ```text
-extensions/file-picker.ts   /calliopi-edit · 다음 턴 메시지
-extensions/git-log.ts       /calliopi-log
+extensions/file-picker.ts   /cl-edit · 다음 턴 메시지
+extensions/git-log.ts       /cl-log
 lib/editor-flow.ts          워크플로우: 파일 → Vim, 스냅샷으로 변경 비교
 lib/file-edit.ts            파일 목록·경로 검사·스냅샷·diff
 lib/git-log.ts              커밋·파일 목록, 단계별 워크플로우, 분할 화면(전용 구현)

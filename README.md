@@ -10,7 +10,7 @@ Pi 위에 얹는 모듈형 로컬 하네스. 브랜드는 Calliopi, 내부 패�
 
 회전목마에서는 말들이 각자의 움직임을 가지면서도 하나의 틀 안에서 함께 돕니다. Calliopi는 그 곁에서 흐르는 음악처럼, Pi 위의 여러 기능에 일관된 흐름과 사용 경험을 더하는 하네스를 지향합니다.
 
-브랜드에는 회전목마의 이미지를 남기되, 내부 패키지는 `core`, `context`, `ui`처럼 역할이 드러나는 이름을 사용합니다. npm·GitHub·도메인 이름의 사용 가능 여부는 확인하지 않았습니다.
+브랜드에는 회전목마의 이미지를 남기되, 내부 패키지는 `core`, `context`, `ui`처럼 역할이 드러나는 이름을 사용합니다. Pi에서 직접 입력하는 명령은 짧게 `/cl-` 접두사를 씁니다(`/cl-edit`, `/cl-log`, `/cl-fanout`, `/cl-headers`). 모델이 호출하는 도구 이름은 `calliopi_fanout_*`를 유지합니다. npm·GitHub·도메인 이름의 사용 가능 여부는 확인하지 않았습니다.
 
 참고: [Calliope](https://en.wikipedia.org/wiki/Calliope_(instrument)), [Fairground organ](https://en.wikipedia.org/wiki/Fairground_organ).
 
@@ -35,14 +35,14 @@ calliopi/
     │   ├── extensions/       # 대화 기록 헤더
     │   └── themes/           # Pi 테마 JSON
     ├── calliopi-fanout/      # Cursor Cloud Agents 팬아웃·추적 (Pi 확장·rex 레이어 포함)
-    └── calliopi-workflows/   # fzf 워크플로우: /calliopi-edit, /calliopi-log
+    └── calliopi-workflows/   # fzf 워크플로우: /cl-edit, /cl-log
 ```
 
-`calliopi-fanout`은 Pi manifest에 등록된 확장으로 `/calliopi-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/calliopi-fanout/README.md](packages/calliopi-fanout/README.md)를 보세요.
+`calliopi-fanout`은 Pi manifest에 등록된 확장으로 `/cl-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/calliopi-fanout/README.md](packages/calliopi-fanout/README.md)를 보세요.
 
-`calliopi-workflows`의 `/calliopi-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/calliopi-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
+`calliopi-workflows`의 `/cl-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/cl-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
 
-`ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙입니다(`/calliopi-headers`). 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
+`ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙입니다(`/cl-headers`). 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
 
 `core/extensions`와 `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
 
@@ -108,17 +108,17 @@ core          core ◄───────────────────�
 | Pi | 1.5.2에서 검증 | 하한은 확인하지 않았습니다. 대화 헤더는 Pi 내부 컴포넌트에 기대므로 Pi를 올리면 `npm run check`로 확인하세요 |
 | `node-pty` 빌드 | prebuilt 또는 C/C++ 빌드 도구 | 네이티브 의존성입니다. prebuilt가 없는 플랫폼에서는 로컬 빌드합니다 |
 
-### CLI 도구: `calliopi-workflows` (`/calliopi-edit`, `/calliopi-log`)
+### CLI 도구: `calliopi-workflows` (`/cl-edit`, `/cl-log`)
 
 | 도구 | 쓰는 곳 | 필수 | 최소 버전 | 버전을 정한 기능 | 확인 |
 |---|---|---|---|---|---|
 | fzf | 두 명령 | 필수 | **0.37.0** | `load` 이벤트·`pos()` 동작(커서 복원) 0.36.0, `focus` 이벤트(분할 화면) 0.37.0 | 실측: 0.27–0.46.1 바이너리로 실제 명령 파싱 + PTY 테스트. 0.36.0은 분할 화면만 실패 |
-| ripgrep | `/calliopi-edit` 파일 목록 | 필수 | 0.2.1 | `--files --null` | changelog |
-| Vim | `/calliopi-edit` 편집기 | 필수 | 제약 없음 | `vim -- <file>`만 사용 | — |
-| git | `/calliopi-log` | 필수 | 1.8.2 (권장 2.15.0) | `GIT_LITERAL_PATHSPECS` 1.8.2. `GIT_OPTIONAL_LOCKS` 2.15.0은 낮은 버전에서 무시되어 lock 최적화만 빠집니다 | release notes, 태그별 소스 |
-| less | `/calliopi-log` pager | 필수 | 346 | `-R` 346, `LESSSECURE` 321 | NEWS |
-| delta | `/calliopi-log` pager | 선택 | 0.4.4 | `DELTA_PAGER`. 낮은 버전은 `BAT_PAGER`/`PAGER`를 써서 pager가 바뀔 수 있습니다 | 실측: 0.4.3 / 0.4.4 |
-| bat | `/calliopi-edit` 미리보기 | 선택 | 0.5.0 | `--line-range`. 낮거나 없으면 색 없는 텍스트로 대체합니다 | 실측: 0.4.1 / 0.5.0 |
+| ripgrep | `/cl-edit` 파일 목록 | 필수 | 0.2.1 | `--files --null` | changelog |
+| Vim | `/cl-edit` 편집기 | 필수 | 제약 없음 | `vim -- <file>`만 사용 | — |
+| git | `/cl-log` | 필수 | 1.8.2 (권장 2.15.0) | `GIT_LITERAL_PATHSPECS` 1.8.2. `GIT_OPTIONAL_LOCKS` 2.15.0은 낮은 버전에서 무시되어 lock 최적화만 빠집니다 | release notes, 태그별 소스 |
+| less | `/cl-log` pager | 필수 | 346 | `-R` 346, `LESSSECURE` 321 | NEWS |
+| delta | `/cl-log` pager | 선택 | 0.4.4 | `DELTA_PAGER`. 낮은 버전은 `BAT_PAGER`/`PAGER`를 써서 pager가 바뀔 수 있습니다 | 실측: 0.4.3 / 0.4.4 |
+| bat | `/cl-edit` 미리보기 | 선택 | 0.5.0 | `--line-range`. 낮거나 없으면 색 없는 텍스트로 대체합니다 | 실측: 0.4.1 / 0.5.0 |
 
 ### 선택: `calliopi-fanout`
 

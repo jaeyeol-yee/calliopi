@@ -43,7 +43,7 @@ export function refresh(rt: Runtime, ctx: ExtensionContext) {
 			const md = truncateHead(toMarkdown(agg), { maxLines: 300, maxBytes: 20_000 }).content;
 			if (!owner(sideDir(ctx)) || isOwner(ctx)) {
 				rt.pi.sendMessage({ customType: "cloud-fanout", content: md, display: true, details: { batch } }, { deliverAs: "nextTurn" });
-			} else ctx.ui.notify(`☁ ${batch} 완료 · /calliopi-fanout inbox로 결과 확인`, "info");
+			} else ctx.ui.notify(`☁ ${batch} 완료 · /cl-fanout inbox로 결과 확인`, "info");
 		}
 	}
 }

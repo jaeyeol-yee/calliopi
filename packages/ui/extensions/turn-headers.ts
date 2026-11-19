@@ -114,7 +114,7 @@ export default function (pi: ExtensionAPI) {
     }, { messageTypes: ['user', 'assistant'] });
   }
 
-  pi.registerCommand('calliopi-headers', {
+  pi.registerCommand('cl-headers', {
     description: '대화 기록 헤더: full(선·헤더·선) | compact(한 줄) | off · thinking on|off (thinking 테두리)',
     getArgumentCompletions: (prefix: string) => ['full', 'compact', 'off', 'thinking on', 'thinking off'].filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s })),
     handler: async (args, ctx) => {
@@ -127,7 +127,7 @@ export default function (pi: ExtensionAPI) {
       }
       const style = first as HeaderStyle;
       if (!['full', 'compact', 'off'].includes(style)) {
-        return ctx.ui.notify(`현재: ${config.style}, thinking ${config.thinkingFrame ? 'on' : 'off'} (${patched ? '컴포넌트 헤더' : 'Markdown 대체 경로'}). 사용법: /calliopi-headers full|compact|off · thinking on|off`, 'info');
+        return ctx.ui.notify(`현재: ${config.style}, thinking ${config.thinkingFrame ? 'on' : 'off'} (${patched ? '컴포넌트 헤더' : 'Markdown 대체 경로'}). 사용법: /cl-headers full|compact|off · thinking on|off`, 'info');
       }
       save({ style });
       config = loadConfig();

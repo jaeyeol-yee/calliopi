@@ -15,7 +15,7 @@ export default function (pi: ExtensionAPI) {
     close?.();
   });
 
-  pi.registerCommand('calliopi-log', {
+  pi.registerCommand('cl-log', {
     description: 'Pi floating terminal에서 커밋 → 변경 파일 → diff를 탐색합니다(넓으면 분할 화면). 보기 전용입니다. --steps: 단계별 화면',
     handler: async (args, ctx) => {
       const steps = args.trim() === '--steps';

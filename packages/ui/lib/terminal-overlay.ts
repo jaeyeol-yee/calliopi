@@ -220,7 +220,7 @@ export class TerminalOverlay implements Component, Focusable {
 
   createPane(): TerminalPane { return new TerminalPane({ getCwd: () => this.cwd, requestRender: () => this.tui.requestRender() }); }
 
-  // Single-pane API (used by /calliopi-edit and the sequential flows).
+  // Single-pane API (used by /cl-edit and the sequential flows).
   get terminal(): XTerminal { return this.panes.main!.terminal; }
   get child(): IPty | null { return this.panes.main!.child; }
   run(command: string, args: string[], env?: NodeJS.ProcessEnv): Promise<PtyRunResult> { return this.panes.main!.run(command, args, env); }

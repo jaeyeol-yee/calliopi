@@ -1,5 +1,5 @@
 // Shared lifecycle for "run a sequence of terminal programs in a Pi floating overlay".
-// Used by /calliopi-edit and /calliopi-log. Pi-only (imports pi-tui); node tests use the pieces below it.
+// Used by /cl-edit and /cl-log. Pi-only (imports pi-tui); node tests use the pieces below it.
 import { spawnSync } from 'node:child_process';
 import { CURSOR_MARKER, renderFakeCursor, truncateToWidth, type ProgramStatus } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';

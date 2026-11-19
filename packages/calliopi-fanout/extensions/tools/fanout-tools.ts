@@ -82,7 +82,7 @@ export function registerTools(rt: Runtime) {
 			steer: Type.Optional(Type.Boolean({ description: "Deliver into the running turn instead of starting a new run" })),
 		}),
 		async execute(_id, p, signal, _u, ctx) {
-			if (!ctx.hasUI) throw new Error("needs approval: run /calliopi-fanout followup interactively");
+			if (!ctx.hasUI) throw new Error("needs approval: run /cl-fanout followup interactively");
 			if (!(await ctx.ui.confirm(`${p.steer ? "Steer" : "Follow up"} ${p.label}?`, p.prompt))) return { content: [{ type: "text", text: "cancelled by user" }], details: undefined };
 			const r = await tracker(rt, ctx, ["followup", p.label, "--prompt", p.prompt, "--yes", ...(p.steer ? ["--steer"] : [])], signal);
 			ensureDaemon(ctx);

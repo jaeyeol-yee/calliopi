@@ -16,7 +16,7 @@ export default function (pi: ExtensionAPI) {
     close?.();
   });
 
-  pi.registerCommand('calliopi-edit', {
+  pi.registerCommand('cl-edit', {
     description: 'Pi floating terminal에서 fzf로 파일 하나를 선택해 Vim으로 편집합니다. 변경분은 다음 대화에 전달합니다.',
     handler: async (args, ctx) => {
       const inputLog = args.trim() === '--debug-input' ? path.join(os.tmpdir(), `calliopi-input-${process.pid}-${Date.now()}.jsonl`) : undefined;

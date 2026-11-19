@@ -33,7 +33,7 @@ for (const mode of ['fullscreen', 'regular']) {
     child.onData(data => term.write(data));
     term.onData(data => child?.write(data));
     await wait(() => screen().includes(path.basename(cwd)) && screen().includes('git-log.ts'), 'Pi startup');
-    child.write('/calliopi-edit\r');
+    child.write('/cl-edit\r');
     await wait(() => screen().includes('File >') && screen().includes('sample.txt'), 'fzf overlay');
     child.write('\r');
     await wait(() => screen().includes('original-marker'), 'Vim overlay');
@@ -41,18 +41,18 @@ for (const mode of ['fullscreen', 'regular']) {
     await wait(() => screen().includes('변경 사항을 다음 대화에 전달'), 'Pi return / change notification');
     if (fs.readFileSync(path.join(cwd, 'sample.txt'), 'utf8') !== 'edited-marker\n') throw new Error('File not saved');
     // Reopen and cancel; this also checks focus returns to Pi's command editor.
-    child.write('/calliopi-edit\r');
+    child.write('/cl-edit\r');
     await wait(() => screen().includes('File >'), 'reopened picker');
     child.write('\x1b');
     await wait(() => !screen().includes('Calliopi · fzf'), 'cancel returns to Pi');
     console.log(`${mode}: fzf → Vim → save → Pi notification → reopen → Esc: OK`);
 
-    // /calliopi-log: commit → file → pager → q → Esc → Esc back to Pi.
+    // /cl-log: commit → file → pager → q → Esc → Esc back to Pi.
     const git = (...args: string[]) => spawnSync('git', args, { cwd, stdio: 'ignore' });
     git('init', '-q'); git('-c', 'user.name=t', '-c', 'user.email=t@e', 'add', 'sample.txt');
     git('-c', 'user.name=t', '-c', 'user.email=t@e', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'smoke commit');
     // Split view (110 columns ≥ 100): commits left, files + diff right.
-    child.write('/calliopi-log\r');
+    child.write('/cl-log\r');
     await wait(() => screen().includes('Commits') && screen().includes('smoke com') && screen().includes('File >') && screen().includes('sample.txt'), 'split view');
     child.write('\t');
     await wait(() => screen().includes('Enter: diff'), 'focus files');
@@ -66,7 +66,7 @@ for (const mode of ['fullscreen', 'regular']) {
     await wait(() => !screen().includes('Calliopi · git log') && !screen().includes('Commit >'), 'split → Pi');
     console.log(`${mode}: split commits ↔ files → pager → q → Esc → Esc: OK`);
 
-    child.write('/calliopi-log --steps\r');
+    child.write('/cl-log --steps\r');
     await wait(() => screen().includes('Commit >') && screen().includes('smoke commit'), 'commit list');
     child.write('\r');
     await wait(() => screen().includes('sample.txt') && /\b[0-9a-f]{7} >/.test(screen()), 'file list');

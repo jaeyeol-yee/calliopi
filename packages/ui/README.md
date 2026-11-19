@@ -23,8 +23,8 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 ```
 
 - **설정**
-  - `/calliopi-headers full|compact|off`: `full`(선·헤더·선, 기본), `compact`(`── ◉ 사용자 ───` 한 줄), `off`. 바로 적용됩니다.
-  - `/calliopi-headers thinking on|off`: thinking 테두리. 새로 그려지는 메시지부터 적용되고, 이전 기록은 `/reload` 후 반영됩니다.
+  - `/cl-headers full|compact|off`: `full`(선·헤더·선, 기본), `compact`(`── ◉ 사용자 ───` 한 줄), `off`. 바로 적용됩니다.
+  - `/cl-headers thinking on|off`: thinking 테두리. 새로 그려지는 메시지부터 적용되고, 이전 기록은 `/reload` 후 반영됩니다.
   - 설정은 `~/.pi/agent/calliopi-ui.json`의 `turnHeaders`에 저장되며 모든 프로젝트에 적용됩니다. 같은 곳에서 `userIcon`, `userLabel`, `assistantIcon`, `assistantLabel`을 바꿀 수 있습니다.
 - **아이콘**: 기본 `◉`, `⛭`, `∴`는 Unicode 이모지 속성이 없는 문자라 컬러 이모지로 바뀌지 않습니다. 말풍선 문자(`💭`, `💬`, `🗨`)는 모두 이모지라 쓰지 않습니다. 글꼴에 `⛭`이 없어 빈 네모로 보이면 `▣`나 `◈`로 바꾸세요.
 - **헤더 위치**: Pi는 모델 응답마다 응답 컴포넌트를 하나씩 만들고, 그 응답의 thinking·텍스트를 담습니다. 도구 블록은 그 뒤에 별도로 붙습니다. 헤더는 이 응답 컴포넌트가 직접 그리므로 thinking보다 앞에 오고, **도구만 호출하는 응답**에서도 도구 블록 바깥 위에 나옵니다. 사용자가 직접 실행한 `!명령`은 별도 컴포넌트라 Pi 헤더가 붙지 않습니다.
@@ -37,15 +37,15 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 
 - 감싼 함수는 예외가 나면 Pi의 원래 출력을 돌려줍니다. pi-tui는 render 예외를 처리되지 않은 예외로 바꿔 Pi를 종료하기 때문입니다.
 - `/reload`·세션 종료 때 원래 함수로 되돌리고, 다시 불러와도 두 번 감싸지 않습니다.
-- 클래스 모양이 예상과 다르면(Pi 업데이트 등) 감싸지 않습니다. 이때 헤더는 Markdown 변환 훅으로 대신 그립니다. 도구만 호출하는 응답과 thinking 앞에는 붙지 않고, thinking 테두리는 꺼집니다. `/calliopi-headers`가 어느 경로인지 알려줍니다.
+- 클래스 모양이 예상과 다르면(Pi 업데이트 등) 감싸지 않습니다. 이때 헤더는 Markdown 변환 훅으로 대신 그립니다. 도구만 호출하는 응답과 thinking 앞에는 붙지 않고, thinking 테두리는 꺼집니다. `/cl-headers`가 어느 경로인지 알려줍니다.
 - Pi의 내부 구조에 기대므로 Pi를 업데이트하면 `npm test --workspace @calliopi/ui`로 확인하세요. 실제 Pi 컴포넌트를 그려서 순서·폭·클릭·복구를 검증합니다.
 
 ## 구조
 
-화면과 입력 부품만 둡니다. 명령(`/calliopi-edit`, `/calliopi-log`)은 `calliopi-workflows`가 이 부품으로 만듭니다. `lib`은 `.mjs`를 쓰지 않습니다. Pi의 `/reload`가 Node ESM 캐시에 남아 있는 `.mjs`를 다시 읽지 않기 때문입니다.
+화면과 입력 부품만 둡니다. 명령(`/cl-edit`, `/cl-log`)은 `calliopi-workflows`가 이 부품으로 만듭니다. `lib`은 `.mjs`를 쓰지 않습니다. Pi의 `/reload`가 Node ESM 캐시에 남아 있는 `.mjs`를 다시 읽지 않기 때문입니다.
 
 ```text
-extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /calliopi-headers
+extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /cl-headers
 lib/turn-headers.ts         헤더 줄, render 감싸기, Markdown 대체 경로
 lib/thinking-frame.ts       thinking 테두리 컴포넌트, updateContent 감싸기
 lib/table.ts                키/값 표                                  export ./table
