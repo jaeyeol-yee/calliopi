@@ -104,6 +104,22 @@ export function parentBranch(cwd: string): string | null {
   return nearestBranch(branches, fallback) ?? fallback;
 }
 
+/**
+ * cwd-relative files that differ since HEAD diverged from `ref`: committed on this side, edited but
+ * uncommitted, or new and untracked (ignored files excluded). null when there is no common ancestor.
+ */
+export function changedSince(cwd: string, ref: string): Set<string> | null {
+  if (!ref || ref.startsWith('-')) return null; // user-typed: never let it read as an option
+  const base = mergeBase(cwd, ref);
+  if (!base) return null;
+  // '-- .' limits the work, not just the output, to cwd (the picker's scope): without it git diff
+  // stats every tracked file in the repository even with --relative.
+  const diff = git(cwd, ['diff', '--name-only', '-z', '--no-renames', '--relative', base, '--', '.']);
+  const untracked = git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']);
+  if (diff.status !== 0 || untracked.status !== 0) return null;
+  return new Set([diff, untracked].flatMap(r => r.stdout.toString('utf8').split('\0')).filter(Boolean));
+}
+
 interface Side { exists: boolean; text: string | null }
 
 function textOf(data: Buffer): string | null {

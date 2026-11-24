@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { parseBranches, listBranches, diffFile, mergeBase, defaultBase, nearestBranch, parentBranch } from '#lib/preview-git.ts';
+import { parseBranches, listBranches, diffFile, mergeBase, changedSince, defaultBase, nearestBranch, parentBranch } from '#lib/preview-git.ts';
 import { batVersionOk, fitAnsi, renderDiff, renderFile, stripAnsi, visibleWidth, wrapPlain } from '#lib/preview-render.ts';
 import { find, frame, keyMap, parseInput, scroll, type ViewerState } from '#lib/preview-viewer.ts';
 import { drainShares, shareMessage, writeShare } from '#lib/preview-share.ts';
@@ -46,6 +46,18 @@ test('branches: newest first, current marked, remote HEAD alias dropped', () => 
   assert.match(parsed[1]!.display, /원격/);
 });
 
+test('changed since divergence: committed, uncommitted and untracked; not main\'s side or ignored; cwd-relative', t => {
+  const { dir, g, write } = diverged(t);
+  assert.equal(defaultBase(dir), 'main');
+  fs.mkdirSync(path.join(dir, 'sub'));
+  write('sub/committed.txt', 'x\n'); g('add', '.'); g('commit', '-qm', 'feature work');
+  write('sub/new.txt', 'y\n'); write('.gitignore', 'ignored.txt\n'); write('ignored.txt', 'z\n');
+  assert.deepEqual([...changedSince(dir, 'main')!].sort(), ['.gitignore', 'a.txt', 'sub/committed.txt', 'sub/new.txt']);
+  assert.deepEqual([...changedSince(path.join(dir, 'sub'), 'main')!].sort(), ['committed.txt', 'new.txt']);
+  g('checkout', '-q', '--orphan', 'lonely'); g('rm', '-rqf', '.'); write('l.txt', 'l\n'); g('add', 'l.txt'); g('commit', '-qm', 'unrelated');
+  assert.equal(changedSince(dir, 'main'), null);
+});
+
 test('parent branch: nearest branch whose tip HEAD grew from; siblings, children and own remote copy skipped', t => {
   const b = (name: string, ahead: number, behind: number, current = false) => ({ name, ahead, behind, current });
   assert.equal(nearestBranch([b('main', 0, 3), b('dev', 0, 1), b('me', 0, 0, true)], 'main'), 'dev');
@@ -62,11 +74,13 @@ test('parent branch: nearest branch whose tip HEAD grew from; siblings, children
   g('checkout', '-q', 'topic'); g('branch', 'sibling'); g('checkout', '-q', 'sibling'); write('s.txt', 's\n'); g('add', '.'); g('commit', '-qm', 'sib');
   g('checkout', '-q', 'topic');
   assert.equal(parentBranch(dir), 'dev'); // not main (farther), topic-child (grew from here) or sibling
+  assert.deepEqual([...changedSince(dir, 'dev')!], ['t.txt']);
   // A stale local branch loses to its fresher remote copy; the current branch's own remote copy is skipped.
   g('update-ref', 'refs/remotes/origin/dev', 'HEAD~1'); g('update-ref', 'refs/remotes/origin/topic', 'HEAD');
   g('update-ref', 'refs/heads/dev', 'HEAD~2');
   write('t2.txt', 'u\n'); g('add', '.'); g('commit', '-qm', 'unpushed');
   assert.equal(parentBranch(dir), 'origin/dev');
+  assert.equal(changedSince(dir, '--output=x'), null);
 });
 
 test('since-divergence diff shows only my side, uncommitted edits included; tip mode mixes both', t => {

@@ -46,7 +46,18 @@ export function listFiles(cwd: string): string[] {
   });
   if (result.error) throw result.error;
   if (result.status !== 0 && result.status !== 1) throw new Error('rg 파일 목록을 읽을 수 없습니다.');
-  return (result.stdout as Buffer).toString('utf8').split('\0').filter(file => file && !sensitivePath(file))
+  return pickable(cwd, (result.stdout as Buffer).toString('utf8').split('\0'));
+}
+
+const hidden = (file: string) => file.split(/[\\/]/).some(part => part.startsWith('.'));
+
+/**
+ * Files the pickers may offer: existing regular files inside the project, not sensitive. With
+ * `skipHidden`, also drops dot files and anything under dot directories, as rg --files does by
+ * default (for lists that do not come from rg, such as git's changed files).
+ */
+export function pickable(cwd: string, files: Iterable<string>, { skipHidden = false } = {}): string[] {
+  return [...files].filter(file => file && !sensitivePath(file) && !(skipHidden && hidden(file)))
     .filter(file => { try { resolveProjectFile(cwd, file); return true; } catch { return false; } });
 }
 

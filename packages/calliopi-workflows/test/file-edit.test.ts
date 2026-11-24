@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { changeMessage, snapshot, resolveProjectFile, sensitivePath, listFiles, MAX_FILE_BYTES } from '#lib/file-edit.ts';
+import { changeMessage, snapshot, resolveProjectFile, sensitivePath, listFiles, pickable, MAX_FILE_BYTES } from '#lib/file-edit.ts';
 import { editOneFile } from '#lib/editor-flow.ts';
 
 function fixture(t: TestContext) {
@@ -94,6 +94,18 @@ test('rg respects ignore rules and filters sensitive files before preview', t =>
   fs.writeFileSync(path.join(dir, '.gitignore'), 'ignored.txt\n');
   for (const file of ['normal.txt', 'ignored.txt', 'secret.key', '.env', '.hidden']) fs.writeFileSync(path.join(dir, file), 'data');
   assert.deepEqual(listFiles(dir), ['normal.txt']);
+});
+
+test('pickable: lists not from rg get the same filters, hidden paths dropped on request', t => {
+  const dir = fixture(t);
+  const outside = fixture(t);
+  fs.mkdirSync(path.join(dir, 'src')); fs.mkdirSync(path.join(dir, '.github'));
+  for (const f of ['src/a.ts', '.github/ci.yml', '.prettierrc', '.env', 'secrets.json']) fs.writeFileSync(path.join(dir, f), 'x');
+  fs.writeFileSync(path.join(outside, 'o.txt'), 'x');
+  fs.symlinkSync(path.join(outside, 'o.txt'), path.join(dir, 'link.txt'));
+  const changed = ['src/a.ts', '.github/ci.yml', '.prettierrc', '.env', 'secrets.json', 'deleted.ts', 'link.txt', 'src', ''];
+  assert.deepEqual(pickable(dir, changed, { skipHidden: true }), ['src/a.ts']);
+  assert.deepEqual(pickable(dir, changed), ['src/a.ts', '.github/ci.yml', '.prettierrc']);
 });
 
 test('flow returns on fzf cancellation and only launches Vim after valid selection', async t => {

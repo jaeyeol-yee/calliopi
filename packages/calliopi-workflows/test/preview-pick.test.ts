@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import type { Terminal } from '@xterm/headless';
 import { TerminalOverlay, type OverlayUi } from '@calliopi/ui/terminal-overlay';
-import { pickFile } from '#lib/preview-pick.ts';
+import { pickFile, DIFF_MARKER, PICK_STATE } from '#lib/preview-pick.ts';
 
 const ui: OverlayUi = { CURSOR_MARKER: '<cursor>', renderFakeCursor: text => `<fake>${text}</fake>`, truncateToWidth: (s, n, _e, pad) => s.slice(0, n).padEnd(pad ? n : 0) };
 const plain = (terminal: Terminal) => Array.from({ length: terminal.rows }, (_, y) => terminal.buffer.active.getLine(terminal.buffer.active.viewportY + y)?.translateToString(true) || '').join('\n');
@@ -56,7 +56,7 @@ test('overlay file search: query pre-filled, guide at the bottom, sidebar open, 
   assert.equal(picked, 'beta.ts');
 });
 
-test('overlay file search outside git: the sidebar shows the file, Ctrl+T explains there is no diff', { timeout: 20_000 }, async t => {
+test('overlay file search outside git: diffFirst is ignored, Ctrl+T explains there is no diff', { timeout: 20_000 }, async t => {
   if (spawnSync('/bin/sh', ['-c', 'command -v fzf']).status !== 0) return t.skip('fzf required');
   const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-pick-')));
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-pick-state-'));
@@ -64,7 +64,7 @@ test('overlay file search outside git: the sidebar shows the file, Ctrl+T explai
   const view = new TerminalOverlay({ tui: { terminal: { columns: 110, rows: 30 }, requestRender() {} }, theme: { fg: (_n: string, s: string) => s }, ui, cwd });
   view.focused = true; view.render(100);
   t.after(() => { view.dispose(); fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(directory, { recursive: true, force: true }); });
-  const picked = await pickFile({ candidates: ['gamma.ts'], directory, cwd, root: null, run: async (command, args, env) => {
+  const picked = await pickFile({ candidates: ['gamma.ts'], directory, cwd, root: null, diffFirst: true, run: async (command, args, env) => {
     const running = view.run(command, args, env);
     const screen = () => plain(view.terminal);
     await waitFor(() => screen().includes('File >') && screen().includes('gamma-body'), 'file first', view.terminal);
@@ -74,4 +74,17 @@ test('overlay file search outside git: the sidebar shows the file, Ctrl+T explai
     return running;
   } });
   assert.equal(picked, 'gamma.ts');
+});
+
+test('pickFile: diffFirst (--changed) starts in diff mode with the known base; Ctrl+T flips a marker file', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-pick-state-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let command = '';
+  await pickFile({ candidates: ['a.ts'], directory, cwd: '/repo', root: '/repo', base: 'dev', diffFirst: true, run: async (_c, args) => {
+    command = args[1]!;
+    assert.ok(fs.existsSync(path.join(directory, DIFF_MARKER)));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory, PICK_STATE), 'utf8')), { cwd: '/repo', root: '/repo', base: 'dev' });
+    return { exitCode: 130 };
+  } });
+  assert.match(command, /--bind='ctrl-t:execute-silent\(if \[ -e .*diff-mode.* \]; then rm -f .*; else : > .*; fi\)\+refresh-preview\+preview-top'/);
 });
