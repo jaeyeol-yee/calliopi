@@ -19,7 +19,19 @@ export function nodePreview(script: string, ...args: string[]): string {
   return [process.execPath, script, ...args].map(shellQuote).join(' ') + ' {1}';
 }
 
-export interface SelectCommandOptions {
+/** Presentation options a step may set; defaults keep the reverse layout and a visible preview. */
+export interface FzfLook {
+  /** Guide text. With layout 'default' it sits at the bottom, just above the prompt. */
+  header?: string;
+  /** 'reverse': prompt on top (default). 'default': prompt and header at the bottom. */
+  layout?: 'reverse' | 'default';
+  /** fzf --preview-window, e.g. 'right:55%:wrap:hidden' to start with the preview closed. */
+  previewWindow?: string;
+  /** Extra key bindings, e.g. 'ctrl-/:toggle-preview'. */
+  bind?: readonly string[];
+}
+
+export interface SelectCommandOptions extends FzfLook {
   listPath: string;
   outPath: string;
   prompt: string;
@@ -30,13 +42,15 @@ export interface SelectCommandOptions {
 
 // Each item is "<index>\t<display>"; only the display is shown and searched. The preview and
 // the result refer to items by index, so file names and messages never need shell quoting.
-export function selectCommand({ listPath, outPath, prompt, preview, query = '', position }: SelectCommandOptions): string {
+export function selectCommand({ listPath, outPath, prompt, preview, query = '', position, header, layout = 'reverse', previewWindow = 'right:55%:wrap', bind = [] }: SelectCommandOptions): string {
   const args = [
-    'exec fzf --read0 --print0 --print-query --no-multi --no-mouse --layout=reverse --border=none',
+    `exec fzf --read0 --print0 --print-query --no-multi --no-mouse --layout=${layout} --border=none`,
     `--delimiter=${shellQuote('\\t')} --with-nth=2..`,
     `--prompt=${shellQuote(prompt)}`, `--query=${shellQuote(query)}`,
   ];
-  if (preview) args.push(`--preview=${shellQuote(preview)}`, `--preview-window=${shellQuote('right:55%:wrap')}`);
+  if (header) args.push(`--header=${shellQuote(header)}`);
+  if (preview) args.push(`--preview=${shellQuote(preview)}`, `--preview-window=${shellQuote(previewWindow)}`);
+  for (const b of bind) args.push(`--bind=${shellQuote(b)}`);
   // Restore the cursor when coming back to a step. pos() counts filtered rows, so only without a query.
   if (!query && (position ?? 0) > 0) args.push(`--bind=${shellQuote(`load:pos(${position})`)}`);
   args.push(`< ${shellQuote(listPath)} > ${shellQuote(outPath)}`);
@@ -56,7 +70,7 @@ export function parseSelectResult(data: Buffer, count: number): FzfSelection {
   return { index, query };
 }
 
-export interface FzfSelectOptions {
+export interface FzfSelectOptions extends FzfLook {
   run: RunProgram;
   directory: string;
   name: string;
@@ -68,12 +82,12 @@ export interface FzfSelectOptions {
 }
 
 // Returns { index, query } or null when the user backs out (Esc / Ctrl+C).
-export async function fzfSelect({ run, directory, name, items, prompt, preview, query, position }: FzfSelectOptions): Promise<FzfSelection | null> {
+export async function fzfSelect({ run, directory, name, items, prompt, preview, query, position, ...look }: FzfSelectOptions): Promise<FzfSelection | null> {
   const listPath = path.join(directory, `${name}.list`);
   const outPath = path.join(directory, `${name}.out`);
   fs.writeFileSync(listPath, items.map((item, i) => `${i}\t${cleanDisplay(item)}\0`).join(''), { mode: 0o600 });
   fs.writeFileSync(outPath, '', { mode: 0o600 });
-  const result = await run('/bin/sh', ['-c', selectCommand({ listPath, outPath, prompt, preview, query, position })], fzfEnv());
+  const result = await run('/bin/sh', ['-c', selectCommand({ listPath, outPath, prompt, preview, query, position, ...look })], fzfEnv());
   if (result.exitCode === 1 || result.exitCode === 130 || result.exitCode === -1) return null;
   if (result.exitCode !== 0) throw new Error(`fzf 종료 코드: ${result.exitCode}`);
   return parseSelectResult(fs.readFileSync(outPath), items.length);
