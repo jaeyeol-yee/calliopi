@@ -38,7 +38,7 @@ export function terminalInput(data: string, modes: TerminalInputModes = {}): str
     if (mod && /^\x1bO[PQRS]$/.test(text)) return `\x1b[1;${mod + 1}${text.at(-1)}`;
     if ((mod & 4) && text.length === 1) {
       const n = text.toUpperCase().charCodeAt(0);
-      const controls: Record<string, string> = { ' ': '\0', '2': '\0', '3': '\x1b', '4': '\x1c', '5': '\x1d', '6': '\x1e', '7': '\x1f', '8': '\x7f', '\x7f': '\x08' };
+      const controls: Record<string, string> = { ' ': '\0', '2': '\0', '3': '\x1b', '4': '\x1c', '5': '\x1d', '6': '\x1e', '7': '\x1f', '/': '\x1f', '8': '\x7f', '\x7f': '\x08' };
       text = n >= 64 && n <= 95 ? String.fromCharCode(n - 64) : (controls[text] ?? text);
     }
     if ((mod & 1) && code === 9) text = '\x1b[Z';

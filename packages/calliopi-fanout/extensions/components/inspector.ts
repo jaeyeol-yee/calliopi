@@ -8,6 +8,7 @@ import path from "node:path";
 import { taskState, visibleByDefault } from "#lib/floating-model.ts";
 import { stampArchive } from "#lib/archive.ts";
 import { load, update as updateRegistry } from "#lib/registry.ts";
+import { detectMultiplexer, openSidePane } from "@calliopi/ui/pane";
 import { cfgFor, revalidate, type Agent, type Runtime } from "#extensions/runtime/state.ts";
 import { renderInspector, repoSlug, validRepo, type InspectorState } from "#extensions/components/inspector-view.ts";
 
@@ -49,17 +50,16 @@ async function branchDiff(exec: Exec, a: Agent | undefined): Promise<Diff> {
 	return { text: `${a.label} · ${repo}\n${base.stdout.trim()}...${branch.branch}\n\n${r.stdout || "변경사항이 없습니다."}`, incomplete: !!(r.truncated || r.killed) };
 }
 
-/** Open the diff with delta in a Rex pane to the right. */
+/** Open the diff with delta in a multiplexer pane to the right. */
 async function openExternal(exec: Exec, ctx: ExtensionContext, review: string, label: string) {
-	if (!process.env.REX_SESSION || !process.env.REX_BLOCK) throw new Error("외부 리뷰는 Rex 터미널에서만 열 수 있습니다. d 키로 내장 diff를 확인하세요.");
+	if (!detectMultiplexer()) throw new Error("외부 리뷰는 터미널 멀티플렉서(Rex) 안에서만 열 수 있습니다. d 키로 내장 diff를 확인하세요.");
 	const check = await exec("delta", ["--version"], { timeout: 5000 });
 	if (check.code !== 0) throw new Error("delta를 실행할 수 없습니다. d 키로 내장 diff를 확인하세요.");
 	const dir = path.join(cfgFor(ctx).dir, "reviews");
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const file = path.join(dir, `review-${Date.now()}.diff`);
 	fs.writeFileSync(file, review, { mode: 0o600 });
-	const pane = await exec("rex", ["split", "-s", process.env.REX_SESSION, "-b", process.env.REX_BLOCK, "--split=right", "--ratio", "50", "--label", `review-${label}`, "--keep-open", "-c", ctx.cwd, "--json", "--", "sh", "-c", 'delta --paging=always < "$1"', "review", file], { timeout: 10_000 });
-	if (pane.code !== 0) throw new Error(pane.stderr || "리뷰 pane을 열지 못했습니다.");
+	await openSidePane(exec, { command: ["sh", "-c", 'delta --paging=always < "$1"', "review", file], cwd: ctx.cwd, label: `review-${label}`, ratio: 50, keepOpen: true });
 	ctx.ui.notify("외부 diff 리뷰를 열었습니다. ↑↓ / PgUp / PgDn 스크롤 · q 종료", "info");
 }
 

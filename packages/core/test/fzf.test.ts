@@ -41,3 +41,15 @@ test('fzfSelect writes indexed items, maps exit codes and parses the selection',
   code = 2;
   await assert.rejects(fzfSelect({ run, directory: dir, name: 'pick', items: ['a'], prompt: '> ' }), /fzf 종료 코드: 2/);
 });
+
+test('look options: bottom guide, preview starting hidden with a toggle key; defaults unchanged', () => {
+  const plain = selectCommand({ listPath: 'l', outPath: 'o', prompt: '>', preview: 'p' });
+  assert.match(plain, /--layout=reverse /);
+  assert.match(plain, /--preview-window='right:55%:wrap'/);
+  assert.doesNotMatch(plain, /--header/);
+  const look = selectCommand({ listPath: 'l', outPath: 'o', prompt: '>', preview: 'p', header: "Enter: 열기 · Ctrl+/: it's", layout: 'default', previewWindow: 'right:55%:wrap:hidden', bind: ['ctrl-/:toggle-preview'] });
+  assert.match(look, /--layout=default /);
+  assert.match(look, /--header='Enter: 열기 · Ctrl\+\/: it'\\''s'/);
+  assert.match(look, /--preview-window='right:55%:wrap:hidden'/);
+  assert.match(look, /--bind='ctrl-\/:toggle-preview'/);
+});

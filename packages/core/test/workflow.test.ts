@@ -60,3 +60,10 @@ test('cancellation is checked after fzf and after the step action, and wins over
   await assert.rejects(runWorkflow(step, { run: broken, directory: dir }), /올바르지 않은 picker 선택/);
   assert.equal(await runWorkflow(step, { run: broken, directory: dir, cancelled: () => true }), null);
 });
+
+test('initialQuery pre-fills a step the first time it opens', async t => {
+  const s = scripted(t, [{ step: 'q', index: 0 }]);
+  const step: WorkflowStep<string> = { name: 'q', prompt: '> ', items: ['x'], initialQuery: "pre'view", onSelect: () => ({ done: 'ok' }) };
+  assert.equal(await runWorkflow(step, s), 'ok');
+  assert.match(s.commands[0]!, /--query='pre'\\''view'/);
+});

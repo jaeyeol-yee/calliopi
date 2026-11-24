@@ -38,6 +38,7 @@ test('translate Kitty keys into legacy PTY input without swallowing Vim controls
     ['\x1b[1;1:3A', ''], ['\x1b[1;1:2A', '\x1b[A'], ['\x1b[1;1:1B', '\x1b[B'], ['\x1b[3;1~', '\x1b[3~'], ['\x1b[1;5A', '\x1b[1;5A'],
   ]) assert.equal(terminalInput(input), expected, JSON.stringify(input));
   assert.equal(terminalInput('\x1b[A', { applicationCursorKeysMode: true }), '\x1bOA');
+  assert.equal(terminalInput('\x1b[47;5u'), '\x1f'); // Kitty Ctrl+/ → legacy Ctrl+/ (= Ctrl+_), e.g. fzf toggle-preview
   assert.equal(terminalInput('\x1b[200~pasted\x1b[201~'), 'pasted');
   assert.equal(terminalInput('\x1b[200~pasted\x1b[201~', { bracketedPasteMode: true }), '\x1b[200~pasted\x1b[201~');
 });
