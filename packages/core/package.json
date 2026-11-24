@@ -14,6 +14,7 @@
     "./fzf": "./lib/fzf.ts",
     "./workflow": "./lib/workflow.ts",
     "./types": "./lib/types.ts",
+    "./tty": "./lib/tty.ts",
     "./package.json": "./package.json"
   },
   "pi": {
