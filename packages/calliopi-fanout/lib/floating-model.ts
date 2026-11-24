@@ -10,6 +10,21 @@ export function visibleByDefault(agent: AgentView, now = Date.now()): boolean {
 
 export const defaultTasks = (agents: AgentView[], now = Date.now()): AgentView[] => agents.filter((a) => visibleByDefault(a, now));
 
+/**
+ * When the floating box shows. 'auto' (default): only while something needs you, in the 진행 tab
+ * (running, preparing, waiting for approval or needing attention) or the 검토 tab (output to review);
+ * hidden once both are empty, so archived work alone keeps it out of the way.
+ * 'on': whenever there are tasks at all, archived ones included. 'off': never; /cl-fanout inbox still works.
+ */
+export type WidgetMode = 'auto' | 'on' | 'off';
+export const WIDGET_MODES: readonly WidgetMode[] = ['auto', 'on', 'off'];
+
+export function floatingWanted(mode: WidgetMode, agents: AgentView[], now = Date.now()): boolean {
+  if (mode === 'off') return false;
+  const tasks = defaultTasks(agents, now);
+  return mode === 'on' ? tasks.length > 0 : tasks.some((a) => taskState(a).tab !== 2);
+}
+
 export const TABS = ['진행', '검토', '보관'];
 export function taskState(a: AgentView): { tab: number; text: string; icon: string; color: string } {
   if (a.localApproval) return { tab: 0, text: '승인 대기', icon: '◷', color: 'warning' };

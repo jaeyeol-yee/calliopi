@@ -5,7 +5,8 @@ import path from "node:path";
 import { owner, attach, detach, enqueue } from "#lib/sidecar.ts";
 import { update as updateRegistry } from "#lib/registry.ts";
 import { newBatch, PLAN_INSTRUCTIONS } from "#lib/plan.ts";
-import { cfgFor, ensureDaemon, FANOUT_SH, isOwner, json, sideDir, tracker, type Runtime } from "#extensions/runtime/state.ts";
+import { cfgFor, ensureDaemon, FANOUT_SH, isOwner, json, sideDir, syncFloating, tracker, type Runtime } from "#extensions/runtime/state.ts";
+import { WIDGET_MODES, type WidgetMode } from "#lib/floating-model.ts";
 import { refresh, startWatcher } from "#extensions/runtime/watcher.ts";
 import { mountFloating } from "#extensions/runtime/floating.ts";
 import { launch } from "#extensions/runtime/launch.ts";
@@ -16,7 +17,7 @@ export const SUBS = ["attach", "detach", "show", "inbox", "history", "archive", 
 export function registerCommand(rt: Runtime) {
 	const { pi } = rt;
 	pi.registerCommand("cl-fanout", {
-		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | history (all records) | archive <label> (Cursor archive) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | pr <label> | merge <label> (gh, approval) | fix <label> <request> (@cursor on the PR) | up | widget on|off | stop",
+		description: "Cursor Cloud fan-out: attach | detach | show (right pane) | inbox (interactive status) | history (all records) | archive <label> (Cursor archive) | focus (floating keyboard navigation) | diff (local review) | <goal> | launch [spec.json] | status | report | tree <label> | add <bc-id> | followup | steer | cancel | pr <label> | merge <label> (gh, approval) | fix <label> <request> (@cursor on the PR) | up | widget auto|on|off | stop",
 		getArgumentCompletions: (prefix: string) => {
 			const items = SUBS.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
 			return items.length ? items : null;
@@ -45,7 +46,12 @@ export function registerCommand(rt: Runtime) {
 						const r = await T(["archive", rest[0], "--yes"]);
 						return say(r.out || r.err, r.ok ? "info" : "error");
 					}
-					case "focus": { mountFloating(rt, ctx); rt.floatingHandle?.focus(); return; }
+					case "focus": {
+						// Shown even when auto mode keeps it hidden (nothing in progress or to review); hides again on Esc.
+						mountFloating(rt, ctx, true);
+						if (!rt.floatingHandle) return say(rt.widgetMode === "off" ? "floating box가 꺼져 있습니다. /cl-fanout widget auto|on" : "표시할 작업이 없습니다. /cl-fanout inbox", "info");
+						rt.floatingHandle.focus(); syncFloating(rt); return;
+					}
 					case "reviews": {
 						if (!["on", "off"].includes(rest[0])) return say("usage: /cl-fanout reviews on|off", "warning");
 						await updateRegistry(cfgFor(ctx), (reg: any) => { reg.meta.reviewPaused = rest[0] === "off"; });
@@ -120,7 +126,11 @@ export function registerCommand(rt: Runtime) {
 						const r = await pi.exec(FANOUT_SH, ["up"], { cwd: ctx.cwd, timeout: 60_000 });
 						return say(r.code === 0 ? "rex panes up" : r.stderr || r.stdout, r.code === 0 ? "info" : "error");
 					}
-					case "widget": { rt.widgetOn = rest[0] !== "off"; rt.floatingHandle?.setHidden(!rt.widgetOn); if (rt.widgetOn) mountFloating(rt, ctx); return; }
+					case "widget": {
+						if (!WIDGET_MODES.includes(rest[0] as WidgetMode)) return say(`usage: /cl-fanout widget auto|on|off (지금: ${rt.widgetMode}) · auto: 진행·검토 중인 작업이 있을 때만`, "warning");
+						rt.widgetMode = rest[0] as WidgetMode;
+						mountFloating(rt, ctx); syncFloating(rt); return;
+					}
 					case "stop": { const r = await T(["stop"]); return say(r.out); }
 					default: {
 						// Anything else is a goal: the model plans the tasks and calls calliopi_fanout_launch (table approval follows).

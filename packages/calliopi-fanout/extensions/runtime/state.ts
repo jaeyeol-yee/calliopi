@@ -10,6 +10,7 @@ import { owner } from "#lib/sidecar.ts";
 import { createReviewService, syncReviews, prTarget } from "#lib/github-review.ts";
 import { loadConfig } from "#lib/config.ts";
 import { load } from "#lib/registry.ts";
+import { floatingWanted, type WidgetMode } from "#lib/floating-model.ts";
 
 export const TRACKER = fileURLToPath(new URL("../../bin/tracker.ts", import.meta.url));
 export const REVIEW_WATCH = fileURLToPath(new URL("../../bin/review-watch.ts", import.meta.url));
@@ -27,7 +28,7 @@ export function createRuntime(pi: ExtensionAPI) {
 		debounce: null as NodeJS.Timeout | null,
 		lastStatus: new Map<string, string>(),
 		notifiedBatches: new Set<string>(),
-		widgetOn: true,
+		widgetMode: "auto" as WidgetMode,
 		registration: null as any,
 		mailboxTimer: null as NodeJS.Timeout | null,
 		inspectorOpen: false,
@@ -40,6 +41,16 @@ export function createRuntime(pi: ExtensionAPI) {
 		reviewing: new Set<string>(),
 		reviewService: createReviewService({ exec: (command: string, args: string[], options: any) => pi.exec(command, args, options) }),
 	};
+}
+
+/**
+ * Show or hide the mounted floating box: hidden behind the inspector, otherwise per widgetMode,
+ * and kept visible while it holds keyboard focus (/cl-fanout focus works even when auto mode hides it).
+ */
+export function syncFloating(rt: Runtime) {
+	const h = rt.floatingHandle;
+	if (!h) return;
+	h.setHidden(rt.inspectorOpen || !(floatingWanted(rt.widgetMode, rt.floatingAgents) || h.isFocused()));
 }
 
 export const stateDir = (ctx: ExtensionContext) => process.env.CURSOR_FANOUT_DIR || path.join(ctx.cwd, ".cursor-fanout");

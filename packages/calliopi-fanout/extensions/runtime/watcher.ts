@@ -8,19 +8,19 @@ import { load } from "#lib/registry.ts";
 import { icon } from "#lib/dashboard.ts";
 import { aggregate, toMarkdown } from "#lib/report.ts";
 import { isTerminal } from "#lib/util.ts";
-import { cfgFor, ensureReviewDaemon, isOwner, sideDir, type Agent, type Runtime } from "#extensions/runtime/state.ts";
+import { cfgFor, ensureReviewDaemon, isOwner, sideDir, syncFloating, type Agent, type Runtime } from "#extensions/runtime/state.ts";
 import { mountFloating } from "#extensions/runtime/floating.ts";
 
 export function refresh(rt: Runtime, ctx: ExtensionContext) {
 	const cfg = cfgFor(ctx);
 	ctx.ui.setStatus("cloud-fanout", undefined); ctx.ui.setWidget("cloud-fanout", undefined);
-	if (!fs.existsSync(cfg.registryPath)) { rt.floatingAgents = []; rt.floatingHandle?.setHidden(true); return; }
+	if (!fs.existsSync(cfg.registryPath)) { rt.floatingAgents = []; syncFloating(rt); return; }
 	let reg; try { reg = load(cfg); } catch { return; }
 	const agents = Object.values(reg.agents) as Agent[];
 	const approvals = (Object.values(reg.meta.approvals || {}) as any[]).filter(a => { try { if (!a.pid) return false; process.kill(a.pid, 0); return true; } catch { return false; } });
 	rt.floatingAgents = [...approvals, ...agents];
-	if (!rt.floatingAgents.length) { rt.floatingHandle?.setHidden(true); return; }
-	rt.floatingHandle?.setHidden(!rt.widgetOn || rt.inspectorOpen);
+	syncFloating(rt);
+	if (!rt.floatingAgents.length) return;
 	ensureReviewDaemon(rt, ctx, agents);
 	mountFloating(rt, ctx);
 	rt.renderFloating?.();

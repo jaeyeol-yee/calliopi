@@ -9,7 +9,7 @@ import { taskState, visibleByDefault } from "#lib/floating-model.ts";
 import { stampArchive } from "#lib/archive.ts";
 import { load, update as updateRegistry } from "#lib/registry.ts";
 import { detectMultiplexer, openSidePane } from "@calliopi/ui/pane";
-import { cfgFor, revalidate, type Agent, type Runtime } from "#extensions/runtime/state.ts";
+import { cfgFor, revalidate, syncFloating, type Agent, type Runtime } from "#extensions/runtime/state.ts";
 import { renderInspector, repoSlug, validRepo, type InspectorState } from "#extensions/components/inspector-view.ts";
 
 type Exec = ExtensionAPI["exec"];
@@ -145,5 +145,5 @@ export async function inspect(rt: Runtime, ctx: ExtensionContext, localReview = 
 				invalidate() {},
 			};
 		}, { overlay: true, overlayOptions: { width: "90%", anchor: "center", margin: 1 } });
-	} finally { clearInterval(timer); rt.inspectorOpen = false; if (rt.widgetOn) rt.floatingHandle?.setHidden(false); }
+	} finally { clearInterval(timer); rt.inspectorOpen = false; syncFloating(rt); }
 }

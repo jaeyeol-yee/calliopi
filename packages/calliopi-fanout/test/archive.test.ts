@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ARCHIVE_RETENTION_MS, archiveTime, stampArchive } from '#lib/archive.ts';
 import type { AgentView } from '#lib/types.ts';
-import { defaultTasks, visibleByDefault, taskState } from '#lib/floating-model.ts';
+import { defaultTasks, visibleByDefault, taskState, floatingWanted } from '#lib/floating-model.ts';
 
 const now = Date.parse('2026-01-02T12:00:00Z');
 const archived = (extra = {}) => ({ agentId: 'a', runId: 'run-a', status: 'FINISHED', reviewAckRunId: 'run-a', archivedRunId: 'run-a', archivedAt: new Date(now - ARCHIVE_RETENTION_MS).toISOString(), ...extra });
@@ -77,4 +77,23 @@ test('archive time is idempotent per run and resets only for an explicitly archi
   const withoutRun: AgentView = {};
   stampArchive(withoutRun, now);
   assert.deepEqual(withoutRun, {});
+});
+
+test('floating box: auto hides only when 진행 and 검토 are both empty, on whenever there are tasks, off never', () => {
+  const review = { agentId: 'r', runId: 'run-r', status: 'FINISHED' } as AgentView; // finished, output not yet reviewed
+  const cases: [string, AgentView][] = [['running', { agentId: 'x', status: 'RUNNING' } as AgentView],
+    ['approval', { key: 'approval:1', localApproval: true } as AgentView], ['error', { agentId: 'e', status: 'ERROR' } as AgentView]];
+  assert.equal(taskState(review).tab, 1);
+  for (const [name, active] of cases) {
+    assert.equal(taskState(active).tab, 0, name);
+    assert.equal(floatingWanted('auto', [review, active], now), true, name);
+    assert.equal(floatingWanted('off', [review, active], now), false, name);
+  }
+  assert.equal(floatingWanted('auto', [review], now), true); // output still to review
+  const done = archived({ archivedAt: new Date(now - 60_000).toISOString() }); // archived, still listed for 24h
+  assert.equal(taskState(done).tab, 2);
+  assert.equal(floatingWanted('auto', [done], now), false); // only 보관: stay out of the way
+  assert.equal(floatingWanted('on', [done], now), true);
+  assert.equal(floatingWanted('on', [archived()], now), false); // only expired archives: nothing to show
+  assert.equal(floatingWanted('auto', [], now), false);
 });
