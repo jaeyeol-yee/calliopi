@@ -1,6 +1,7 @@
 // Shared records for the registry, the Cursor Cloud Agents API, and the launch spec.
 // JSON on disk is cast to these shapes at the read boundary; fields the code always
 // writes are required, and fields only some paths set stay optional.
+import type { PaneRef } from "@calliopi/core/multiplexer";
 
 export interface UsageStats {
   inputTokens?: number;
@@ -407,8 +408,8 @@ export type ExecFn = (command: string, args: string[], options?: { timeout?: num
 export interface SidecarSession {
   sessionId?: string;
   token?: string;
-  rexSession?: string;
-  block?: string;
+  /** The multiplexer pane the dedicated session runs in, for /cl-fanout show. */
+  pane?: PaneRef;
 }
 
 export interface SidecarOwner extends SidecarSession {

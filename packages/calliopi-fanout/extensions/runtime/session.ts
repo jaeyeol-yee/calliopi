@@ -1,5 +1,6 @@
 // Session lifecycle: nothing starts in the factory. The registry watcher and the dedicated-session mailbox
 // start on session_start and stop on session_shutdown.
+import { detectMultiplexer } from "@calliopi/core/multiplexer";
 import { attach, detach, drain } from "#lib/sidecar.ts";
 import { PLAN_INSTRUCTIONS } from "#lib/plan.ts";
 import { sideDir, type Runtime } from "#extensions/runtime/state.ts";
@@ -11,7 +12,7 @@ export function registerSession(rt: Runtime) {
 	pi.on("session_start", async (_e, ctx) => {
 		const role = ctx.sessionManager.getEntries().filter((e: any) => e.type === "custom" && e.customType === "cloud-fanout-owner").at(-1) as any;
 		if (ctx.mode === "tui" && role?.data?.sessionId === ctx.sessionManager.getSessionId() && role.data.enabled) {
-			try { rt.registration = attach(sideDir(ctx), { sessionId: ctx.sessionManager.getSessionId(), token: role.data.token, rexSession: process.env.REX_SESSION, block: process.env.REX_BLOCK }); }
+			try { rt.registration = attach(sideDir(ctx), { sessionId: ctx.sessionManager.getSessionId(), token: role.data.token, pane: (await detectMultiplexer({ exec: pi.exec }))?.self }); }
 			catch (e: any) { ctx.ui.notify(`fanout: ${e.message}`, "warning"); }
 		}
 		if (ctx.hasUI) startWatcher(rt, ctx);
