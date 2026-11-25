@@ -54,12 +54,30 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 - **footer가 없을 때**: 다른 확장이 footer를 교체하면 Pi footer를 찾지 못하므로 슬롯을 숨깁니다(재탐색은 초당 한 번).
 - Pi의 내부 구조에 기대므로 Pi를 업데이트하면 `test/footer-slot.test.ts`로 확인하세요. pi-tui의 실제 overlay 합성기로 위치를 검증합니다.
 
+## 브랜치 상태 (`/cl-branch`)
+
+현재 브랜치가 PR에 들어 있으면 footer 슬롯에 `onto owner/repo#N 상태`를 표시합니다. PR이 없으면 아무것도 표시하지 않습니다.
+
+```text
+~/calliopi (feat/x)                              onto them/calliopi#12 open +1 ↑2
+```
+
+- **조회**: `@calliopi/core/pr-lookup`. 커밋으로 모든 GitHub remote와 fork의 부모 저장소에서 찾으므로, fork에서 upstream으로 올린 PR도 upstream 번호로 나옵니다. PR이 여러 개면 열린 것을 먼저 보이고 `+N`을 붙입니다. `↑N`은 push하지 않은 커밋 수입니다.
+- **링크**: `owner/repo#N`은 PR 링크(OSC 8)입니다. 지원하는 터미널에서 클릭하면 열립니다.
+- **상태 색**: open `success`, draft `muted`, merged `accent`, closed `error`.
+- **갱신**: 시작할 때, `HEAD`·브랜치·push한 커밋이 바뀔 때(5초마다 로컬에서 확인), 에이전트 실행이 끝날 때, PR이 open·draft인 동안 `pollSeconds`(기본 60초)마다. merged·closed가 되면 주기 조회를 멈춥니다. 오프라인이거나 `gh`에 로그인하지 않았으면 마지막 값을 유지합니다.
+- **명령**: `/cl-branch`는 PR 전체 목록(링크 포함), `/cl-branch refresh`는 즉시 다시 조회, `/cl-branch on|off`는 footer 표시를 켜고 끕니다.
+- **설정**: `~/.pi/agent/calliopi-ui.json`의 `branchStatus`(`enabled`, `pollSeconds`). fullscreen TUI에서만 표시합니다(`tuiMode: regular`에서는 꺼짐).
+- **요구 사항**: `git`, 로그인한 `gh`. GitHub(github.com) remote만 봅니다.
+
 ## 구조
 
 화면과 입력 부품만 둡니다. 명령(`/cl-edit`, `/cl-log`)은 `calliopi-workflows`가 이 부품으로 만듭니다. `lib`은 `.mjs`를 쓰지 않습니다. Pi의 `/reload`가 Node ESM 캐시에 남아 있는 `.mjs`를 다시 읽지 않기 때문입니다.
 
 ```text
 extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /cl-headers
+extensions/branch-status.ts footer의 PR 상태 표시·갱신 · /cl-branch
+lib/branch-status.ts        `onto owner/repo#N 상태` 표기, 조회 주기
 lib/turn-headers.ts         헤더 줄, render 감싸기, Markdown 대체 경로
 lib/ui-override/footer-slot.ts  footer 첫 줄 오른쪽 슬롯 (overlay)
 lib/thinking-frame.ts       thinking 테두리 컴포넌트, updateContent 감싸기
