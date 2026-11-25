@@ -25,10 +25,10 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -61,18 +61,20 @@ jobs:
       # Two-cell-wide CJK glyphs, so Korean text keeps the terminal grid.
       DEMO_FONT_FAMILY: "Noto Sans Mono CJK KR"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: Install vhs, ttyd, ffmpeg and fonts
+      # Pi warns on screen when fd or ripgrep is missing (it cannot download them offline).
+      - name: Install vhs, ttyd, ffmpeg, fd, ripgrep and fonts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ttyd ffmpeg fonts-noto-cjk
+          sudo apt-get install -y -qq ttyd ffmpeg fd-find ripgrep fonts-noto-cjk
+          sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
           gh release download --repo charmbracelet/vhs --pattern 'vhs_*_amd64.deb' --dir /tmp/vhs
           sudo dpkg -i /tmp/vhs/vhs_*_amd64.deb
           vhs --version
@@ -102,7 +104,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/download-artifact@v4
