@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { loadScenario } from '../lib/scenario.ts';
-import { buildTape, defaultWait, vhsRegex, vhsString } from '../lib/tape.ts';
+import { buildTape, defaultWait, READY, vhsRegex, vhsString } from '../lib/tape.ts';
 
 test('default wait matches the last words of the final text, regex-escaped', () => {
   assert.equal(defaultWait([{ text: 'first\n바꾸면 됩니다. 진행할까요?' }]), '됩니다\\. 진행할까요\\?');
@@ -17,6 +17,12 @@ test('VHS literals pick a free quote and escape slashes in regexes', () => {
   assert.equal(vhsString(`a"b'c`), '`a"b\'c`');
   assert.throws(() => vhsString('"\'`'));
   assert.equal(vhsRegex('a/b'), '/a\\/b/');
+});
+
+test('the ready marker matches the footer with and without the provider prefix', () => {
+  const re = new RegExp(READY);
+  assert.match('~/retry-demo (master)   demo • medium', re);
+  assert.match('~/retry-demo (master)   (faux) demo • medium', re);
 });
 
 test('tape types prompts, sends them, and waits for each reply', () => {
