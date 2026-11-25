@@ -1,4 +1,4 @@
-// Inspector overlay: task list → detail (metadata + result) → diff review (built-in or delta in a Rex pane).
+// Inspector overlay: task list → detail (metadata + result) → diff review (built-in or delta in a multiplexer pane).
 // This file owns I/O and input; the frame itself is drawn by renderInspector (inspector-view.ts).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
@@ -8,7 +8,7 @@ import path from "node:path";
 import { taskState, visibleByDefault } from "#lib/floating-model.ts";
 import { stampArchive } from "#lib/archive.ts";
 import { load, update as updateRegistry } from "#lib/registry.ts";
-import { detectMultiplexer, openSidePane } from "@calliopi/ui/pane";
+import { detectMultiplexer, MULTIPLEXER_NAMES } from "@calliopi/core/multiplexer";
 import { cfgFor, revalidate, syncFloating, type Agent, type Runtime } from "#extensions/runtime/state.ts";
 import { renderInspector, repoSlug, validRepo, type InspectorState } from "#extensions/components/inspector-view.ts";
 
@@ -52,14 +52,15 @@ async function branchDiff(exec: Exec, a: Agent | undefined): Promise<Diff> {
 
 /** Open the diff with delta in a multiplexer pane to the right. */
 async function openExternal(exec: Exec, ctx: ExtensionContext, review: string, label: string) {
-	if (!detectMultiplexer()) throw new Error("외부 리뷰는 터미널 멀티플렉서(Rex) 안에서만 열 수 있습니다. d 키로 내장 diff를 확인하세요.");
+	const mux = await detectMultiplexer({ exec });
+	if (!mux) throw new Error(`외부 리뷰는 터미널 멀티플렉서(${MULTIPLEXER_NAMES}) 안에서만 열 수 있습니다. d 키로 내장 diff를 확인하세요.`);
 	const check = await exec("delta", ["--version"], { timeout: 5000 });
 	if (check.code !== 0) throw new Error("delta를 실행할 수 없습니다. d 키로 내장 diff를 확인하세요.");
 	const dir = path.join(cfgFor(ctx).dir, "reviews");
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const file = path.join(dir, `review-${Date.now()}.diff`);
 	fs.writeFileSync(file, review, { mode: 0o600 });
-	await openSidePane(exec, { command: ["sh", "-c", 'delta --paging=always < "$1"', "review", file], cwd: ctx.cwd, label: `review-${label}`, ratio: 50, keepOpen: true });
+	await mux.openSide(exec, { command: ["sh", "-c", 'delta --paging=always < "$1"', "review", file], cwd: ctx.cwd, label: `review-${label}`, ratio: 50, keepOpen: true });
 	ctx.ui.notify("외부 diff 리뷰를 열었습니다. ↑↓ / PgUp / PgDn 스크롤 · q 종료", "info");
 }
 
