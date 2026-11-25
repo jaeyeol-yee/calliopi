@@ -46,6 +46,8 @@ calliopi/
 
 `core/extensions`와 `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
 
+Claude Code 클라우드 세션(claude.ai/code)에서 개발하려면 [docs/cloud.md](docs/cloud.md)를 보세요. 환경 setup script(`scripts/cloud-setup.sh`)와 저장소 SessionStart hook(`scripts/cloud-install.sh`)으로 나눠 준비합니다.
+
 ## 패키지 연결 구조
 
 ```text
