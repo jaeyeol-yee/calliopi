@@ -70,6 +70,30 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 - **설정**: `~/.pi/agent/calliopi-ui.json`의 `branchStatus`(`enabled`, `pollSeconds`). fullscreen TUI에서만 표시합니다(`tuiMode: regular`에서는 꺼짐).
 - **요구 사항**: `git`, 로그인한 `gh`. GitHub(github.com) remote만 봅니다.
 
+## 구독 사용량 (`/cl-usage`)
+
+Claude, Codex, Cursor의 구독 사용량을 overlay 패널에 gauge로 보여 줍니다. 조회는 `@calliopi/core/usage`의 provider별 strategy가 합니다.
+
+```text
+╭─ 사용량 ───────────────────────────────────────────────────────────────────────────────╮
+│ ╭─ Claude · Max 20x ───────────────────────────────────────────────────── Pi 로그인 ─╮ │
+│ │ 주간         █░░░░░░░░░│░░░░░░░░░░░░░░░             4%  ↻ 4일 17시간 · 11/30 11:00 │ │
+│ │ 주간 Fable   ░░░░░░░░░░│░░░░░░░░░░░░░░░             0%  ↻ 4일 17시간 · 11/30 10:59 │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────╯ │
+│ ╭─ Cursor · Ultra (통합) ──────────────────────────────────────────────── Cursor 앱 ─╮ │
+│ │ 전체         █│░░░░░░░░░░░░░░░░░░░░░░░░             2%  ↻ 6일 21시간 · 12/2 15:18 │ │
+│ │ └ Grok Bot   █│░░░░░░░░░░░░░░░░░░░░░░░░           1.4%  ↻ 6일 21시간 · 12/2 15:18 │ │
+│ │ 추가 사용    ███░░░░░░░░░░░░░░░│░░░░░░   $0.43 / $5.00  ↻ 5일 15시간 · 12/1 09:00 │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────╯ │
+╰─ 17:41:43 기준  r 새로고침 · Esc 닫기 ──────────────────────────────────────────────────╯
+```
+
+- **gauge** (`lib/gauge.ts`): provider마다 박스 하나(윗변에 이름·요금제, 오른쪽에 인증 정보 출처). 막대 열은 박스끼리 맞춥니다. 퍼센트는 10% 미만이면 소수 한 자리(1.4%). 채움은 사용 비율, 색은 70% 미만 `success`, 90% 미만 `warning`, 그 이상 `error`. `│`는 **고른 속도 표시**로, 창이 지난 만큼의 위치입니다. 채움이 이 표시를 넘으면 리필보다 빨리 쓰고 있다는 뜻입니다.
+- **리셋**: `↻ 남은 시간 · 리셋 시각(로컬)`. 폭이 좁으면 시각, 그다음 열 전체를 빼서 막대가 8칸 아래로 줄지 않게 합니다.
+- **명령**: `/cl-usage`(설정한 provider 전부), `/cl-usage claude cursor`(골라서). 패널에서 `r` 새로고침, `Esc`·`q` 닫기. 열려 있는 동안 남은 시간은 1분마다 다시 그립니다.
+- **설정**: `~/.pi/agent/calliopi-ui.json`의 `usage.providers`(기본 `["claude", "codex", "cursor"]`).
+- **인증 정보**: 이 컴퓨터에 이미 있는 로그인을 읽기만 합니다. 자세한 순서는 [core README](../core/README.md#구독-사용량). macOS에서 Pi에 Anthropic 로그인이 없으면 Claude Code의 Keychain 항목을 읽으며, 이때 macOS가 접근 허용을 한 번 물을 수 있습니다. Cursor는 `sqlite3`가 필요합니다.
+
 ## 구조
 
 화면과 입력 부품만 둡니다. 명령(`/cl-edit`, `/cl-log`)은 `calliopi-workflows`가 이 부품으로 만듭니다. `lib`은 `.mjs`를 쓰지 않습니다. Pi의 `/reload`가 Node ESM 캐시에 남아 있는 `.mjs`를 다시 읽지 않기 때문입니다.
@@ -78,6 +102,9 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /cl-headers
 extensions/branch-status.ts footer의 PR 상태 표시·갱신 · /cl-branch
 lib/branch-status.ts        `onto owner/repo#N 상태` 표기, 조회 주기
+extensions/usage.ts         구독 사용량 overlay · /cl-usage
+lib/gauge.ts                사용량 gauge (막대·고른 속도 표시·리셋)
+lib/usage-panel.ts          /cl-usage 패널 테두리, 인자 해석
 lib/turn-headers.ts         헤더 줄, render 감싸기, Markdown 대체 경로
 lib/ui-override/footer-slot.ts  footer 첫 줄 오른쪽 슬롯 (overlay)
 lib/thinking-frame.ts       thinking 테두리 컴포넌트, updateContent 감싸기
