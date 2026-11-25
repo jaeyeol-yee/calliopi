@@ -3,7 +3,8 @@
 //   node demo/build.ts                     every scenario
 //   node demo/build.ts <name>…             the named scenarios
 //   node demo/build.ts --tape [<name>…]    write demo/.out/<name>.tape only (no recording)
-//   node demo/build.ts --plan --base <ref> print `matrix=[…]`: scenarios added since <ref> (CI)
+//   node demo/build.ts --plan --base <ref> print `matrix=[…]`: scenarios added since <ref> that have
+//                                          no GIF yet, or changed after it was recorded (CI)
 //   node demo/build.ts --plan --all        print `matrix=[…]`: every scenario (CI, manual run)
 //   node demo/build.ts --check             list scenarios without a GIF and GIFs without a scenario
 //
@@ -14,7 +15,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ASSETS, ROOT, SCENARIOS, findScenarioFile, listScenarioFiles, loadScenario, scenarioName, type Scenario } from './lib/scenario.ts';
+import { ASSETS, ROOT, findScenarioFile, listScenarioFiles, loadScenario, scenarioName, type Scenario } from './lib/scenario.ts';
+import { planScenarios } from './lib/plan.ts';
 import { buildTape } from './lib/tape.ts';
 
 const OUT = path.join(ROOT, 'demo', '.out');
@@ -22,12 +24,6 @@ const PI = path.join(ROOT, 'node_modules', '.bin', 'pi');
 const FAUX = path.join(ROOT, 'demo', 'faux-extension.ts');
 
 const shellQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
-
-/** Scenarios added (not modified, renames count as added) between <base> and HEAD. */
-export function addedScenarios(base: string): string[] {
-  const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=A', '--no-renames', `${base}...HEAD`, '--', path.relative(ROOT, SCENARIOS)], { cwd: ROOT, encoding: 'utf8' });
-  return out.split('\n').filter((f) => /\.ya?ml$/.test(f)).map((f) => scenarioName(path.join(ROOT, f))).sort();
-}
 
 export function check(): { missing: string[]; orphaned: string[] } {
   const names = new Set(listScenarioFiles().map(scenarioName));
@@ -103,7 +99,7 @@ function main(argv: string[]) {
     const base = option('--base');
     const all = flag('--all');
     if (!base === !all) throw new Error('--plan에는 --base <ref> 또는 --all 중 하나가 필요합니다');
-    console.log(`matrix=${JSON.stringify(all ? listScenarioFiles().map(scenarioName) : addedScenarios(base!))}`);
+    console.log(`matrix=${JSON.stringify(all ? listScenarioFiles().map(scenarioName) : planScenarios(ROOT, base!))}`);
     return;
   }
   if (flag('--check')) {
