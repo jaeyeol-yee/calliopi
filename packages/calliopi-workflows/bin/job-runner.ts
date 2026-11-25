@@ -22,7 +22,8 @@ const child = pty.spawn(process.env.SHELL || '/bin/sh', ['-c', meta.command], {
 });
 if (input.isTTY) input.setRawMode(true);
 input.resume();
-const forward = (data: Buffer) => child.write(data.toString('utf8'));
+input.setEncoding('utf8'); // decoded by the stream: a character split across two reads stays whole
+const forward = (data: string) => child.write(data);
 input.on('data', forward);
 out.on('resize', () => { try { child.resize(out.columns || 80, out.rows || 24); } catch { /* already gone */ } });
 child.onData(data => { fs.writeSync(log, data); out.write(data); });
@@ -31,7 +32,8 @@ child.onData(data => { fs.writeSync(log, data); out.write(data); });
 let asked = false;
 for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT'] as const) {
   process.on(signal, () => {
-    if (asked) { try { child.kill('SIGKILL'); } catch { /* gone */ } return; }
+    // Asked twice: the whole process group, so a descendant that ignores SIGHUP goes as well.
+    if (asked) { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } return; }
     asked = true;
     try { child.kill(signal === 'SIGINT' ? 'SIGINT' : 'SIGHUP'); } catch { /* gone */ }
   });
@@ -45,5 +47,5 @@ child.onExit(({ exitCode, signal }) => {
   if (input.isTTY) input.setRawMode(false);
   if (meta.silent || asked || !input.isTTY) process.exit(0); // a background window closes by itself
   out.write(`\r\n\x1b[2m[${meta.name} 종료 ${code}] Enter로 닫기\x1b[0m`);
-  input.on('data', (data: Buffer) => { if (/[\r\n\x03\x04q]/.test(data.toString('latin1'))) process.exit(0); });
+  input.on('data', (data: string) => { if (/[\r\n\x03\x04q]/.test(data)) process.exit(0); });
 });

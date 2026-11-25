@@ -37,10 +37,20 @@ export const TAIL_LINES = 40, TAIL_BYTES = 64 * 1024;
 /** Finished jobs older than this are removed when a new one starts. */
 export const KEEP_MS = 24 * 60 * 60 * 1000;
 
-/** Per-user root (0700): jobs outlive the Pi process that started them. */
+/**
+ * Per-user root (0700): jobs outlive the Pi process that started them. The temp directory may be
+ * shared (/tmp), where anyone can create this path first and then swap a job's command under us,
+ * so a root that is not a private directory of this user is refused.
+ */
 export function jobsRoot(base = os.tmpdir()): string {
-  const root = path.join(base, `calliopi-jobs-${os.userInfo().uid}`);
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const uid = os.userInfo().uid;
+  const root = path.join(base, `calliopi-jobs-${uid}`);
+  try { fs.mkdirSync(root, { mode: 0o700 }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  const stat = fs.lstatSync(root);
+  if (!stat.isDirectory() || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
+    throw new Error(`${root}이(가) 내 전용 디렉터리가 아닙니다(다른 사용자 소유, 링크, 또는 열린 권한). 확인하고 지운 뒤 다시 실행하세요.`);
+  }
   return root;
 }
 
@@ -107,16 +117,24 @@ const STARTING_MS = 10_000;
 export function readJob(dir: string, now = Date.now()): Job | null {
   let meta: JobMeta;
   try { meta = JSON.parse(fs.readFileSync(path.join(dir, META_FILE), 'utf8')) as JobMeta; } catch { return null; }
-  try {
-    const file = path.join(dir, EXIT_FILE);
-    const exitCode = Number(fs.readFileSync(file, 'utf8'));
-    return { ...meta, dir, state: 'exited', exitCode, endedAt: fs.statSync(file).mtimeMs };
-  } catch { /* still running, or gone without a trace */ }
+  const exited = (): Job | null => {
+    try {
+      const file = path.join(dir, EXIT_FILE);
+      const exitCode = Number(fs.readFileSync(file, 'utf8'));
+      return { ...meta, dir, state: 'exited', exitCode, endedAt: fs.statSync(file).mtimeMs };
+    } catch { return null; }
+  };
+  const done = exited();
+  if (done) return done;
   let pid: number | null = null;
   try { pid = Number(fs.readFileSync(path.join(dir, PID_FILE), 'utf8')); } catch { /* not started yet */ }
-  const running = pid ? alive(pid) : now - meta.startedAt < STARTING_MS;
-  return { ...meta, dir, state: running ? 'running' : 'lost' };
+  if (pid ? alive(pid) : now - meta.startedAt < STARTING_MS) return { ...meta, dir, state: 'running' };
+  // The runner writes the exit code and then exits: it may have done both since the first look.
+  return exited() ?? { ...meta, dir, state: 'lost' };
 }
+
+/** Whether `job` is still the run in its directory: a name can be taken again by a later run. */
+export const sameRun = (job: Job): boolean => readJob(job.dir)?.startedAt === job.startedAt;
 
 /** Newest first. */
 export function listJobs(root: string, now = Date.now()): Job[] {

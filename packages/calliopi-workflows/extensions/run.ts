@@ -8,7 +8,7 @@ import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec, type Multiplexer } fro
 import { runWorkflow } from '@calliopi/core/workflow';
 import { preflight, openOverlaySession } from '@calliopi/ui/overlay-session';
 import { inferCommand, inferContext } from '#lib/job-infer.ts';
-import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, setJobPane, statusText, stopJob, JOB_LIST, type Job } from '#lib/jobs.ts';
+import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, JOB_LIST, type Job } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
 const preview = fileURLToPath(new URL('../bin/job-preview.ts', import.meta.url));
@@ -57,15 +57,15 @@ export default function (pi: ExtensionAPI) {
       if (!mux) return ctx.ui.notify(`명령 실행: 터미널 멀티플렉서(${MULTIPLEXER_NAMES}) 안에서 실행해주세요.`, 'warning');
       if (parsed.silent && !mux.openBackground) return ctx.ui.notify(`명령 실행: --silent(백그라운드 창)는 tmux에서만 됩니다. ${mux.name}에서는 옵션 없이 옆 pane으로 실행하세요.`, 'warning');
 
-      const root = jobsRoot();
+      let root: string;
+      try { root = jobsRoot(); } catch (error) { return ctx.ui.notify(`명령 실행: ${error instanceof Error ? error.message : String(error)}`, 'error'); }
       pruneJobs(root);
-      const jobs = listJobs(root);
       if (parsed.infer) {
         const model = ctx.model;
         if (!model || !ctx.modelRegistry.hasConfiguredAuth(model)) return ctx.ui.notify('명령 실행: 명령을 추론할 모델이 없습니다. 모델을 고르거나 명령을 직접 적어주세요.', 'warning');
         ctx.ui.notify(`명령 추론 중: ${parsed.command}`, 'info');
         try {
-          const result = await inferCommand(parsed.command, inferContext(ctx.cwd, jobs.filter(j => j.cwd === ctx.cwd).map(j => j.command)), {
+          const result = await inferCommand(parsed.command, inferContext(ctx.cwd, listJobs(root).filter(j => j.cwd === ctx.cwd).map(j => j.command)), {
             complete: async (systemPrompt, text) => {
               const reply = await ctx.modelRegistry.complete(model, { systemPrompt, messages: [{ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() }] });
               if (reply.stopReason === 'error' || reply.stopReason === 'aborted') throw new Error(reply.errorMessage || '모델 요청이 실패했습니다.');
@@ -80,11 +80,18 @@ export default function (pi: ExtensionAPI) {
           return ctx.ui.notify(`명령 추론: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
       }
+      // Read now, not before the model and the confirmation: another Pi may have started a job meanwhile.
+      const jobs = listJobs(root);
       const same = parsed.name ? jobs.find(j => j.name === parsed.name) : undefined;
       if (same?.state === 'running') return ctx.ui.notify(`명령 실행: ${same.name}이(가) 아직 실행 중입니다. 다른 이름을 쓰거나 /cl-jobs에서 중지하세요.`, 'warning');
-      if (same) fs.rmSync(same.dir, { recursive: true, force: true }); // a named job run again replaces its last run
+      if (same) {
+        if (watched.has(same.dir)) check(); // its result goes to the conversation before its record is replaced
+        fs.rmSync(same.dir, { recursive: true, force: true }); // a named job run again replaces its last run
+      }
       const name = parsed.name ?? jobName(parsed.command, new Set(jobs.map(j => j.name)));
-      const dir = createJob(root, { name, command: parsed.command, cwd: ctx.cwd, startedAt: Date.now(), silent: parsed.silent, pane: null });
+      let dir: string;
+      try { dir = createJob(root, { name, command: parsed.command, cwd: ctx.cwd, startedAt: Date.now(), silent: parsed.silent, pane: null }); }
+      catch { return ctx.ui.notify(`명령 실행: ${name} 이름을 방금 다른 작업이 가져갔습니다. 다시 실행해주세요.`, 'warning'); }
       try {
         const command = [process.execPath, runner, dir], label = `cl-run ${name}`;
         const { paneId } = parsed.silent ? await mux.openBackground!(exec, { command, cwd: ctx.cwd, label })
@@ -111,7 +118,8 @@ export default function (pi: ExtensionAPI) {
       if (picking) return ctx.ui.notify('이미 작업 목록이 열려 있습니다.', 'warning');
       const problem = preflight(ctx, ['fzf']);
       if (problem) return ctx.ui.notify(`작업 목록: ${problem}`, 'warning');
-      const jobs = listJobs(jobsRoot());
+      let jobs: Job[];
+      try { jobs = listJobs(jobsRoot()); } catch (error) { return ctx.ui.notify(`작업 목록: ${error instanceof Error ? error.message : String(error)}`, 'error'); }
       if (!jobs.length) return ctx.ui.notify('작업이 없습니다. /cl-run <명령>으로 시작하세요.', 'info');
 
       picking = true;
@@ -158,6 +166,9 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(`${job.name} 화면을 다음 대화에 전달합니다.`, 'info');
         } else if (action === FOCUS) {
           await mux!.focus!(exec, pane!);
+        } else if ((action === STOP || action === REMOVE) && !sameRun(job)) {
+          // The menu was open for a while: the name may belong to a newer run now, which is not the one chosen.
+          ctx.ui.notify(`${job.name}: 고른 뒤에 작업이 바뀌었습니다. /cl-jobs를 다시 열어주세요.`, 'warning');
         } else if (action === STOP) {
           ctx.ui.notify(stopJob(job) ? `${job.name}에 종료 신호를 보냈습니다.` : `${job.name}: 실행 중인 프로세스를 찾지 못했습니다.`, 'info');
         } else if (action === REMOVE) {

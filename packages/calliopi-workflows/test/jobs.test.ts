@@ -7,7 +7,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectMultiplexer, type Exec } from '@calliopi/core/multiplexer';
 import { inferCommand, inferContext, inferPrompt, parseInferred, INFER_SYSTEM } from '#lib/job-infer.ts';
-import { createJob, jobMessage, jobName, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, setJobPane, statusText, stopJob, tailLog, writeExit,
+import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, tailLog, writeExit,
   KEEP_MS, LOG_FILE, PID_FILE, type Job, type JobMeta } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
@@ -72,6 +72,29 @@ test('states: running while the runner lives, exited with its code, lost without
   assert.deepEqual(listJobs(dir).map(j => j.name), ['a', 'b']); // newest first
   pruneJobs(dir, now + KEEP_MS + 120_000);
   assert.deepEqual(listJobs(dir).map(j => j.name), []);
+});
+
+test('root: a private directory of this user, or nothing', t => {
+  const base = root(t);
+  const made = jobsRoot(base);
+  assert.equal(fs.statSync(made).mode & 0o777, 0o700);
+  assert.equal(jobsRoot(base), made); // reused
+  fs.chmodSync(made, 0o755);
+  assert.throws(() => jobsRoot(base), /전용 디렉터리가 아닙니다/);
+  fs.rmSync(made, { recursive: true });
+  fs.mkdirSync(path.join(base, 'elsewhere'), { mode: 0o700 });
+  fs.symlinkSync(path.join(base, 'elsewhere'), made);
+  assert.throws(() => jobsRoot(base), /전용 디렉터리가 아닙니다/);
+});
+
+test('a name taken again is another run', t => {
+  const dir = root(t);
+  const first = readJob(createJob(dir, meta('a', { startedAt: 1000 })))!;
+  assert.equal(sameRun(first), true);
+  fs.rmSync(first.dir, { recursive: true });
+  assert.equal(sameRun(first), false);
+  createJob(dir, meta('a', { startedAt: 2000 }));
+  assert.equal(sameRun(first), false);
 });
 
 test('message for the model: state, command and the end of the output', t => {
@@ -181,6 +204,13 @@ test('tmux: a job beside Pi and one in a background window, peeked while running
   assert.equal(stopJob(job(long.jobDir)), true);
   await until('stopped', () => job(long.jobDir).state === 'exited');
   assert.notEqual(job(long.jobDir).exitCode, 0);
+
+  // input typed into the pane reaches the command whole, multibyte characters included
+  const typed = await start(meta('typed', { command: 'read line; echo "got:$line"', cwd: dir, silent: true }));
+  await until('runner up', () => fs.existsSync(path.join(typed.jobDir, PID_FILE)));
+  tmux('send-keys', '-t', typed.pane, '-l', '한글 입력');
+  tmux('send-keys', '-t', typed.pane, 'Enter');
+  await until('echoed', () => /got:한글 입력/.test(tailLog(typed.jobDir).text));
 
   // a pane closed by hand takes the command with it
   const closed = await start(meta('closed', { command: 'echo started; sleep 60', cwd: dir }));
