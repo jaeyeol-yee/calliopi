@@ -39,6 +39,8 @@
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check": "npm run check:imports && npm run typecheck && npm test && npm run demo:test",
+    "demo": "node demo/build.ts",
+    "demo:check": "node demo/build.ts --check",
     "demo:test": "tsc -p demo && node --test demo/test/*.test.ts"
   }
 }
