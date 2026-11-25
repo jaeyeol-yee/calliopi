@@ -9,6 +9,7 @@ Calliopi의 가장 아래 계층입니다. 다른 패키지를 참조하지 않�
 | `@calliopi/core/types` | `RunProgram`, `PtyRunResult` |
 | `@calliopi/core/capture` | 출력을 받는 실행기 `Capture`, 기본 구현 `capture(timeoutMs)` (시간 제한, 프롬프트 금지) |
 | `@calliopi/core/pr-lookup` | 현재 브랜치가 속한 PR 조회 `lookupPulls` |
+| `@calliopi/core/usage` | 구독 사용량 strategy(`claude`, `codex`, `cursor`), `fetchUsage`, `defaultEnv` |
 
 ## PR 조회
 
@@ -43,3 +44,18 @@ const picked = await runWorkflow(step, { run, directory, setFooter, cancelled })
 ```
 
 사용 예: `calliopi-workflows`의 `lib/editor-flow.ts`(파일 → Vim), `lib/git-log.ts`의 `browseLog`(커밋 → 파일 → pager).
+
+## 구독 사용량
+
+provider마다 `UsageStrategy`(`fetch(env) → UsageSnapshot`)를 하나씩 둡니다([OpenUsage](https://github.com/robinebers/openusage)의 provider runtime을 참고). strategy는 이 컴퓨터에 이미 있는 로그인을 찾아 사용량 API를 읽고, gauge로 그릴 수 있는 `UsageMetric`(`used`, `limit`, `unit`, `resetsAt`, `periodMs`)으로 바꿉니다.
+
+| provider | 인증 정보 (먼저 찾은 것) | 읽는 것 |
+|---|---|---|
+| Claude | Pi의 Anthropic OAuth 로그인 → `~/.claude/.credentials.json` → macOS Keychain `Claude Code-credentials` | `api/oauth/usage`: 5시간·주간, **모델별 주간 한도(Fable 등, 비활성도 표시)**, 추가 사용 / `api/oauth/profile`: 요금제 |
+| Codex | `$CODEX_HOME/auth.json` (ChatGPT 로그인) | `wham/usage`: 5시간·주간 창, 추가 모델 한도, 크레딧, 요금제 |
+| Cursor | Cursor 앱 `state.vscdb`의 `cursorAuth/accessToken` (`sqlite3 -readonly`) | `usage-status`: 주간 포함 예산과 **제품별 내역(Grok Bot, Cursor)**, 월 추가 사용 / `GetSandUsageStatus`: 통합 요금제가 아닐 때 Grok Bot 한도 / `GetPlanInfo`: 요금제 / 실패 시 `GetCurrentPeriodUsage` |
+
+- **읽기만 합니다.** 다른 도구의 토큰을 갱신하지 않습니다(갱신하면 그 도구의 로그인이 무효가 될 수 있음). 만료되면 그 도구를 한 번 실행하라고 안내합니다. Pi 로그인은 Pi가 직접 갱신합니다.
+- 모든 지표에 리셋 시각(`resetsAt`)과 창 길이(`periodMs`)가 있으면 담습니다.
+- 한 provider가 실패해도 나머지는 그대로 나오고, 실패한 provider는 `error`에 이유를 담습니다.
+- 파일·명령·HTTP는 `UsageEnv`로 주입합니다. 테스트는 가짜 환경을 씁니다.
