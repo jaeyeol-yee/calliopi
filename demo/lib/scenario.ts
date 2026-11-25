@@ -34,6 +34,13 @@ export interface Scenario {
   tokensPerSecond: number;
   /** Extra arguments for `pi`. */
   piArgs: string[];
+  /**
+   * Answers to one-off model requests an extension makes outside the conversation (e.g. /cl-run ?):
+   * the first whose `match` (a regex) fits the request's text wins. Checked before `turns`.
+   */
+  completions: { match: string; text: string }[];
+  /** Run Pi inside this terminal multiplexer, for commands that open panes (/cl-run, /cl-preview). */
+  multiplexer?: 'tmux';
   turns: Turn[];
 }
 
@@ -89,6 +96,13 @@ export function loadScenario(file: string): Scenario {
     if (typeof t.tape === 'string') return { tape: t.tape, reply: t.reply === undefined ? undefined : parseReply(t.reply, where), wait, pause };
     throw new Error(`${where}: prompt 또는 tape가 필요합니다`);
   });
+  if (raw.multiplexer !== undefined && raw.multiplexer !== 'tmux') throw new Error(`${name}: multiplexer는 tmux만 지원합니다`);
+  const multiplexer = raw.multiplexer === 'tmux' ? 'tmux' as const : undefined;
+  const completions = (Array.isArray(raw.completions) ? raw.completions : []).map((c, i) => {
+    if (!isRecord(c) || typeof c.match !== 'string' || typeof c.text !== 'string') throw new Error(`${name}.completions[${i}]: match와 text가 필요합니다`);
+    new RegExp(c.match); // a bad pattern fails here, not mid-recording
+    return { match: c.match, text: c.text };
+  });
   const term = isRecord(raw.terminal) ? raw.terminal : {};
   const num = (v: unknown, d: number) => (typeof v === 'number' && v > 0 ? v : d);
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
@@ -104,6 +118,8 @@ export function loadScenario(file: string): Scenario {
     },
     tokensPerSecond: num(raw.tokensPerSecond, 60),
     piArgs: Array.isArray(raw.piArgs) ? raw.piArgs.map(String) : [],
+    multiplexer,
+    completions,
     turns,
   };
 }

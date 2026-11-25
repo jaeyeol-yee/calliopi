@@ -74,6 +74,8 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 
 ## /cl-run, /cl-jobs: 옆 pane에서 명령 실행
 
+![/cl-run과 /cl-jobs 데모](../../assets/scenarios/cl-run.gif)
+
 `!`로 실행한 명령은 끝날 때까지 Pi를 붙잡고, 무엇이 돌고 있는지 모아 볼 곳이 없습니다. `/cl-run`은 명령을 터미널 멀티플렉서 pane에서 실행하고 바로 돌아옵니다.
 
 ```text

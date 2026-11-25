@@ -10,8 +10,9 @@
 //
 // Each recording runs Pi in a throwaway HOME with the faux model, so it needs no API key and never
 // reads the user's settings, sessions or skills. Requires vhs (with ttyd and ffmpeg) on PATH.
+// A scenario with `multiplexer: tmux` also needs tmux: Pi then runs inside a private tmux server.
 // DEMO_FONT_FAMILY sets the terminal font when a scenario does not (e.g. a CJK monospace font).
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,6 +49,7 @@ function prepare(s: Scenario) {
   const agent = path.join(tmp, 'agent');
   fs.mkdirSync(workdir, { recursive: true });
   fs.mkdirSync(agent, { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'tmp'));
   fs.writeFileSync(path.join(agent, 'settings.json'), JSON.stringify({ quietStartup: true }, null, 2));
   const env: Record<string, string> = {
     HOME: home,
@@ -55,6 +57,7 @@ function prepare(s: Scenario) {
     PI_OFFLINE: '1',
     PI_SKIP_VERSION_CHECK: '1',
     PI_TELEMETRY: '0',
+    TMPDIR: path.join(tmp, 'tmp'), // /cl-run keeps its jobs under the temp directory: not the user's
     DEMO_SCENARIO: s.file,
     GIT_AUTHOR_NAME: 'Calliopi Demo', GIT_AUTHOR_EMAIL: 'demo@calliopi.invalid',
     GIT_COMMITTER_NAME: 'Calliopi Demo', GIT_COMMITTER_EMAIL: 'demo@calliopi.invalid',
@@ -64,7 +67,13 @@ function prepare(s: Scenario) {
   }
   const pi = [PI, '--no-session', '--no-skills', '--no-context-files', '-e', FAUX, '-e', ROOT, '--model', 'faux/demo', ...s.piArgs]
     .map(shellQuote).join(' ');
-  return { tmp, workdir, env, pi };
+  if (s.multiplexer !== 'tmux') return { tmp, workdir, env, pi };
+  // A private server with its own config: the user's tmux and ~/.tmux.conf stay out of the picture.
+  const conf = path.join(tmp, 'tmux.conf');
+  fs.writeFileSync(conf, ['set -g extended-keys on', 'set -sg escape-time 0', 'set -g default-terminal "tmux-256color"',
+    'set -g status-style "bg=#2a2a37,fg=#c8c8d0"', 'set -g status-left ""', 'set -g status-right ""', ''].join('\n'));
+  const socket = `calliopi-demo-${process.pid}`;
+  return { tmp, workdir, env, socket, pi: ['tmux', '-u', '-L', socket, '-f', conf, 'new-session', '-c', workdir, pi].map(shellQuote).join(' ') };
 }
 
 function writeTape(s: Scenario, t: { workdir: string; env: Record<string, string>; pi: string }): string {
@@ -87,6 +96,7 @@ function build(name: string, { tapeOnly }: { tapeOnly: boolean }) {
     execFileSync('vhs', [tape], { cwd: prepared.workdir, stdio: 'inherit' });
     console.log(`${s.name}: ${path.relative(ROOT, s.output)}`);
   } finally {
+    if (prepared.socket && !tapeOnly) spawnSync('tmux', ['-L', prepared.socket, 'kill-server'], { stdio: 'ignore' });
     if (!tapeOnly) fs.rmSync(prepared.tmp, { recursive: true, force: true });
   }
 }

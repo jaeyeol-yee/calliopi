@@ -31,6 +31,10 @@ tokensPerSecond: 80          # 답변 출력 속도
 piArgs: []                   # pi에 추가로 넘길 인자
 setup: |                     # 녹화 전 작업 디렉터리에서 실행 (녹화되지 않음)
   git init -q
+multiplexer: tmux            # 선택: Pi를 tmux 안에서 실행 (/cl-run처럼 pane을 여는 명령)
+completions:                 # 선택: 확장이 대화 밖에서 보내는 단발 요청(/cl-run ?)의 답
+  - match: "<wanted>\\n테스트"  #   요청 본문에 맞는 첫 정규식의 text를 돌려줍니다
+    text: npm test
 
 turns:
   - prompt: 사용자가 입력할 문장          # 입력 후 Enter
@@ -48,7 +52,9 @@ turns:
     reply: [...]                         # 선택: 이 키 입력이 보낸 메시지에 대한 답변
 ```
 
-- n번째 사용자 메시지에는 `reply`가 있는 n번째 턴의 답변이 갑니다.
+- n번째 대화 턴에는 `reply`가 있는 n번째 턴의 답변이 갑니다. 확장이 턴에 끼워 넣는 메시지(`/cl-run`의 작업 결과 등)는 세지 않습니다.
+- `completions`는 순서와 무관하고 `turns`의 답변 번호에 들어가지 않습니다.
+- `multiplexer: tmux`는 녹화마다 전용 tmux 서버와 설정으로 Pi를 띄웁니다. 사용자의 tmux와 `~/.tmux.conf`는 쓰지 않습니다. tmux가 `PATH`에 있어야 합니다.
 - `tool` 블록은 모델 호출 하나를 끝냅니다. 그 뒤의 블록은 도구 결과를 받은 다음 호출로 이어집니다.
 
 ## 격리
