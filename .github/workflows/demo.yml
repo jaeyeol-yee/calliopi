@@ -1,7 +1,8 @@
 # Record demo GIFs: demo/scenarios/<name>.yaml → assets/scenarios/<name>.gif.
 #
-# A pull request records only scenarios it *adds* (a rename counts as an add). Editing a scenario or
-# the code it shows does not re-record; run this workflow by hand for that. Same-repository PRs get
+# A pull request records only scenarios it *adds* (a rename counts as an add) that have no GIF yet or
+# changed after it was recorded. Changing the code a scenario shows does not re-record; run this
+# workflow by hand for that. Same-repository PRs get
 # the GIFs committed to their branch; fork PRs get them as artifacts.
 name: demo
 
@@ -118,5 +119,6 @@ jobs:
           if git diff --cached --quiet; then echo "No GIF changes"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Record demo GIFs" -m "$(git diff --cached --name-only | sed 's/^/- /')"
+          # [skip ci]: no workflow run for this commit (planning would find nothing to record anyway).
+          git commit -m "Record demo GIFs [skip ci]" -m "$(git diff --cached --name-only | sed 's/^/- /')"
           git push
