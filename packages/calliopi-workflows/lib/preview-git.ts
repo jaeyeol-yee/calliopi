@@ -84,17 +84,30 @@ export function nearestBranch(branches: readonly BranchDistance[], preferred: st
   return candidates[0]?.name ?? null;
 }
 
+/** [refname, short name, "ahead behind" relative to HEAD, "*" when checked out] per local and remote branch. */
+function refCounts(cwd: string): string[][] | null {
+  const split = (out: Buffer) => out.toString('utf8').split('\n').filter(Boolean).map(line => line.split('\x1f'));
+  const refs = ['refs/heads', 'refs/remotes'];
+  const r = git(cwd, ['for-each-ref', '--format=%(refname)%1f%(refname:short)%1f%(ahead-behind:HEAD)%1f%(HEAD)', ...refs]);
+  if (r.status === 0) return split(r.stdout);
+  // %(ahead-behind:) needs git 2.41; older git (e.g. Debian bookworm's 2.39) counts per ref instead.
+  const list = git(cwd, ['for-each-ref', '--format=%(refname)%1f%(refname:short)%1f%(HEAD)', ...refs]);
+  if (list.status !== 0) return null;
+  return split(list.stdout).map(([ref = '', name = '', head = '']) => {
+    const c = git(cwd, ['rev-list', '--left-right', '--count', `${ref}...HEAD`]); // left: only in ref (ahead), right: only in HEAD (behind)
+    return [ref, name, c.status === 0 ? c.stdout.toString('utf8').trim().split(/\s+/).join(' ') : '', head];
+  });
+}
+
 /**
  * Branch to show changes against: the nearest branch HEAD grew from, else defaultBase. Remote
  * branches count too (a stale local main would otherwise pull in everything merged upstream since),
  * except copies of the current branch: unpushed commits would make those the nearest ancestor.
- * Needs git 2.41 for ahead-behind; older git gets defaultBase.
  */
 export function parentBranch(cwd: string): string | null {
-  const r = git(cwd, ['for-each-ref', '--format=%(refname)%1f%(refname:short)%1f%(ahead-behind:HEAD)%1f%(HEAD)', 'refs/heads', 'refs/remotes']);
   const fallback = defaultBase(cwd);
-  if (r.status !== 0) return fallback;
-  const rows = r.stdout.toString('utf8').split('\n').filter(Boolean).map(line => line.split('\x1f'));
+  const rows = refCounts(cwd);
+  if (!rows) return fallback;
   const current = rows.find(([, , , head]) => head === '*')?.[0]?.replace(/^refs\/heads\//, '');
   const branches = rows.flatMap(([ref = '', name = '', counts = '', head = '']) => {
     if (ref.startsWith('refs/remotes/') && (ref.endsWith('/HEAD') || (current && ref.endsWith(`/${current}`)))) return [];
