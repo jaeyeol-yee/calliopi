@@ -40,6 +40,20 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 - 클래스 모양이 예상과 다르면(Pi 업데이트 등) 감싸지 않습니다. 이때 헤더는 Markdown 변환 훅으로 대신 그립니다. 도구만 호출하는 응답과 thinking 앞에는 붙지 않고, thinking 테두리는 꺼집니다. `/cl-headers`가 어느 경로인지 알려줍니다.
 - Pi의 내부 구조에 기대므로 Pi를 업데이트하면 `npm test --workspace @calliopi/ui`로 확인하세요. 실제 Pi 컴포넌트를 그려서 순서·폭·클릭·복구를 검증합니다.
 
+## UI override: footer 슬롯
+
+`lib/ui-override/footer-slot.ts`의 `FooterSlot`은 Pi footer 첫 줄(`~/repo (branch)`)의 오른쪽 빈 공간을 슬롯으로 씁니다. Pi footer는 그대로 두고, 그 자리에 한 줄짜리 non-capturing overlay를 그립니다. 확장은 `slot.set(key, text)`로 조각을 채우거나 지웁니다. 여러 조각은 key 순서로 두 칸 띄워 잇습니다.
+
+```text
+~/calliopi (feat/x)                         onto jaeyeol-yee/calliopi#4 open   ← 슬롯
+↑52 R4.2k W2.1k 1.7%/128k (auto)                          (faux) demo • medium
+```
+
+- **위치**: TUI 트리에서 Pi의 footer 컴포넌트를 찾아 매 프레임 터미널 폭으로 그려 보고, footer 줄 수(2줄, 상태 문구가 있으면 3줄)에 맞춰 첫 줄로 옮깁니다. 첫 줄과 슬롯 사이에 2칸이 남지 않으면 숨깁니다.
+- **overlay 옵션 갱신**: Pi는 넘겨받은 overlay 옵션 객체를 저장해 두고 매 프레임 다시 읽습니다. 슬롯은 이 객체의 `width`(조각을 바꿀 때)와 `offsetY`(그릴 때)를 바꿔 크기와 위치를 맞춥니다. overlay는 자기 폭만큼 아래 내용을 덮으므로 폭은 텍스트 폭과 같아야 합니다.
+- **footer가 없을 때**: 다른 확장이 footer를 교체하면 Pi footer를 찾지 못하므로 슬롯을 숨깁니다(재탐색은 초당 한 번).
+- Pi의 내부 구조에 기대므로 Pi를 업데이트하면 `test/footer-slot.test.ts`로 확인하세요. pi-tui의 실제 overlay 합성기로 위치를 검증합니다.
+
 ## 구조
 
 화면과 입력 부품만 둡니다. 명령(`/cl-edit`, `/cl-log`)은 `calliopi-workflows`가 이 부품으로 만듭니다. `lib`은 `.mjs`를 쓰지 않습니다. Pi의 `/reload`가 Node ESM 캐시에 남아 있는 `.mjs`를 다시 읽지 않기 때문입니다.
@@ -47,6 +61,7 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 ```text
 extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /cl-headers
 lib/turn-headers.ts         헤더 줄, render 감싸기, Markdown 대체 경로
+lib/ui-override/footer-slot.ts  footer 첫 줄 오른쪽 슬롯 (overlay)
 lib/thinking-frame.ts       thinking 테두리 컴포넌트, updateContent 감싸기
 lib/table.ts                키/값 표                                  export ./table
 lib/overlay-session.ts      공용 overlay 수명·키 입력 점유·사전 확인   export ./overlay-session
