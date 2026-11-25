@@ -1,0 +1,37 @@
+# 사용자 프롬프트와 모델 답변이 번갈아 오가는 기본 데모.
+# 답변은 faux 모델이 그대로 흘려보내고, 도구 호출(read)은 실제로 실행됩니다.
+title: 대화 시나리오
+project: retry-demo
+terminal:
+  width: 1200
+  height: 720
+tokensPerSecond: 80
+
+setup: |
+  git init -q
+  mkdir -p src
+  cat > src/auth.ts <<'EOF'
+  export async function login(token: string) {
+    const res = await fetch('/api/login', { headers: { authorization: token } });
+    if (!res.ok) throw new Error('login failed');
+    return res.json();
+  }
+  EOF
+  git add -A && git commit -qm "Add login"
+
+turns:
+  - prompt: 로그인 실패하면 재시도하게 해줄 수 있어?
+    reply:
+      - thinking: 먼저 src/auth.ts의 현재 구현을 확인한다.
+      - tool: read
+        args: { path: src/auth.ts }
+      - text: |
+          `login()`은 실패하면 바로 예외를 던지고 있네요.
+          최대 3번까지, 지수 backoff로 재시도하도록 바꾸면 됩니다. 진행할까요?
+
+  - prompt: 응, 진행해줘. 대신 401은 재시도하지 마.
+    reply:
+      - text: |
+          좋습니다. 401은 인증 문제라 재시도해도 결과가 같으니 바로 실패시키고,
+          그 외 5xx와 네트워크 오류만 재시도하도록 하겠습니다.
+    pause: 3s
