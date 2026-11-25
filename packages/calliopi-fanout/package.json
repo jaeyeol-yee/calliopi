@@ -24,6 +24,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@calliopi/core": "*",
     "@calliopi/ui": "*"
   },
   "devDependencies": {

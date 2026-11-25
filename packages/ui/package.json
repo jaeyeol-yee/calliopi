@@ -15,7 +15,6 @@
     "./overlay-session": "./lib/overlay-session.ts",
     "./terminal-overlay": "./lib/terminal-overlay.ts",
     "./terminal-input": "./lib/terminal-input.ts",
-    "./pane": "./lib/pane.ts",
     "./package.json": "./package.json"
   },
   "pi": {

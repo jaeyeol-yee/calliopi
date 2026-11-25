@@ -8,13 +8,13 @@
 
 같은 프로젝트(같은 `CURSOR_FANOUT_DIR`)의 별도 **대화형 Pi 세션**에서 `/cl-fanout attach`를 실행하면 그 세션이 팬아웃을 전담합니다. 메인 세션에서 `/cl-fanout <목표>` 또는 `calliopi_fanout_launch`로 전달한 작업은 로컬 mailbox에 저장되고, 담당 세션이 idle일 때 받아 계획·승인을 진행합니다. 승인 우회나 터미널 키 입력 주입은 하지 않습니다.
 
-- `/cl-fanout show`: 같은 Rex 세션의 담당 pane을 현재 pane 오른쪽으로 이동하고, 담당이 idle이면 현황 창을 엽니다. 다른 Rex 세션을 가로질러 pane을 이동하지 않습니다.
+- `/cl-fanout show`: 같은 멀티플렉서 세션(Rex·herdr·tmux)의 담당 pane을 현재 pane 오른쪽으로 이동하고, 담당이 idle이면 현황 창을 엽니다. 다른 세션이나 다른 멀티플렉서를 가로질러 pane을 이동하지 않습니다.
 - fullscreen 화면 우측 상단에 비포커스 floating box를 표시합니다. 기본(`auto`)으로는 `진행`(실행·준비 중, 승인 대기, 확인 필요)이나 `검토`에 작업이 있을 때만 나타나고, 둘 다 비어 보관만 남으면 숨습니다. 하단 status/widget은 표시하지 않습니다. `진행 / 검토 / 보관`을 클릭해 전환하고, 최대 5행의 목록 안에서 휠로 스크롤합니다. 행을 클릭하면 그 작업의 상세 창을 엽니다.
 - `/cl-fanout focus`: floating 목록에 키보드 포커스를 줍니다. `auto`로 숨어 있어도 이때는 표시하고, Esc로 나가면 다시 숨습니다. ←→ 분류, ↑↓·PgUp/PgDn 선택, Enter 상세, Esc 편집창 복귀. 기본 단축키는 등록하지 않습니다(`Ctrl+Shift+F`는 Pi 대화 검색 키입니다).
 - `/cl-fanout inbox`: 기본 현황 overlay(24시간이 지난 보관 항목 제외). ↑↓로 작업 선택, Enter로 상세 결과, Esc로 돌아가기/닫기. 상세의 메타데이터는 행 구분선이 있는 2열 표로 표시합니다. 본문은 Markdown 원문의 `##`, `**`, 코드 펜스를 그대로 유지하고 구문 색상만 적용합니다. 목록과 상세 영역 오른쪽의 별도 세로 칸에 ANSI 강조색 `▲`/`▼`를 두며 더 스크롤할 수 있는 방향만 표시합니다. 이모지나 Nerd Font는 사용하지 않습니다. 에이전트·저장소·브랜치·PR은 OSC 8 하이퍼링크로 열 수 있습니다. Run ID는 공식 웹 URL이 없으므로 텍스트로 유지합니다. `m`으로 메타데이터 표를 접고 본문에 집중할 수 있습니다. 상세를 열 때 해당 PR을 재검증합니다. `u`로 재검증, PR 없는 완료 작업은 `a`로 명시적으로 확인/보관하며, 병합됨·취소됨 항목도 `a`로 보관 시각을 기록합니다. 새 run에는 이전 확인 표시를 적용하지 않습니다.
 - `/cl-fanout widget auto|on|off`: floating box 표시 방식입니다. `auto`(기본)는 진행·검토 중인 작업이 있을 때만, `on`은 보관 항목까지 포함해 작업이 하나라도 있으면 항상, `off`는 표시하지 않습니다. 세션마다 `auto`로 시작합니다. 폭 48칸 미만 또는 높이 18줄 미만에서는 자동 숨김이며 `/cl-fanout inbox`로 접근할 수 있습니다.
 - 현황에서 `d`: 선택한 에이전트의 GitHub 기본 브랜치 대비 원격 diff를 표시합니다. 읽기 전용 분석 등 push된 브랜치가 없는 작업은 diff가 없다는 안내가 나옵니다. ↑↓, 마우스 휠(fullscreen), PgUp/PgDn, Home/End로 스크롤합니다.
-- 현황에서 `r`: 같은 diff를 `delta`로 별도 Rex pane에 엽니다(설치 필요). pager 키로 리뷰하고 `q`로 종료합니다. 저장소 checkout·수정 없이 `.cursor-fanout/reviews`에 읽기용 diff를 저장합니다. `lazygit` 브랜치 checkout 리뷰는 아직 지원하지 않습니다.
+- 현황에서 `r`: 같은 diff를 `delta`로 옆 멀티플렉서 pane(Rex·herdr·tmux)에 엽니다(설치 필요). pager 키로 리뷰하고 `q`로 종료합니다. 저장소 checkout·수정 없이 `.cursor-fanout/reviews`에 읽기용 diff를 저장합니다. `lazygit` 브랜치 checkout 리뷰는 아직 지원하지 않습니다.
 - `/cl-fanout diff`: 로컬 HEAD 대비 staged/unstaged/미추적 파일 리뷰. 출력 제한을 넘으면 생략 안내를 표시합니다. 클라우드 작업 리뷰는 현황에서 `d`/`r`을 사용하세요.
 - regular 모드에서는 floating box를 표시하지 않습니다. `/cl-fanout inbox` 명령을 사용하세요.
 - 담당이 지정되면 다른 세션에는 짧은 현황과 완료 알림만 표시하고, 전체 보고서는 담당 세션에만 전달합니다. `/cl-fanout report`로 명시적으로 가져올 수 있습니다.
@@ -101,7 +101,7 @@ calliopi 루트 manifest에 `./packages/calliopi-fanout/extensions`가 등록되
 | 명령 | **`/cl-fanout <목표>`** | 모델이 목표를 서로 독립적인 작업으로 나눠 `calliopi_fanout_launch`를 호출합니다. 계획 지침은 숨겨진 컨텍스트로 들어가므로 대화창에는 입력한 한 줄만 보입니다. 사용자가 파일을 만들 필요는 없습니다 |
 | 승인 | 계획 **표** + `Launch N / Edit plan / Cancel` | 표에는 배치·에이전트 수·경로·레포·과금 안내와 `# / label / task`가 표시됩니다(한글은 표시 폭 기준으로 자릅니다). Edit plan을 누르면 작업 목록 JSON을 편집기에서 고친 뒤 표를 다시 보여 줍니다. 승인한 계획은 기록용으로 `<state>/specs/<batch>.json`에 저장됩니다 |
 | 명령 | `/cl-fanout launch <spec.json>` | 파일로 넘기는 호환 경로입니다. 같은 표 승인을 거칩니다. CLI에서는 `launch --spec -`로 stdin도 받습니다 |
-| 명령 | `/cl-fanout status` · `report` · `tree <label>` · `add <bc-id>` · `followup`/`steer <label> <text>` · `cancel <label>` · `up`(rex pane) · `widget auto/on/off` · `stop` | |
+| 명령 | `/cl-fanout status` · `report` · `tree <label>` · `add <bc-id>` · `followup`/`steer <label> <text>` · `cancel <label>` · `up`(Rex 전용 pane 배치) · `widget auto/on/off` · `stop` | |
 | PR | `/cl-fanout pr <label>` · `merge <label>` · `fix <label> <요청>` | 아래 "PR 리뷰와 머지" 참조 |
 | 도구 | `calliopi_fanout_launch`, `calliopi_fanout_status`, `calliopi_fanout_report`, `calliopi_fanout_diff`, `calliopi_fanout_followup` | 모델이 호출합니다. 생성과 후속 지시는 UI 승인이 필요하고, 비대화형 모드에서는 거부합니다 |
 | 화면 | 우측 상단 비포커스 floating 목록 · 메타데이터 표/Markdown 상세 · 완료 알림 | 렌더·스크롤은 레지스트리만 읽습니다. GitHub 자동/상세 갱신은 공유 예산을 사용하는 별도 경로입니다 |

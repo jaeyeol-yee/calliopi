@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { detectMultiplexer, openSidePane } from '@calliopi/ui/pane';
+import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec } from '@calliopi/core/multiplexer';
 import { preflight, openOverlaySession } from '@calliopi/ui/overlay-session';
 import { listFiles, pickable } from '#lib/file-edit.ts';
 import { repositoryRoot } from '#lib/git-log.ts';
@@ -40,10 +40,12 @@ export default function (pi: ExtensionAPI) {
   pi.on('session_shutdown', () => { shuttingDown = true; closeOverlay?.(); forget(); }); // an open pane can no longer share; it says so
 
   pi.registerCommand('cl-preview', {
-    description: 'fzf로 파일을 찾아 옆 pane에 띄웁니다. 다시 실행하면 같은 pane에서 파일을 바꿉니다. 스크롤·찾기, 변경 자동 반영, b 브랜치와 갈라진 뒤 diff, s 대화로 전달. 인자는 검색어, --changed[=브랜치](-c)는 부모 브랜치(가장 가까운 로컬 브랜치)에서 갈라진 뒤 바뀐 파일만. Rex 안에서 사용합니다.',
+    description: 'fzf로 파일을 찾아 옆 pane에 띄웁니다. 다시 실행하면 같은 pane에서 파일을 바꿉니다. 스크롤·찾기, 변경 자동 반영, b 브랜치와 갈라진 뒤 diff, s 대화로 전달. 인자는 검색어, --changed[=브랜치](-c)는 부모 브랜치(가장 가까운 로컬 브랜치)에서 갈라진 뒤 바뀐 파일만. Rex·herdr·tmux 안에서 사용합니다.',
     handler: async (args, ctx) => {
       if (picking) return ctx.ui.notify('이미 파일을 고르는 중입니다.', 'warning');
-      if (!detectMultiplexer()) return ctx.ui.notify('미리보기: 터미널 멀티플렉서(Rex) 안에서 실행해주세요. Pi 화면은 나눌 수 없어 옆 pane에 띄웁니다.', 'warning');
+      const exec: Exec = (command, a, options) => pi.exec(command, a, options);
+      const mux = await detectMultiplexer({ exec });
+      if (!mux) return ctx.ui.notify(`미리보기: 터미널 멀티플렉서(${MULTIPLEXER_NAMES}) 안에서 실행해주세요. Pi 화면은 나눌 수 없어 옆 pane에 띄웁니다.`, 'warning');
       const words = args.trim().split(/\s+/).filter(Boolean);
       const flag = /^(?:--changed|-c)(?:=(.+))?$/.exec(words[0] ?? '');
       const changedOnly = flag !== null;
@@ -99,7 +101,7 @@ export default function (pi: ExtensionAPI) {
       const configPath = path.join(dir, 'config.json');
       fs.writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
       try {
-        await openSidePane((command, a, options) => pi.exec(command, a, options), { command: [process.execPath, paneScript, configPath], cwd: ctx.cwd, label: 'cl-preview', ratio: 45 });
+        await mux.openSide(exec, { command: [process.execPath, paneScript, configPath], cwd: ctx.cwd, label: 'cl-preview', ratio: 45 });
       } catch (error) {
         fs.rmSync(dir, { recursive: true, force: true });
         return ctx.ui.notify(`미리보기: ${error instanceof Error ? error.message : String(error)}`, 'error');

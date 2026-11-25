@@ -10,6 +10,7 @@ Calliopi의 가장 아래 계층입니다. 다른 패키지를 참조하지 않�
 | `@calliopi/core/capture` | 출력을 받는 실행기 `Capture`, 기본 구현 `capture(timeoutMs)` (시간 제한, 프롬프트 금지) |
 | `@calliopi/core/pr-lookup` | 현재 브랜치가 속한 PR 조회 `lookupPulls` |
 | `@calliopi/core/usage` | 구독 사용량 strategy(`claude`, `codex`, `cursor`), `fetchUsage`, `defaultEnv` |
+| `@calliopi/core/multiplexer` | 터미널 멀티플렉서 strategy(`rex`, `herdr`, `tmux`), `detectMultiplexer`, `openSidePane` |
 
 ## PR 조회
 
@@ -44,6 +45,22 @@ const picked = await runWorkflow(step, { run, directory, setFooter, cancelled })
 ```
 
 사용 예: `calliopi-workflows`의 `lib/editor-flow.ts`(파일 → Vim), `lib/git-log.ts`의 `browseLog`(커밋 → 파일 → pager).
+
+## 터미널 멀티플렉서
+
+Pi는 자기 화면을 나눌 수 없어서(overlay는 대화 기록을 가립니다) 옆에 띄우는 화면은 멀티플렉서 pane에 엽니다. 멀티플렉서마다 strategy 하나가 `openSide`(오른쪽에 새 pane)와 `moveBeside`(있는 pane을 오른쪽으로)를 구현합니다.
+
+- **판정**: 지금 Pi가 들어 있는 멀티플렉서, 즉 **조상 프로세스 중 가장 가까운** `rex`·`herdr`·`tmux`를 씁니다(`ps -A -o pid=,ppid=,comm=` 한 번). 멀티플렉서는 중첩되고(tmux 안의 herdr, Rex 안의 tmux) 환경 변수를 물려주므로 환경 변수만으로는 고를 수 없습니다. pane id는 그 멀티플렉서의 환경 변수에서 읽습니다.
+- `ps`가 실패하거나 아무것도 찾지 못하면 환경 변수로 Rex → herdr → tmux 순서입니다. `CALLIOPI_MULTIPLEXER=rex|herdr|tmux`로 강제할 수 있습니다.
+
+| | 이 pane | 새 pane | 프로그램 종료 후 유지(`keepOpen`) |
+|---|---|---|---|
+| Rex | `REX_SESSION`, `REX_BLOCK` | `rex split --split=right -- 명령…` | `--keep-open` |
+| herdr | `HERDR_PANE_ID`, `HERDR_SOCKET_PATH` | `herdr pane split` 뒤 `pane run`으로 실행 스크립트 한 줄 | 사용자 셸이 남음 |
+| tmux (3.1+) | `TMUX`, `TMUX_PANE` | `tmux split-window -h -l N% -- 명령…` | 종료 후 Enter를 기다리는 `sh`로 감쌈 |
+
+- herdr의 split은 명령을 받지 않고 사용자 셸을 띄웁니다. `pane run`은 그 셸에 한 줄을 입력하므로, 프로그램과 인자는 POSIX quoting한 임시 스크립트(실행되면 스스로 지움)에 쓰고 셸에는 ` exec sh '<스크립트>'`만 보냅니다. zsh·fish 등 셸 문법과 무관하고, 앞의 공백으로 셸 history에 남지 않습니다. herdr의 `--ratio`는 나뉘는 쪽 pane이 차지하는 비율이라 `1 − 비율`을 넘깁니다.
+- tmux의 `remain-on-exit`은 split 뒤에 설정하면 빨리 끝나는 프로그램과 경합하므로 쓰지 않습니다.
 
 ## 구독 사용량
 

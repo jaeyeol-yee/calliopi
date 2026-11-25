@@ -18,6 +18,7 @@
     "./capture": "./lib/capture.ts",
     "./pr-lookup": "./lib/pr-lookup.ts",
     "./usage": "./lib/usage/index.ts",
+    "./multiplexer": "./lib/multiplexer/index.ts",
     "./package.json": "./package.json"
   },
   "pi": {

@@ -2,6 +2,7 @@
 import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import fs from "node:fs";
 import path from "node:path";
+import { detectMultiplexer } from "@calliopi/core/multiplexer";
 import { owner, attach, detach, enqueue } from "#lib/sidecar.ts";
 import { update as updateRegistry } from "#lib/registry.ts";
 import { newBatch, PLAN_INSTRUCTIONS } from "#lib/plan.ts";
@@ -33,7 +34,7 @@ export function registerCommand(rt: Runtime) {
 				switch (sub) {
 					case "attach": {
 						if (ctx.mode !== "tui") return say("attach requires an interactive Pi session", "warning");
-						if (!rt.registration) rt.registration = attach(sideDir(ctx), { sessionId: ctx.sessionManager.getSessionId(), rexSession: process.env.REX_SESSION, block: process.env.REX_BLOCK });
+						if (!rt.registration) rt.registration = attach(sideDir(ctx), { sessionId: ctx.sessionManager.getSessionId(), pane: (await detectMultiplexer({ exec: pi.exec }))?.self });
 						pi.appendEntry("cloud-fanout-owner", { enabled: true, sessionId: ctx.sessionManager.getSessionId(), token: rt.registration.token });
 						refresh(rt, ctx); return say("이 세션이 팬아웃을 전담합니다. 다른 세션에서 /cl-fanout <목표>로 전달하세요.");
 					}
@@ -59,12 +60,12 @@ export function registerCommand(rt: Runtime) {
 					}
 					case "diff": return inspect(rt, ctx, true);
 					case "show": {
-						const target = owner(sideDir(ctx));
-						if (!target?.block || target.rexSession !== process.env.REX_SESSION) return say("같은 Rex 세션의 담당 pane이 없습니다. 담당 세션에서 /cl-fanout attach 하세요.", "warning");
-						if (target.block === process.env.REX_BLOCK) return inspect(rt, ctx);
-						const r = await pi.exec("rex", ["move", "-s", target.rexSession as string, target.block, "right", process.env.REX_BLOCK!, "--ratio", "45"], { timeout: 10_000 });
-						if (r.code === 0) enqueue(sideDir(ctx), { action: "inspect" });
-						return say(r.code === 0 ? "오른쪽 현황에서 작업 선택 → d diff / r 외부 리뷰 (담당 세션이 idle일 때 열립니다)." : r.stderr, r.code === 0 ? "info" : "error");
+						const target = owner(sideDir(ctx))?.pane, mux = await detectMultiplexer({ exec: pi.exec });
+						if (!mux || target?.multiplexer !== mux.id || target.session !== mux.self.session) return say(`같은 ${mux?.name ?? "멀티플렉서"} 세션에 담당 pane이 없습니다. 담당 세션에서 /cl-fanout attach 하세요.`, "warning");
+						if (target.pane === mux.self.pane) return inspect(rt, ctx);
+						await mux.moveBeside(pi.exec, target.pane, 45); // throws: reported by the handler's catch
+						enqueue(sideDir(ctx), { action: "inspect" });
+						return say("오른쪽 현황에서 작업 선택 → d diff / r 외부 리뷰 (담당 세션이 idle일 때 열립니다).");
 					}
 					case "launch": {
 						const file = rest[0] ? path.resolve(ctx.cwd, rest[0]) : "";
@@ -122,7 +123,7 @@ export function registerCommand(rt: Runtime) {
 						const r = await T(["cancel", rest[0], "--yes"]); return say(r.out || r.err, r.ok ? "info" : "error");
 					}
 					case "up": {
-						if (!process.env.REX_SESSION) return say("not inside a rex terminal (REX_SESSION unset)", "warning");
+						if ((await detectMultiplexer({ exec: pi.exec }))?.id !== "rex") return say("up은 Rex 전용입니다 (Rex pane 배치와 Lua 액션). Rex 터미널에서 실행하세요.", "warning");
 						const r = await pi.exec(FANOUT_SH, ["up"], { cwd: ctx.cwd, timeout: 60_000 });
 						return say(r.code === 0 ? "rex panes up" : r.stderr || r.stdout, r.code === 0 ? "info" : "error");
 					}
