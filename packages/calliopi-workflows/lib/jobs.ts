@@ -44,9 +44,16 @@ export function jobsRoot(base = os.tmpdir()): string {
   return root;
 }
 
-export interface RunArgs { command: string; silent: boolean; name?: string }
+export interface RunArgs {
+  /** The command line; with `infer`, what the user wants in their own words instead. */
+  command: string;
+  silent: boolean;
+  name?: string;
+  /** `? <words>`: a model writes the command and the user confirms it (lib/job-infer.ts). */
+  infer: boolean;
+}
 
-/** `[-s|--silent] [-n <name>|--name=<name>] <command>`: flags only before the command, which is kept verbatim. */
+/** `[-s|--silent] [-n <name>|--name=<name>] <command>` or `… ? <words>`: flags only before the command, which is kept verbatim. */
 export function parseRunArgs(args: string): RunArgs | { error: string } {
   let rest = args.trimStart(), silent = false, name: string | undefined;
   for (;;) {
@@ -55,10 +62,14 @@ export function parseRunArgs(args: string): RunArgs | { error: string } {
     if (m[1]) silent = true; else name = m[2];
     rest = rest.slice(m[0].length);
   }
-  if (rest.startsWith('-- ')) rest = rest.slice(3).trimStart();
+  // `--` ends the flags, so a command may itself start with ? (a glob) or -.
+  const literal = rest.startsWith('-- ');
+  if (literal) rest = rest.slice(3).trimStart();
+  const infer = !literal && /^\?(\s|$)/.test(rest);
+  if (infer) rest = rest.slice(1).trimStart();
   if (name !== undefined && !/^[\w.-]{1,40}$/.test(name)) return { error: '이름은 영문·숫자·._- 40자까지입니다.' };
-  if (!rest.trim()) return { error: '실행할 명령을 적어주세요. 예: /cl-run npm test' };
-  return { command: rest.trimEnd(), silent, name };
+  if (!rest.trim()) return { error: infer ? '무엇을 실행할지 적어주세요. 예: /cl-run ? 테스트 돌려줘' : '실행할 명령을 적어주세요. 예: /cl-run npm test' };
+  return { command: rest.trimEnd(), silent, name, infer };
 }
 
 /** A name from the command's first two words ("npm test" → npm-test), numbered when taken. */

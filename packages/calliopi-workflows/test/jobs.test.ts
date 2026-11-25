@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectMultiplexer, type Exec } from '@calliopi/core/multiplexer';
+import { inferCommand, inferContext, inferPrompt, parseInferred, INFER_SYSTEM } from '#lib/job-infer.ts';
 import { createJob, jobMessage, jobName, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, setJobPane, statusText, stopJob, tailLog, writeExit,
   KEEP_MS, LOG_FILE, PID_FILE, type Job, type JobMeta } from '#lib/jobs.ts';
 
@@ -19,10 +20,15 @@ function root(t: TestContext) {
 const meta = (name: string, over: Partial<JobMeta> = {}): JobMeta => ({ name, command: 'npm test', cwd: '/repo', startedAt: Date.now(), silent: false, pane: null, ...over });
 
 test('arguments: flags only before the command, which stays verbatim', () => {
-  assert.deepEqual(parseRunArgs('npm test'), { command: 'npm test', silent: false, name: undefined });
-  assert.deepEqual(parseRunArgs('  -s   npm  run   "a  b" -s '), { command: 'npm  run   "a  b" -s', silent: true, name: undefined });
-  assert.deepEqual(parseRunArgs('--name=api --silent docker logs -n 5 web'), { command: 'docker logs -n 5 web', silent: true, name: 'api' });
-  assert.deepEqual(parseRunArgs('-n t1 -- -s'), { command: '-s', silent: false, name: 't1' });
+  assert.deepEqual(parseRunArgs('npm test'), { command: 'npm test', silent: false, name: undefined, infer: false });
+  assert.deepEqual(parseRunArgs('  -s   npm  run   "a  b" -s '), { command: 'npm  run   "a  b" -s', silent: true, name: undefined, infer: false });
+  assert.deepEqual(parseRunArgs('--name=api --silent docker logs -n 5 web'), { command: 'docker logs -n 5 web', silent: true, name: 'api', infer: false });
+  assert.deepEqual(parseRunArgs('-n t1 -- -s'), { command: '-s', silent: false, name: 't1', infer: false });
+  // ? asks a model for the command; after -- it is an ordinary character
+  assert.deepEqual(parseRunArgs('-s ?  테스트 돌려줘'), { command: '테스트 돌려줘', silent: true, name: undefined, infer: true });
+  assert.deepEqual(parseRunArgs('-- ? a'), { command: '? a', silent: false, name: undefined, infer: false });
+  assert.deepEqual(parseRunArgs('?.sh'), { command: '?.sh', silent: false, name: undefined, infer: false });
+  assert.ok('error' in parseRunArgs('?'));
   assert.ok('error' in parseRunArgs('  '));
   assert.ok('error' in parseRunArgs('-s'));
   assert.ok('error' in parseRunArgs('--name=a/b ls'));
@@ -76,6 +82,41 @@ test('message for the model: state, command and the end of the output', t => {
   assert.match(message, /<output last-lines="40">\nline 61\n[\s\S]*line 100\n<\/output>\nEarlier output is in /);
   assert.deepEqual(tailLog(a, 2), { text: 'line 99\nline 100', truncated: true });
   assert.equal(tailLog(a, 5, 40).text, 'line 99\nline 100'); // a byte limit drops the line it cut
+});
+
+test('inference: the project is described, the reply is cleaned, and nothing runs unconfirmed', async t => {
+  const dir = root(t);
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'node --test', build: 'tsc -p .', bad: 1 } }));
+  fs.writeFileSync(path.join(dir, 'pnpm-lock.yaml'), '');
+  fs.writeFileSync(path.join(dir, 'Makefile'), 'CC := gcc\nall: build\n\tgo build\n.PHONY: all\nlint:\n');
+  fs.mkdirSync(path.join(dir, 'src')); fs.mkdirSync(path.join(dir, 'node_modules'));
+  const context = inferContext(dir, ['pnpm test', 'pnpm test', 'pnpm build']);
+  assert.deepEqual([context.scripts, context.packageManager, context.makeTargets, context.files, context.recent],
+    [['test: node --test', 'build: tsc -p .'], 'pnpm', ['all', 'lint'], ['Makefile', 'package.json', 'pnpm-lock.yaml', 'src/'], ['pnpm test', 'pnpm build']]);
+  const prompt = inferPrompt('테스트 돌려줘', context);
+  assert.match(prompt, /Package manager \(from the lockfile\): pnpm/);
+  assert.match(prompt, /<package-scripts>\ntest: node --test\nbuild: tsc -p \.\n<\/package-scripts>[\s\S]*<wanted>\n테스트 돌려줘\n<\/wanted>$/);
+  assert.doesNotMatch(inferPrompt('x', inferContext(path.join(dir, 'src'))), /package-scripts|make-targets|earlier-commands/);
+
+  assert.deepEqual(parseInferred('```bash\npnpm test\n```'), { command: 'pnpm test' });
+  assert.deepEqual(parseInferred('`pnpm test`\n'), { command: 'pnpm test' });
+  assert.deepEqual(parseInferred('$ make lint && make all'), { command: 'make lint && make all' });
+  assert.deepEqual(parseInferred('# cannot: which container?'), { error: 'which container?' });
+  assert.ok('error' in parseInferred('  '));
+
+  const seen: string[] = [];
+  const deps = (reply: string, answer: string | undefined) => ({
+    complete: async (system: string, user: string) => { assert.equal(system, INFER_SYSTEM); assert.equal(user, prompt); return reply; },
+    confirm: async (_title: string, command: string) => { seen.push(command); return answer; },
+  });
+  assert.deepEqual(await inferCommand('테스트 돌려줘', context, deps('pnpm test', 'pnpm test\n')), { command: 'pnpm test', edited: false });
+  assert.deepEqual(await inferCommand('테스트 돌려줘', context, deps('pnpm test', 'pnpm test -- --watch')), { command: 'pnpm test -- --watch', edited: true });
+  assert.deepEqual(await inferCommand('테스트 돌려줘', context, deps('pnpm test', undefined)), { cancelled: true });
+  assert.deepEqual(await inferCommand('테스트 돌려줘', context, deps('pnpm test', '  ')), { cancelled: true });
+  assert.deepEqual(seen, ['pnpm test', 'pnpm test', 'pnpm test', 'pnpm test']);
+  // nothing to confirm: the user is not asked
+  assert.deepEqual(await inferCommand('테스트 돌려줘', context, deps('# cannot: no tests here', 'x')), { error: 'no tests here' });
+  assert.equal(seen.length, 4);
 });
 
 // A real tmux server on a private socket: the tmux strategy and bin/job-runner.ts, end to end.

@@ -7,6 +7,7 @@ import { cleanDisplay, nodePreview } from '@calliopi/core/fzf';
 import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec, type Multiplexer } from '@calliopi/core/multiplexer';
 import { runWorkflow } from '@calliopi/core/workflow';
 import { preflight, openOverlaySession } from '@calliopi/ui/overlay-session';
+import { inferCommand, inferContext } from '#lib/job-infer.ts';
 import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, setJobPane, statusText, stopJob, JOB_LIST, type Job } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
@@ -18,6 +19,7 @@ const SHARE = '출력 끝부분을 대화에 전달', SCREEN = '지금 화면을
 // until the command ends. The pane opens beside Pi without taking focus; -s (--silent) runs it in a
 // background window instead (tmux). Pi is told when it ends: a notice, and the exit code with the
 // end of the output for the next turn.
+// /cl-run ? <words>: the current model writes the command; it runs only after the user confirms it.
 // /cl-jobs: every job with its state; pick one to pass its output on, go to its pane, stop or forget it.
 export default function (pi: ExtensionAPI) {
   const watched = new Set<string>(); // job directories started here and still running
@@ -46,7 +48,7 @@ export default function (pi: ExtensionAPI) {
   pi.on('session_shutdown', () => { shuttingDown = true; closeOverlay?.(); clearInterval(poll); poll = undefined; }); // the jobs themselves keep running
 
   pi.registerCommand('cl-run', {
-    description: '명령을 옆 pane에서 실행하고 바로 돌아옵니다(! 와 달리 Pi를 붙잡지 않습니다). 끝나면 알리고 종료 코드와 출력 끝부분을 다음 대화에 전달합니다. -s(--silent): 백그라운드 창에서 실행(tmux). -n <이름>: 작업 이름. /cl-jobs로 조회합니다.',
+    description: '명령을 옆 pane에서 실행하고 바로 돌아옵니다(! 와 달리 Pi를 붙잡지 않습니다). 끝나면 알리고 종료 코드와 출력 끝부분을 다음 대화에 전달합니다. -s(--silent): 백그라운드 창에서 실행(tmux). -n <이름>: 작업 이름. ? <하고 싶은 일>: 모델이 명령을 추론하고 확인을 받은 뒤 실행. /cl-jobs로 조회합니다.',
     handler: async (args, ctx) => {
       if (ctx.mode !== 'tui') return ctx.ui.notify('명령 실행: Pi 대화형 TUI에서만 사용할 수 있습니다.', 'warning');
       const parsed = parseRunArgs(args);
@@ -58,6 +60,26 @@ export default function (pi: ExtensionAPI) {
       const root = jobsRoot();
       pruneJobs(root);
       const jobs = listJobs(root);
+      if (parsed.infer) {
+        const model = ctx.model;
+        if (!model || !ctx.modelRegistry.hasConfiguredAuth(model)) return ctx.ui.notify('명령 실행: 명령을 추론할 모델이 없습니다. 모델을 고르거나 명령을 직접 적어주세요.', 'warning');
+        ctx.ui.notify(`명령 추론 중: ${parsed.command}`, 'info');
+        try {
+          const result = await inferCommand(parsed.command, inferContext(ctx.cwd, jobs.filter(j => j.cwd === ctx.cwd).map(j => j.command)), {
+            complete: async (systemPrompt, text) => {
+              const reply = await ctx.modelRegistry.complete(model, { systemPrompt, messages: [{ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() }] });
+              if (reply.stopReason === 'error' || reply.stopReason === 'aborted') throw new Error(reply.errorMessage || '모델 요청이 실패했습니다.');
+              return reply.content.flatMap(c => c.type === 'text' ? c.text : []).join('');
+            },
+            confirm: (title, command) => ctx.ui.editor(title, command),
+          });
+          if ('cancelled' in result) return ctx.ui.notify('명령 실행: 취소했습니다.', 'info');
+          if ('error' in result) return ctx.ui.notify(`명령 추론: ${result.error}`, 'warning');
+          parsed.command = result.command;
+        } catch (error) {
+          return ctx.ui.notify(`명령 추론: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      }
       const same = parsed.name ? jobs.find(j => j.name === parsed.name) : undefined;
       if (same?.state === 'running') return ctx.ui.notify(`명령 실행: ${same.name}이(가) 아직 실행 중입니다. 다른 이름을 쓰거나 /cl-jobs에서 중지하세요.`, 'warning');
       if (same) fs.rmSync(same.dir, { recursive: true, force: true }); // a named job run again replaces its last run

@@ -80,10 +80,13 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 /cl-run npm test                 옆 pane에서 실행 (포커스는 Pi에 남음)
 /cl-run -s npm run build         백그라운드 창에서 실행 (--silent, tmux)
 /cl-run -n api docker logs -f api   작업 이름 지정 (--name=api)
+/cl-run ? 테스트 돌려줘          모델이 명령을 추론 → 확인(수정 가능) → 실행
 /cl-jobs                         작업 목록 → 전달·이동·중지·삭제
 ```
 
 - 옵션은 명령 앞에만 둡니다. 그 뒤는 적은 그대로 `$SHELL -c`로 실행합니다. 명령이 `-`로 시작하면 `--`로 구분합니다.
+- `?` 뒤에 하고 싶은 일을 적으면 지금 선택된 모델이 명령 한 줄을 추론합니다(대화 턴을 쓰지 않는 별도 요청). 근거로 작업 디렉터리의 파일 목록, `package.json` 스크립트와 lockfile로 본 패키지 매니저, Makefile 타깃, 같은 디렉터리에서 `/cl-run`으로 실행했던 명령을 보냅니다. 파일 내용은 보내지 않습니다.
+- **직접 적은 명령은 확인 없이 실행하고, 모델이 쓴 명령은 반드시 편집 창에서 확인을 받습니다.** Enter로 제출한 내용(고쳤든 아니든)이 실행되고 Esc면 실행하지 않습니다. 모델이 명령을 정하지 못하면 이유를 알리고 끝냅니다. 명령 자체가 `?`로 시작하면 `--` 뒤에 적습니다.
 - 이름을 생략하면 명령의 첫 두 단어로 짓고(`npm test` → `npm-test`), 겹치면 번호를 붙입니다. 이름을 지정해 다시 실행하면 끝난 이전 기록을 대체합니다.
 - 명령은 자체 pseudo-terminal에서 돌아 색·진행 표시·프롬프트가 그대로이고, pane에서 직접 입력하거나 `Ctrl+C`로 끊을 수 있습니다.
 - 끝나면 알림을 띄우고 종료 코드와 출력 마지막 40줄을 다음 대화에 전달합니다. 모델을 깨우지는 않습니다.
@@ -109,6 +112,7 @@ lib/editor-flow.ts          워크플로우: 파일 → Vim, 스냅샷으로 변
 lib/file-edit.ts            파일 목록·경로 검사·스냅샷·diff
 lib/git-log.ts              커밋·파일 목록, 단계별 워크플로우, 분할 화면(전용 구현)
 lib/jobs.ts                 작업 디렉터리·상태·로그 정리·모델에 줄 메시지
+lib/job-infer.ts            `?` 추론: 프로젝트 요약, 프롬프트, 응답 정리, 확인 단계
 bin/job-runner.ts           pane 안에서 명령을 PTY로 실행, 로그와 종료 코드 기록
 bin/job-preview.ts          /cl-jobs 미리보기
 bin/file-preview.ts         bat preview / plain-text fallback (번호로 후보 조회)
