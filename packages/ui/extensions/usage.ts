@@ -24,6 +24,7 @@ export function loadProviders(): ProviderId[] {
 type Theme = ExtensionContext['ui']['theme'];
 const gaugePaint = (theme: Theme): GaugePaint => ({
   title: (s) => theme.bold(s),
+  border: (s) => theme.fg('borderMuted', s),
   dim: (s) => theme.fg('dim', s),
   error: (s) => theme.fg('error', s),
   fill: (s, level) => theme.fg(level === 'high' ? 'error' : level === 'warn' ? 'warning' : 'success', s),

@@ -1,11 +1,12 @@
 // Usage gauges: one bar per metric, grouped by provider, with an even-pace mark and the time to reset.
 //
-//   Claude  Max 20x                                              Pi 로그인
-//     주간        ██░░░░░░░░░░░░░│░░░░░░░░░░░░    4%  ↻ 4일 18시간 · 11/30 11:00
-//   Codex  Plus                                         ~/.codex/auth.json
-//     5시간       ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│░░░░░░░░    0%  ↻ 4시간 59분
-//   Cursor
-//     추가 사용   ███████░░░░░░░░░░░░░░░░░░░░░░░    $1.20 / $5.00  ↻ 6일 23시간
+//   ╭─ Claude · Max 20x ────────────────────────────────────── Pi 로그인 ─╮
+//   │ 주간         █░░░░░░░░░░│░░░░░░░░░░░░      4%  ↻ 4일 17시간 · 11/30 11:00 │
+//   │ 주간 Fable   ░░░░░░░░░░░│░░░░░░░░░░░░      0%  ↻ 4일 17시간 · 11/30 11:00 │
+//   ╰────────────────────────────────────────────────────────────────────╯
+//   ╭─ Cursor · Ultra (통합) ───────────────────────────────── Cursor 앱 ─╮
+//   │ └ Grok Bot   ░│░░░░░░░░░░░░░░░ $7.02 / $553.95  ↻ 6일 21시간 · 12/2 15:18 │
+//   ╰────────────────────────────────────────────────────────────────────╯
 //
 // The pace mark (│) is where usage would be if spread evenly over the window: a fill past it means
 // the window is being used faster than it refills.
@@ -16,6 +17,7 @@ export type Level = 'ok' | 'warn' | 'high';
 
 export interface GaugePaint {
   title(s: string): string;
+  border(s: string): string;
   dim(s: string): string;
   error(s: string): string;
   fill(s: string, level: Level): string;
@@ -23,7 +25,7 @@ export interface GaugePaint {
   pace(s: string): string;
 }
 
-export const PLAIN_GAUGE: GaugePaint = { title: (s) => s, dim: (s) => s, error: (s) => s, fill: (s) => s, empty: (s) => s, pace: (s) => s };
+export const PLAIN_GAUGE: GaugePaint = { title: (s) => s, border: (s) => s, dim: (s) => s, error: (s) => s, fill: (s) => s, empty: (s) => s, pace: (s) => s };
 
 const FILL = '█';
 const EMPTY = '░';
@@ -81,8 +83,18 @@ export function bar(fraction: number, width: number, pace: number | undefined, p
 const pad = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - visibleWidth(s)));
 const padStart = (s: string, w: number) => ' '.repeat(Math.max(0, w - visibleWidth(s))) + s;
 
-/** Lines for every provider, each at most `width` cells. */
+/**
+ * Lines for every provider, each at most `width` cells. Each provider sits in its own box, with the
+ * name and plan in the top edge and the credential source on its right:
+ *
+ *   ╭─ Claude · Max 20x ──────────────────────────────── Pi 로그인 ─╮
+ *   │ 주간         █░░░░░░│░░░░░░░░░░   4%  ↻ 4일 17시간 · 11/30 11:00 │
+ *   ╰───────────────────────────────────────────────────────────────╯
+ *
+ * Columns line up across boxes.
+ */
 export function renderGauges(snapshots: readonly UsageSnapshot[], width: number, now: number, paint: GaugePaint = PLAIN_GAUGE): string[] {
+  const inner = Math.max(MIN_BAR + 10, width - 4); // "│ " + row + " │"
   const metrics = snapshots.flatMap((s) => s.metrics);
   const labelW = Math.max(6, ...metrics.map((m) => visibleWidth(m.label)));
   const valueW = Math.max(4, ...metrics.map((m) => visibleWidth(formatValue(m))));
@@ -90,34 +102,45 @@ export function renderGauges(snapshots: readonly UsageSnapshot[], width: number,
   // whole column, before the bar gets too short to read.
   const full = metrics.map((m) => (m.resetsAt ? `↻ ${formatRemaining(m.resetsAt - now)} · ${formatResetAt(m.resetsAt)}` : ''));
   const short = metrics.map((m) => (m.resetsAt ? `↻ ${formatRemaining(m.resetsAt - now)}` : ''));
-  const fixed = 2 + labelW + 1 + 1 + valueW;
+  const fixed = labelW + 1 + 1 + valueW;
   const fits = (texts: string[]) => {
     const w = Math.max(0, ...texts.map(visibleWidth));
-    return w > 0 && width - fixed - 2 - w >= MIN_BAR ? w : undefined;
+    return w > 0 && inner - fixed - 2 - w >= MIN_BAR ? w : undefined;
   };
   const fullW = fits(full);
   const shortW = fullW === undefined ? fits(short) : undefined;
   const resetMode: 'full' | 'short' | 'none' = fullW !== undefined ? 'full' : shortW !== undefined ? 'short' : 'none';
   const resetW = fullW ?? shortW ?? 0;
-  const barW = Math.max(MIN_BAR, width - fixed - (resetMode === 'none' ? 0 : 2 + resetW));
+  const barW = Math.max(MIN_BAR, inner - fixed - (resetMode === 'none' ? 0 : 2 + resetW));
   const resetText = (m: UsageMetric) => (!m.resetsAt || resetMode === 'none' ? ''
     : `↻ ${formatRemaining(m.resetsAt - now)}${resetMode === 'full' ? ` · ${formatResetAt(m.resetsAt)}` : ''}`);
 
+  const row = (text: string) => {
+    const fitted = truncateToWidth(text, inner);
+    return `${paint.border('│')} ${fitted}${' '.repeat(Math.max(0, inner - visibleWidth(fitted)))} ${paint.border('│')}`;
+  };
+  const top = (s: UsageSnapshot) => {
+    const title = ` ${paint.title(s.label)}${s.plan ? paint.dim(` · ${s.plan}`) : ''} `;
+    let source = s.source ? ` ${paint.dim(s.source)} ` : '';
+    // Edges: "╭─" + title + fill + source + "─╮"; the source goes when there is no room for it.
+    if (visibleWidth(title) + visibleWidth(source) + 4 > width) source = '';
+    const fill = Math.max(0, width - 4 - visibleWidth(title) - visibleWidth(source));
+    return truncateToWidth(paint.border('╭─') + title + paint.border('─'.repeat(fill)) + source + paint.border('─╮'), width);
+  };
+  const bottom = paint.border(`╰${'─'.repeat(Math.max(0, width - 2))}╯`);
+
   const lines: string[] = [];
   for (const s of snapshots) {
-    const head = `${paint.title(s.label)}${s.plan ? `  ${paint.dim(s.plan)}` : ''}`;
-    const source = s.source ? paint.dim(s.source) : '';
-    const gap = width - visibleWidth(head) - visibleWidth(source);
-    lines.push(truncateToWidth(source && gap >= 2 ? head + ' '.repeat(gap) + source : head, width));
-    if (s.error) lines.push(truncateToWidth(`  ${paint.error(`! ${s.error}`)}`, width));
-    else if (!s.metrics.length) lines.push(`  ${paint.dim('표시할 한도가 없습니다')}`);
+    lines.push(top(s));
+    if (s.error) lines.push(row(paint.error(`! ${s.error}`)));
+    else if (!s.metrics.length) lines.push(row(paint.dim('표시할 한도가 없습니다')));
     for (const m of s.metrics) {
       const reset = resetText(m);
       const fraction = m.limit ? m.used / m.limit : undefined;
       const gauge = fraction === undefined ? ' '.repeat(barW) : bar(fraction, barW, paceFraction(m, now), paint);
-      const line = `  ${pad(m.label, labelW)} ${gauge} ${padStart(formatValue(m), valueW)}${reset ? `  ${paint.dim(reset)}` : ''}`;
-      lines.push(truncateToWidth(line, width));
+      lines.push(row(`${pad(m.label, labelW)} ${gauge} ${padStart(formatValue(m), valueW)}${reset ? `  ${paint.dim(reset)}` : ''}`));
     }
+    lines.push(bottom);
   }
   return lines;
 }

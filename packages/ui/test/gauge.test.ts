@@ -35,29 +35,31 @@ const SNAPSHOTS: UsageSnapshot[] = [
   ] },
 ];
 
-test('renderGauges: provider headers, one row per metric, errors, aligned columns within the width', () => {
-  const lines = renderGauges(SNAPSHOTS, 72, NOW);
-  assert.equal(lines.length, 7);
-  for (const line of lines) assert.ok(visibleWidth(line) <= 72, line);
-  assert.match(lines[0]!, /^Claude  Max 20x +Pi 로그인$/);
+test('renderGauges: one box per provider, name and plan in the top edge, source on its right', () => {
+  const lines = renderGauges(SNAPSHOTS, 80, NOW);
+  for (const line of lines) assert.equal(visibleWidth(line), 80, line);
+  assert.match(lines[0]!, /^╭─ Claude · Max 20x ─+ Pi 로그인 ─╮$/);
   const moment = formatResetAt(NOW + 3.5 * 24 * H);
-  assert.ok(lines[1]!.endsWith(`40%  ↻ 3일 12시간 · ${moment}`), lines[1]);
-  assert.match(lines[1]!, /^ {2}주간 +█+░*│░+ +40%/, 'pace mark at half the week, past the 40% fill');
-  assert.equal(lines[3], '  ! Codex 로그인이 만료되었습니다.');
-  assert.equal(lines[4], 'Cursor');
-  assert.match(lines[5]!, /^ {2}추가 사용 +█+░+ +\$1\.20 \/ \$5\.00$/);
-  assert.match(lines[6]!, /^ {2}크레딧 +120 크레딧$/, 'no bar without a limit');
-  // Bars line up: every bar starts at the same display column (Korean labels are two cells wide).
+  assert.match(lines[1]!, /^│ 주간 +█+░*│░+ +40% {2}↻ 3일 12시간 · /, 'pace mark at half the week, past the 40% fill');
+  assert.ok(lines[1]!.includes(`↻ 3일 12시간 · ${moment}`), lines[1]);
+  assert.match(lines[2]!, /^╰─+╯$/);
+  assert.match(lines[3]!, /^╭─ Codex ─+╮$/, 'no plan, no source');
+  assert.match(lines[4]!, /^│ ! Codex 로그인이 만료되었습니다\. +│$/);
+  assert.match(lines[7]!, /^│ 추가 사용 +█+░+ +\$1\.20 \/ \$5\.00 +│$/);
+  assert.match(lines[8]!, /^│ 크레딧 +120 크레딧 +│$/, 'no bar without a limit');
+  assert.equal(lines.length, 10);
+  // Bars line up across boxes (Korean labels are two cells wide).
   const barColumn = (line: string) => visibleWidth(line.slice(0, line.indexOf('█')));
-  assert.equal(barColumn(lines[1]!), barColumn(lines[5]!));
+  assert.equal(barColumn(lines[1]!), barColumn(lines[7]!));
 });
 
 test('renderGauges drops the reset moment, then the countdown, before the bar gets too short', () => {
   const at = (width: number) => renderGauges(SNAPSHOTS.slice(0, 1), width, NOW)[1]!;
-  assert.match(at(72), /↻ 3일 12시간 · /);
-  assert.match(at(44), /↻ 3일 12시간$/);
-  assert.doesNotMatch(at(30), /↻/);
-  for (const w of [72, 44, 30]) assert.ok(visibleWidth(at(w)) <= w);
+  assert.match(at(76), /↻ 3일 12시간 · /);
+  assert.match(at(48), /↻ 3일 12시간 +│$/);
+  assert.doesNotMatch(at(34), /↻/);
+  for (const w of [76, 48, 34]) assert.equal(visibleWidth(at(w)), w);
+  assert.doesNotMatch(renderGauges(SNAPSHOTS.slice(0, 1), 30, NOW)[0]!, /Pi 로그인/, 'the source goes from a narrow top edge');
 });
 
 test('formatResetAt: local month/day and 24-hour time', () => {
