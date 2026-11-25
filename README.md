@@ -42,7 +42,7 @@ calliopi/
 
 `calliopi-workflows`의 `/cl-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/cl-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
 
-`ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙이고(`/cl-headers`), 현재 브랜치가 PR에 들어 있으면 footer에 `onto owner/repo#N open|merged…`를 표시합니다(`/cl-branch`). 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
+`ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙이고(`/cl-headers`), 현재 브랜치가 PR에 들어 있으면 footer에 `onto owner/repo#N open|merged…`를, 그 옆에 작업 트리의 충돌·스테이징·수정·추적 안 함 파일 수(`✖1 +2 ~3 ?1`)를 표시합니다(`/cl-branch`). 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
 
 `core/extensions`와 `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
 

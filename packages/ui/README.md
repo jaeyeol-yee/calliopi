@@ -67,8 +67,28 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 - **상태 색**: open `success`, draft `muted`, merged `accent`, closed `error`.
 - **갱신**: 시작할 때, `HEAD`·브랜치·push한 커밋이 바뀔 때(5초마다 로컬에서 확인), 에이전트 실행이 끝날 때, PR이 open·draft인 동안 `pollSeconds`(기본 60초)마다. merged·closed가 되면 주기 조회를 멈춥니다. 오프라인이거나 `gh`에 로그인하지 않았으면 마지막 값을 유지합니다.
 - **명령**: `/cl-branch`는 PR 전체 목록(링크 포함), `/cl-branch refresh`는 즉시 다시 조회, `/cl-branch on|off`는 footer 표시를 켜고 끕니다.
-- **설정**: `~/.pi/agent/calliopi-ui.json`의 `branchStatus`(`enabled`, `pollSeconds`). fullscreen TUI에서만 표시합니다(`tuiMode: regular`에서는 꺼짐).
+- **설정**: `~/.pi/agent/calliopi-ui.json`의 `branchStatus`(`enabled`, `pollSeconds`, `worktree`). fullscreen TUI에서만 표시합니다(`tuiMode: regular`에서는 꺼짐).
 - **요구 사항**: `git`, 로그인한 `gh`. GitHub(github.com) remote만 봅니다.
+
+### 작업 트리 개수
+
+PR 상태 오른쪽에 작업 트리의 변경 파일 수를 표시합니다. 에이전트가 고친 파일, 스테이징만 하고 커밋하지 않은 파일이 남아 있는지 바로 보입니다. 깨끗하면 아무것도 표시하지 않고, PR이 없는 브랜치에서도 표시합니다.
+
+```text
+~/calliopi (feat/x)                      onto them/calliopi#12 open  ✖1 +2 ~3 ?1
+```
+
+| 기호 | 뜻 | 색 |
+|---|---|---|
+| `✖N` | 충돌(unmerged) | `error` |
+| `+N` | 스테이징됨 | `success` |
+| `~N` | 수정됨, 스테이징 안 됨 | `warning` |
+| `?N` | 추적하지 않는 파일(`.gitignore` 제외) | `dim` |
+
+- 스테이징한 뒤 다시 고친 파일은 `+`와 `~`에 모두 셉니다(git 프롬프트와 같음).
+- **갱신**: 브랜치 확인과 같은 5초 주기, 그리고 에이전트 실행이 끝날 때 바로. 값이 바뀔 때만 다시 그립니다. 이전 확인이 끝나지 않았으면 그 주기는 건너뜁니다.
+- **조회**: `git --no-optional-locks status --porcelain=v2 -z`. index를 갱신하지 않으므로 에이전트의 git 명령과 `index.lock`을 다투지 않습니다. git 2.15 이상이 필요하고, 그보다 낮으면 표시하지 않습니다. 하위 모듈은 내부 수정(dirty)은 무시하고 커밋 변경만 셉니다.
+- **명령**: `/cl-branch`가 PR 목록 아래에 `작업 트리: 스테이징 2, 수정 3`을 덧붙입니다. `/cl-branch worktree on|off`로 표시를 켜고 끕니다(`branchStatus.worktree`, 기본 on). footer 표시(`/cl-branch on`)가 켜져 있을 때만 보입니다.
 
 ## 구조
 
@@ -76,8 +96,9 @@ edit config.json                           ← 도구 블록 (헤더 없음)
 
 ```text
 extensions/turn-headers.ts  대화 기록 헤더·thinking 테두리 설치/복구 · /cl-headers
-extensions/branch-status.ts footer의 PR 상태 표시·갱신 · /cl-branch
+extensions/branch-status.ts footer의 PR 상태·작업 트리 개수 표시·갱신 · /cl-branch
 lib/branch-status.ts        `onto owner/repo#N 상태` 표기, 조회 주기
+lib/worktree-status.ts      `git status` porcelain v2 개수 세기, `✖1 +2 ~3 ?1` 표기
 lib/turn-headers.ts         헤더 줄, render 감싸기, Markdown 대체 경로
 lib/ui-override/footer-slot.ts  footer 첫 줄 오른쪽 슬롯 (overlay)
 lib/thinking-frame.ts       thinking 테두리 컴포넌트, updateContent 감싸기
