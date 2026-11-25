@@ -65,6 +65,7 @@ export function parseRunArgs(args: string): RunArgs | { error: string } {
   // `--` ends the flags, so a command may itself start with ? (a glob) or -.
   const literal = rest.startsWith('-- ');
   if (literal) rest = rest.slice(3).trimStart();
+  if (!literal && /^\?{2,}(\s|$)/.test(rest)) return { error: '추론은 ? 하나만 씁니다. ??로 시작하는 명령을 그대로 실행하려면 -- 뒤에 적어주세요.' };
   const infer = !literal && /^\?(\s|$)/.test(rest);
   if (infer) rest = rest.slice(1).trimStart();
   if (name !== undefined && !/^[\w.-]{1,40}$/.test(name)) return { error: '이름은 영문·숫자·._- 40자까지입니다.' };

@@ -29,6 +29,10 @@ test('arguments: flags only before the command, which stays verbatim', () => {
   assert.deepEqual(parseRunArgs('-- ? a'), { command: '? a', silent: false, name: undefined, infer: false });
   assert.deepEqual(parseRunArgs('?.sh'), { command: '?.sh', silent: false, name: undefined, infer: false });
   assert.ok('error' in parseRunArgs('?'));
+  // ?? is a typo for ?, not a command to run as it stands
+  assert.ok('error' in parseRunArgs('?? 테스트'));
+  assert.ok('error' in parseRunArgs('-s ???'));
+  assert.deepEqual(parseRunArgs('-- ?? a'), { command: '?? a', silent: false, name: undefined, infer: false });
   assert.ok('error' in parseRunArgs('  '));
   assert.ok('error' in parseRunArgs('-s'));
   assert.ok('error' in parseRunArgs('--name=a/b ls'));
