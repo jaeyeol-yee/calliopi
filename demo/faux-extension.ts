@@ -36,19 +36,28 @@ export default function (pi: ExtensionAPI) {
     tokensPerSecond: scenario.tokensPerSecond,
   });
 
-  // Pick the reply by position in the transcript, not by queue order: the n-th user message gets the
-  // n-th reply, and each tool result inside that turn moves on to the reply's next call.
-  const respond = (context: { messages: { role: string }[] }) => {
+  // Pick the reply by position in the transcript, not by queue order: after n finished replies comes
+  // the n-th reply (from 0), and each tool call inside that turn moves on to the reply's next call.
+  const completions = scenario.completions.map((c) => ({ match: new RegExp(c.match), text: c.text }));
+  const textOf = (content: unknown) => typeof content === 'string' ? content
+    : Array.isArray(content) ? content.map((b: { text?: unknown }) => typeof b?.text === 'string' ? b.text : '').join('') : '';
+  const respond = (context: { messages: { role: string; content?: unknown; stopReason?: string }[] }) => {
     const messages = context.messages;
-    const lastUser = messages.findLastIndex((m) => m.role === 'user');
-    const turn = messages.filter((m) => m.role === 'user').length - 1;
-    const step = messages.slice(lastUser + 1).filter((m) => m.role === 'assistant').length;
+    // A one-off request from an extension: its text is what the patterns are written for.
+    const asked = textOf(messages.findLast((m) => m.role === 'user')?.content);
+    const oneOff = completions.find((c) => c.match.test(asked));
+    if (oneOff) return fauxAssistantMessage(oneOff.text);
+    // Count finished replies, not user messages: an extension may add messages of its own to a turn
+    // (/cl-run passes a finished job's output on), and those reach the model as user messages too.
+    const assistant = messages.filter((m) => m.role === 'assistant');
+    const turn = assistant.filter((m) => m.stopReason !== 'toolUse').length;
+    const step = assistant.length - 1 - assistant.findLastIndex((m) => m.stopReason !== 'toolUse');
     const call = script[turn]?.[step];
     if (!call) return fauxAssistantMessage(`(시나리오에 ${turn + 1}번째 답변이 없습니다)`);
     return fauxAssistantMessage(call.blocks, { stopReason: call.toolUse ? 'toolUse' : 'stop' });
   };
   const total = script.reduce((n, calls) => n + calls.length, 0);
-  faux.setResponses(Array.from({ length: total + 1 }, () => respond));
+  faux.setResponses(Array.from({ length: total + completions.length + 1 }, () => respond));
 
   pi.registerProvider(faux.provider);
 }

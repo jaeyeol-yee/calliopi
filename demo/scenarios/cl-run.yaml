@@ -1,0 +1,98 @@
+# /cl-run: `!` 대신 명령을 옆 pane에서 돌려 Pi를 붙잡지 않는다.
+# ? 로 명령을 추론(확인 후 실행) → 도는 동안 백그라운드 작업 추가 → /cl-jobs로 조회 → 끝난 결과가 다음 대화에 전달.
+title: /cl-run · /cl-jobs
+project: shop-api
+multiplexer: tmux
+terminal:
+  width: 1400
+  height: 760
+tokensPerSecond: 80
+
+# ? 추론은 대화 밖의 요청이라 turns가 아니라 여기서 답한다.
+completions:
+  - match: "<wanted>\\n테스트 돌려줘"
+    text: npm test
+
+setup: |
+  git init -q
+  mkdir -p scripts test
+  cat > package.json <<'JSON'
+  {
+    "name": "shop-api",
+    "scripts": {
+      "test": "sh scripts/test.sh",
+      "build": "sh scripts/build.sh"
+    }
+  }
+  JSON
+  cat > scripts/test.sh <<'SH'
+  ok()   { sleep 1.2; printf '\033[32m✔\033[0m %s\n' "$1"; }
+  fail() { sleep 1.2; printf '\033[31m✖\033[0m %s\n' "$1"; }
+  printf '\033[2m> node --test\033[0m\n'
+  ok   'cart: adds an item'
+  ok   'cart: removes an item'
+  ok   'cart: totals with tax'
+  ok   'coupon: applies a percentage'
+  fail 'coupon: rejects an expired code'
+  printf '    expected 410, got 200  (test/coupon.test.js:42)\n'
+  ok   'order: creates from a cart'
+  ok   'order: cancels before shipping'
+  ok   'order: refunds a cancelled order'
+  ok   'user: signs in'
+  ok   'user: signs out'
+  printf '\ntests 10 · pass 9 · \033[31mfail 1\033[0m\n'
+  exit 1
+  SH
+  cat > scripts/build.sh <<'SH'
+  for step in 'tsc -p .' 'bundle src/server.ts' 'copy assets'; do echo "$step"; sleep 2; done
+  echo 'built dist/ in 6.0s'
+  SH
+  git add -A && git commit -qm "Add shop-api"
+
+turns:
+  # 1. 하고 싶은 일만 적으면 모델이 명령을 쓰고, 편집 창에서 확인을 받는다.
+  - tape: |
+      Type "/cl-run ? 테스트 돌려줘"
+      Sleep 400ms
+      Enter
+    wait: 추론한 명령
+    pause: 2s
+
+  # 2. Enter로 승인 → 옆 pane에서 실행. 포커스는 Pi에 남는다.
+  - tape: Enter
+    wait: adds an item
+    pause: 1s
+
+  # 3. 테스트가 도는 동안 빌드를 백그라운드 창으로. 직접 적은 명령은 확인 없이 실행한다.
+  - tape: |
+      Type "/cl-run -s npm run build"
+      Sleep 400ms
+      Enter
+    wait: npm-run 시작
+    pause: 1500ms
+
+  # 4. 무엇이 돌고 있는지, 출력은 어디까지 나왔는지.
+  - tape: |
+      Type "/cl-jobs"
+      Sleep 400ms
+      Enter
+    wait: Job >
+    pause: 3s
+  - tape: |
+      Down
+      Sleep 2s
+      Escape
+    wait: 종료 1
+    pause: 1500ms
+
+  # 5. 끝난 작업의 종료 코드와 출력은 이미 대화에 들어와 있다.
+  - prompt: 테스트 왜 실패했어?
+    reply:
+      - text: |
+          `npm test`가 종료 코드 1로 끝났고, 10개 중 1개가 실패했습니다.
+
+          - **coupon: rejects an expired code** — 410을 기대했는데 200이 왔습니다 (`test/coupon.test.js:42`).
+
+          만료된 쿠폰을 거절하지 않고 그대로 적용하고 있습니다. 쿠폰 검증 코드를 볼까요?
+    wait: 볼까요   # Pi가 옆 pane만큼 좁아 줄이 바뀌므로 한 단어로 기다린다
+    pause: 4s

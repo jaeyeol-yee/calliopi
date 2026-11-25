@@ -26,6 +26,12 @@ test('loadScenario applies defaults and rejects malformed turns', () => {
   const s = loadScenario(write('a.yaml', 'turns:\n  - prompt: hi\n    reply:\n      - text: hello\n'));
   assert.equal(s.project, 'project');
   assert.deepEqual(s.terminal, { width: 1200, height: 700, fontSize: 16, fontFamily: undefined, theme: undefined });
+  assert.equal(s.multiplexer, undefined);
+  assert.deepEqual(s.completions, []);
+  assert.deepEqual(loadScenario(write('k.yaml', 'completions:\n  - match: "<wanted>"\n    text: npm test\nturns:\n  - tape: Enter\n')).completions, [{ match: '<wanted>', text: 'npm test' }]);
+  assert.throws(() => loadScenario(write('l.yaml', 'completions:\n  - match: "("\n    text: x\nturns:\n  - tape: Enter\n')));
+  assert.equal(loadScenario(write('m.yaml', 'multiplexer: tmux\nturns:\n  - tape: Enter\n')).multiplexer, 'tmux');
+  assert.throws(() => loadScenario(write('n.yaml', 'multiplexer: screen\nturns:\n  - tape: Enter\n')), /tmux만/);
   assert.throws(() => loadScenario(write('b.yaml', 'turns:\n  - prompt: hi\n')), /reply/);
   assert.throws(() => loadScenario(write('c.yaml', 'turns:\n  - nothing: 1\n')), /prompt 또는 tape/);
   assert.throws(() => loadScenario(write('d.yaml', 'turns:\n  - prompt: hi\n    reply:\n      - bogus: 1\n')), /text, thinking, tool/);

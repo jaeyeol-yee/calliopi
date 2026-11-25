@@ -72,14 +72,51 @@ Pi 안의 floating terminal에서 파일 하나를 선택하고 편집합니다.
 - pager는 이 명령 안에서만 고정합니다. 사용자의 `pager.diff` 설정을 바꾸지 않으며, diff가 짧아도 바로 닫히지 않고 `q`로 나갑니다.
 - 파일 경로는 문자 그대로 다룹니다(`GIT_LITERAL_PATHSPECS`). 항목은 번호로만 주고받아 공백·탭·줄바꿈이 있는 파일명도 안전하게 처리합니다.
 
+## /cl-run, /cl-jobs: 옆 pane에서 명령 실행
+
+![/cl-run과 /cl-jobs 데모](../../assets/scenarios/cl-run.gif)
+
+`!`로 실행한 명령은 끝날 때까지 Pi를 붙잡고, 무엇이 돌고 있는지 모아 볼 곳이 없습니다. `/cl-run`은 명령을 터미널 멀티플렉서 pane에서 실행하고 바로 돌아옵니다.
+
+```text
+/cl-run npm test                 옆 pane에서 실행 (포커스는 Pi에 남음)
+/cl-run -s npm run build         백그라운드 창에서 실행 (--silent, tmux)
+/cl-run -n api docker logs -f api   작업 이름 지정 (--name=api)
+/cl-run ? 테스트 돌려줘          모델이 명령을 추론 → 확인(수정 가능) → 실행
+/cl-jobs                         작업 목록 → 전달·이동·중지·삭제
+```
+
+- 옵션은 명령 앞에만 둡니다. 그 뒤는 적은 그대로 `$SHELL -c`로 실행합니다. 명령이 `-`로 시작하면 `--`로 구분합니다.
+- `?` 뒤에 하고 싶은 일을 적으면 지금 선택된 모델이 명령 한 줄을 추론합니다(대화 턴을 쓰지 않는 별도 요청). 근거로 작업 디렉터리의 파일 목록, `package.json` 스크립트와 lockfile로 본 패키지 매니저, Makefile 타깃, 같은 디렉터리에서 `/cl-run`으로 실행했던 명령을 보냅니다. 파일 내용은 보내지 않습니다.
+- **직접 적은 명령은 확인 없이 실행하고, 모델이 쓴 명령은 반드시 편집 창에서 확인을 받습니다.** Enter로 제출한 내용(고쳤든 아니든)이 실행되고 Esc면 실행하지 않습니다. 모델이 명령을 정하지 못하면 이유를 알리고 끝냅니다. `??`처럼 겹쳐 쓰면 실행하지 않고 알려줍니다. 명령 자체가 `?`로 시작하면 `--` 뒤에 적습니다.
+- 이름을 생략하면 명령의 첫 두 단어로 짓고(`npm test` → `npm-test`), 겹치면 번호를 붙입니다. 이름을 지정해 다시 실행하면 끝난 이전 기록을 대체합니다.
+- 명령은 자체 pseudo-terminal에서 돌아 색·진행 표시·프롬프트가 그대로이고, pane에서 직접 입력하거나 `Ctrl+C`로 끊을 수 있습니다.
+- 끝나면 알림을 띄우고 종료 코드와 출력 마지막 40줄을 다음 대화에 전달합니다. 모델을 깨우지는 않습니다.
+- 옆 pane은 끝난 뒤에도 남아 있고 Enter로 닫습니다. 백그라운드 창은 끝나면 스스로 닫힙니다. pane을 직접 닫으면 명령도 끝납니다.
+- `/cl-jobs`는 이름·상태(실행 중, 종료 코드, 경과 시간)·명령을 fzf로 보여주고 오른쪽에 출력 끝부분을 미리 보여줍니다. 고른 뒤 출력 전달, 지금 화면 전달, pane으로 이동, 중지(실행 중) 또는 기록 삭제(끝난 작업)를 선택합니다.
+- 작업은 `$TMPDIR/calliopi-jobs-<uid>/<이름>/`(0700)에 `meta.json`·`log`·`pid`·`exit`로 남습니다. Pi를 종료해도 작업은 계속 돌고, 다른 Pi 세션의 `/cl-jobs`에도 보입니다. 다만 완료 알림은 그 작업을 시작한 Pi 세션에만 옵니다. 끝난 지 24시간이 지난 기록은 다음 `/cl-run` 때 지웁니다.
+- `log`는 터미널 출력 원본입니다. 대화에 전달할 때는 escape sequence를 지우고 `\r`로 덮어쓴 줄은 마지막 내용만 남깁니다. `vim`처럼 화면 전체를 그리는 프로그램은 로그로 읽을 수 없으니 "지금 화면 전달"을 쓰세요.
+
+| | Rex | herdr | tmux |
+|---|---|---|---|
+| `/cl-run` (옆 pane) | 미확인 | 미확인 | 확인 |
+| `/cl-run -s`, 화면 전달, pane으로 이동 | 없음 | 없음 | 확인 (3.4) |
+
+Rex·herdr의 옆 pane 실행은 `/cl-preview`와 같은 어댑터 연산을 쓰지만 이 명령으로 실행해 보지는 않았습니다.
+
 ## 구조
 
 ```text
 extensions/file-picker.ts   /cl-edit · 다음 턴 메시지
 extensions/git-log.ts       /cl-log
+extensions/run.ts           /cl-run · /cl-jobs · 완료 알림과 다음 턴 메시지
 lib/editor-flow.ts          워크플로우: 파일 → Vim, 스냅샷으로 변경 비교
 lib/file-edit.ts            파일 목록·경로 검사·스냅샷·diff
 lib/git-log.ts              커밋·파일 목록, 단계별 워크플로우, 분할 화면(전용 구현)
+lib/jobs.ts                 작업 디렉터리·상태·로그 정리·모델에 줄 메시지
+lib/job-infer.ts            `?` 추론: 프로젝트 요약, 프롬프트, 응답 정리, 확인 단계
+bin/job-runner.ts           pane 안에서 명령을 PTY로 실행, 로그와 종료 코드 기록
+bin/job-preview.ts          /cl-jobs 미리보기
 bin/file-preview.ts         bat preview / plain-text fallback (번호로 후보 조회)
 bin/git-preview.ts          커밋/파일 미리보기
 scripts/smoke.ts            설치된 Pi로 두 명령을 끝까지 실행하는 smoke test

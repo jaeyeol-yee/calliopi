@@ -78,6 +78,19 @@ test('tmux: split-window runs the argv itself; -d keeps focus; keepOpen waits fo
   assert.deepEqual(calls.at(-1), ['tmux', ['join-pane', '-h', '-d', '-l', '45%', '-s', '%7', '-t', '%3']]);
 });
 
+test('tmux: a background window opens after this one without taking focus; focus and capture address the pane', async () => {
+  const { exec, calls } = fake(null, { 'tmux new-window': '%12\n', 'tmux capture-pane': 'tick 3\n' });
+  const mux = (await detectMultiplexer({ exec, env: TMUX }))!;
+  assert.deepEqual(await mux.openBackground!(exec, { command: ['node', 'a b.ts'], cwd: '/repo', label: 'job' }), { paneId: '%12' });
+  assert.deepEqual(calls[0], ['tmux', ['new-window', '-d', '-a', '-n', 'job', '-c', '/repo', '-P', '-F', '#{pane_id}', '--', 'node', 'a b.ts']]);
+  await mux.focus!(exec, '%12');
+  assert.deepEqual(calls.slice(1), [['tmux', ['select-window', '-t', '%12']], ['tmux', ['select-pane', '-t', '%12']]]);
+  assert.equal(await mux.capture!(exec, '%12'), 'tick 3\n');
+  // Rex and herdr: side panes only, for now
+  assert.equal((await detectMultiplexer({ exec, env: REX }))!.openBackground, undefined);
+  assert.equal((await detectMultiplexer({ exec, env: HERDR }))!.openBackground, undefined);
+});
+
 test('herdr: split, then type one line that runs a self-deleting launcher; ratio is the share kept', async () => {
   const pane = (id: string, tab = 'w1:t1') => JSON.stringify({ result: { pane: { pane_id: id, tab_id: tab } } });
   const { exec, calls } = fake(null, { 'herdr pane split': pane('w1:p2'), 'herdr pane get': pane('w1:p1', 'w1:t3') });
