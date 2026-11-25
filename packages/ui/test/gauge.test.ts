@@ -20,7 +20,10 @@ test('levels, pace, remaining time and values', () => {
   assert.equal(paceFraction({ resetsAt: NOW + H }, NOW), undefined);
   assert.deepEqual([formatRemaining(30_000), formatRemaining(12 * 60_000), formatRemaining(4 * H + 59 * 60_000), formatRemaining(4 * 24 * H + 18 * H)],
     ['곧', '12분', '4시간 59분', '4일 18시간']);
-  assert.equal(formatValue({ label: '', used: 3.6, limit: 100, unit: 'percent' }), '4%');
+  assert.equal(formatValue({ label: '', used: 3.64, limit: 100, unit: 'percent' }), '3.6%');
+  assert.equal(formatValue({ label: '', used: 42.4, limit: 100, unit: 'percent' }), '42%');
+  assert.equal(formatValue({ label: '', used: 0, limit: 100, unit: 'percent' }), '0%');
+  assert.equal(formatValue({ label: '', used: 2, limit: 100, unit: 'percent' }), '2%');
   assert.equal(formatValue({ label: '', used: 1.2, limit: 5, unit: 'usd' }), '$1.20 / $5.00');
   assert.equal(formatValue({ label: '', used: 120, unit: 'credits' }), '120 크레딧');
 });

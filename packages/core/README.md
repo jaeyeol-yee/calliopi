@@ -53,7 +53,7 @@ provider마다 `UsageStrategy`(`fetch(env) → UsageSnapshot`)를 하나씩 둡�
 |---|---|---|
 | Claude | Pi의 Anthropic OAuth 로그인 → `~/.claude/.credentials.json` → macOS Keychain `Claude Code-credentials` | `api/oauth/usage`: 5시간·주간, **모델별 주간 한도(Fable 등, 비활성도 표시)**, 추가 사용 / `api/oauth/profile`: 요금제 |
 | Codex | `$CODEX_HOME/auth.json` (ChatGPT 로그인) | `wham/usage`: 5시간·주간 창, 추가 모델 한도, 크레딧, 요금제 |
-| Cursor | Cursor 앱 `state.vscdb`의 `cursorAuth/accessToken` (`sqlite3 -readonly`) | `usage-status`: 주간 포함 예산과 **제품별 내역(Grok Bot, Cursor)**, 월 추가 사용 / `GetSandUsageStatus`: 통합 요금제가 아닐 때 Grok Bot 한도 / `GetPlanInfo`: 요금제 / 실패 시 `GetCurrentPeriodUsage` |
+| Cursor | Cursor 앱 `state.vscdb`의 `cursorAuth/accessToken` (`sqlite3 -readonly`) | OpenUsage와 같은 행을 퍼센트로: **전체**(`totalPercentUsed`, 결제 주기 리셋). 통합 요금제(Cursor·X·Grok)면 주간 풀 대비 **제품별(Grok Bot, Cursor)** 퍼센트(OpenUsage에는 없는 추가 행), 월 추가 사용, 크레딧 잔액. 별도 요금제면 Cursor 모델·기타 모델, **Grok Bot**(`GetSandUsageStatus`), 결제 주기의 추가 사용 |
 
 - **읽기만 합니다.** 다른 도구의 토큰을 갱신하지 않습니다(갱신하면 그 도구의 로그인이 무효가 될 수 있음). 만료되면 그 도구를 한 번 실행하라고 안내합니다. Pi 로그인은 Pi가 직접 갱신합니다.
 - 모든 지표에 리셋 시각(`resetsAt`)과 창 길이(`periodMs`)가 있으면 담습니다.

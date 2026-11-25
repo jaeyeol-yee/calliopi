@@ -61,9 +61,15 @@ export function formatResetAt(at: number): string {
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
+/** Percent with one decimal below 10, so small usage still moves: "0%", "1.7%", "42%". */
+export function formatPercent(used: number): string {
+  if (used <= 0) return '0%';
+  return used < 10 ? `${Number(used.toFixed(1))}%` : `${Math.round(used)}%`;
+}
+
 /** The value column: "4%", "$1.20 / $5.00", "120 크레딧". */
 export function formatValue(m: UsageMetric): string {
-  if (m.unit === 'percent') return `${Math.round(m.used)}%`;
+  if (m.unit === 'percent') return formatPercent(m.used);
   if (m.unit === 'usd') return m.limit ? `${money(m.used)} / ${money(m.limit)}` : money(m.used);
   return m.limit ? `${m.used} / ${m.limit} 크레딧` : `${m.used} 크레딧`;
 }

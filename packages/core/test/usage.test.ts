@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { Capture } from '#lib/capture.ts';
 import { claudeCredential, claudePlan, mapClaudeUsage } from '#lib/usage/claude.ts';
 import { codexCredential, mapCodexUsage, windowLabel } from '#lib/usage/codex.ts';
-import { cursor, cursorCredential, cursorPlan, cursorStatePath, mapCursorUsage, mapGrokBot, mapUsageStatus, productLabel, sessionCookie } from '#lib/usage/cursor.ts';
+import { cursor, cursorCredential, cursorPlan, cursorStatePath, mapCursor, mapGrokBot, mapProducts, productLabel, sessionCookie } from '#lib/usage/cursor.ts';
 import { defaultEnv, fetchUsage, type UsageEnv } from '#lib/usage/index.ts';
 import { toEpochMs } from '#lib/usage/shared.ts';
 
@@ -86,25 +86,6 @@ test('Codex: windows named by length, extra model limits, credits; credential an
   assert.throws(() => codexCredential(env({ files: { '/h/.codex/auth.json': '{"OPENAI_API_KEY":"sk"}' } }).env), /API 키/);
 });
 
-test('Cursor: plan share over the billing cycle and on-demand spend; credential from the state database', async () => {
-  const body = {
-    billingCycleStart: '1795587538465', billingCycleEnd: '1796192338465',
-    planUsage: { totalPercentUsed: 1.57, autoPercentUsed: 1.57 },
-    spendLimitUsage: { individualLimit: 500, individualRemaining: 380 },
-  };
-  const metrics = mapCursorUsage(body);
-  assert.deepEqual(metrics.map((m) => [m.label, m.used, m.limit, m.unit]), [['플랜', 1.57, 100, 'percent'], ['추가 사용', 1.2, 5, 'usd']]);
-  assert.equal(metrics[0]!.periodMs, 1796192338465 - 1795587538465);
-  assert.equal(mapCursorUsage({ planUsage: { limit: 2000, remaining: 500 } })[0]!.used, 75, 'percent from spend when not given');
-
-  const db = cursorStatePath({ home: '/h', platform: 'darwin', env: {} });
-  const query = `sqlite3 -readonly ${db} SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'`;
-  const ok = jwt({ exp: NOW / 1000 + 3600 });
-  assert.equal((await cursorCredential(env({ platform: 'darwin', files: { [db]: '' }, commands: { [query]: `${ok}\n` } }).env)).token, ok);
-  await assert.rejects(cursorCredential(env({ platform: 'darwin' }).env), /찾지 못했습니다/);
-  assert.equal(cursorStatePath({ home: '/h', platform: 'linux', env: {} }), '/h/.config/Cursor/User/globalStorage/state.vscdb');
-});
-
 test('fetchUsage: each provider reports its own error; headers carry the credential', async () => {
   const { env: e, requests } = env({
     pi: { anthropic: 'sk-ant-oat-pi' },
@@ -132,54 +113,81 @@ test('toEpochMs reads ISO strings, epoch seconds and epoch milliseconds', () => 
   assert.equal(toEpochMs(null), undefined);
 });
 
+const CYCLE = { billingCycleStart: '1795587538465', billingCycleEnd: '1796192338465' };
 const USAGE_STATUS = {
+  availability: 'available',
   monthlyUsage: { usedCents: 43, limitCents: 500, periodStart: '2026-11-01T00:00:00.000Z', resetsAt: '2026-12-01T00:00:00.000Z' },
   weeklyIncludedUsage: { usedCents: 928, budgetCents: 55395, periodStart: '2026-11-25T06:18:58.465Z', resetsAt: '2026-12-02T06:18:58.465Z' },
   weeklyIncludedUsageByProduct: [{ product: 'grok-bot', cents: 693 }, { product: 'cursor', cents: 239 }],
 };
+const rows = (metrics: { label: string; used: number; limit?: number; unit: string }[]) =>
+  metrics.map((m) => [m.label, Math.round(m.used * 100) / 100, m.limit, m.unit]);
 
-test('Cursor usage-status: weekly budget, its share per product (Grok Bot, Cursor), monthly additional usage, with resets', () => {
-  const metrics = mapUsageStatus(USAGE_STATUS);
-  assert.deepEqual(metrics.map((m) => [m.label, m.used, m.limit]), [
-    ['주간 포함', 9.28, 553.95], ['└ Grok Bot', 6.93, 553.95], ['└ Cursor', 2.39, 553.95], ['월 추가 사용', 0.43, 5],
+test('Cursor unified plan: total in percent, each product share of the pool, monthly additional usage, credits', () => {
+  const usage = { ...CYCLE, planUsage: { autoPercentUsed: 1.68, totalPercentUsed: 1.68 }, spendLimitUsage: { individualLimit: 500, individualRemaining: 500 } };
+  const metrics = mapCursor({ usage, status: USAGE_STATUS, planInfo: { isMerged: true }, sand: { isUnified: true, usagePercent: 1.68 }, credits: { usdRemainingCents: '0' } });
+  assert.deepEqual(rows(metrics), [
+    ['전체', 1.68, 100, 'percent'], ['└ Grok Bot', 1.25, 100, 'percent'], ['└ Cursor', 0.43, 100, 'percent'],
+    ['추가 사용', 0.43, 5, 'usd'], ['크레딧 잔액', 0, undefined, 'usd'],
   ]);
-  assert.equal(metrics[1]!.resetsAt, Date.parse('2026-12-02T06:18:58.465Z'));
-  assert.equal(metrics[1]!.periodMs, 7 * 24 * 3_600_000);
-  assert.equal(metrics[3]!.resetsAt, Date.parse('2026-12-01T00:00:00.000Z'));
-  assert.deepEqual(mapUsageStatus({ weeklyIncludedUsage: { budgetCents: 0 } }), []);
-  assert.equal(productLabel('grok-bot'), 'Grok Bot');
+  assert.equal(metrics[0]!.resetsAt, 1796192338465, 'the total resets with the billing cycle');
+  assert.equal(metrics[1]!.resetsAt, Date.parse('2026-12-02T06:18:58.465Z'), 'products reset with the weekly pool');
+  assert.equal(metrics[3]!.resetsAt, Date.parse('2026-12-01T00:00:00.000Z'), 'additional usage resets monthly');
+  assert.equal(mapCursor({ usage, planInfo: { isMerged: true } }).length, 1, 'without usage-status: only the total');
+  assert.equal(mapCursor({ usage, planInfo: { isMerged: true }, status: { ...USAGE_STATUS, monthlyUsage: { ...USAGE_STATUS.monthlyUsage, additionalUsageOff: true } } })
+    .some((m) => m.label === '추가 사용'), false);
 });
 
-test('Cursor Grok Bot: its own allowance unless unified, pooled or zero; plan name', () => {
+test('Cursor separate plan: total, Cursor/other model pools, Grok Bot allowance, spend limit over the cycle', () => {
+  const usage = { ...CYCLE, planUsage: { totalPercentUsed: 40, autoPercentUsed: 30, apiPercentUsed: 10 }, spendLimitUsage: { individualLimit: 2000, individualRemaining: 1500 } };
   const sand = { usagePercent: 12.5, currentPeriodStart: '2026-11-25T06:18:58.465Z', nextResetTimestampUtc: '2026-12-02T06:18:58.465Z', hasNonZeroIncludedLimit: true };
-  assert.deepEqual(mapGrokBot(sand), { label: 'Grok Bot', used: 12.5, limit: 100, unit: 'percent', resetsAt: Date.parse('2026-12-02T06:18:58.465Z'), periodMs: 7 * 24 * 3_600_000 });
-  assert.equal(mapGrokBot({ ...sand, isUnified: true }), undefined, 'unified: shown per product instead');
+  assert.deepEqual(rows(mapCursor({ usage, sand, planInfo: { isMerged: false } })), [
+    ['전체', 40, 100, 'percent'], ['Cursor 모델', 30, 100, 'percent'], ['기타 모델', 10, 100, 'percent'],
+    ['Grok Bot', 12.5, 100, 'percent'], ['추가 사용', 5, 20, 'usd'],
+  ]);
   assert.equal(mapGrokBot({ ...sand, hasNonZeroIncludedLimit: false }), undefined);
-  assert.equal(cursorPlan({ planInfo: { planName: 'Ultra' }, isMerged: true }), 'Ultra (통합)');
-  assert.equal(cursorPlan({ planInfo: { planName: 'Pro' } }), 'Pro');
+  assert.equal(mapCursor({ usage: { planUsage: { limit: 2000, remaining: 500 } } })[0]!.used, 75, 'percent from spend when not given');
+  assert.deepEqual(rows(mapCursor({ usage: { planUsage: { totalPercentUsed: 1 }, spendLimitUsage: { individualUsed: 300 } } })).at(-1), ['추가 사용', 3, undefined, 'usd'], 'spend without a limit');
+  assert.throws(() => mapCursor({ usage: { enabled: false, planUsage: {} } }), /구독이 없습니다/);
+});
+
+test('Cursor plan name, product labels, session cookie', () => {
+  assert.equal(cursorPlan({ planInfo: { planInfo: { planName: 'ultra' }, isMerged: true } }), 'Ultra (통합)');
+  assert.equal(cursorPlan({ planInfo: { planInfo: { planName: 'Pro' } } }), 'Pro');
+  assert.equal(cursorPlan({}), undefined);
+  assert.equal(productLabel('grok-bot'), 'Grok Bot');
+  assert.deepEqual(mapProducts({ weeklyIncludedUsage: { budgetCents: 0 } }), []);
   assert.equal(sessionCookie(jwt({ sub: 'github|user_1' })), `WorkosCursorSessionToken=user_1%3A%3A${jwt({ sub: 'github|user_1' })}`);
 });
 
-test('Cursor fetch: usage-status when it answers, plan share when it does not; Grok Bot added when separate', async () => {
+test('Cursor credential from the state database', async () => {
+  const db = cursorStatePath({ home: '/h', platform: 'darwin', env: {} });
+  const query = `sqlite3 -readonly ${db} SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'`;
+  const ok = jwt({ exp: NOW / 1000 + 3600 });
+  assert.equal((await cursorCredential(env({ platform: 'darwin', files: { [db]: '' }, commands: { [query]: `${ok}\n` } }).env)).token, ok);
+  await assert.rejects(cursorCredential(env({ platform: 'darwin' }).env), /찾지 못했습니다/);
+  assert.equal(cursorStatePath({ home: '/h', platform: 'linux', env: {} }), '/h/.config/Cursor/User/globalStorage/state.vscdb');
+});
+
+
+test('Cursor fetch: every read in parallel; optional ones may fail', async () => {
   const token = jwt({ exp: NOW / 1000 + 3600, sub: 'github|user_1' });
   const db = cursorStatePath({ home: '/h', platform: 'darwin', env: {} });
   const commands = { [`sqlite3 -readonly ${db} SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'`]: token };
   const api = 'https://api2.cursor.sh/aiserver.v1.DashboardService';
   const http: Record<string, [number, unknown]> = {
-    [`${api}/GetCurrentPeriodUsage`]: [200, { planUsage: { totalPercentUsed: 2 } }],
+    [`${api}/GetCurrentPeriodUsage`]: [200, { ...CYCLE, planUsage: { totalPercentUsed: 1.68 } }],
     'https://cursor.com/api/dashboard/v2/usage-status?scope=user': [200, USAGE_STATUS],
-    [`${api}/GetSandUsageStatus`]: [200, { usagePercent: 5, hasNonZeroIncludedLimit: true }],
-    [`${api}/GetPlanInfo`]: [200, { planInfo: { planName: 'Pro' } }],
+    [`${api}/GetSandUsageStatus`]: [200, { isUnified: true }],
+    [`${api}/GetPlanInfo`]: [200, { planInfo: { planName: 'Ultra' }, isMerged: true }],
+    [`${api}/GetComplatCreditBalance`]: [200, { usdRemainingCents: '1250' }],
   };
   const full = env({ platform: 'darwin', files: { [db]: '' }, commands, http });
   const snap = await cursor.fetch(full.env);
-  assert.equal(snap.plan, 'Pro');
-  assert.deepEqual(snap.metrics.map((m) => m.label), ['주간 포함', '└ Grok Bot', '└ Cursor', '월 추가 사용', 'Grok Bot']);
-  const cookieRequest = full.requests.find((r) => r.url.startsWith('https://cursor.com'));
-  assert.match(cookieRequest!.headers.Cookie!, /^WorkosCursorSessionToken=user_1%3A%3A/);
+  assert.equal(snap.plan, 'Ultra (통합)');
+  assert.deepEqual(snap.metrics.map((m) => m.label), ['전체', '└ Grok Bot', '└ Cursor', '추가 사용', '크레딧 잔액']);
+  assert.match(full.requests.find((r) => r.url.startsWith('https://cursor.com'))!.headers.Cookie!, /^WorkosCursorSessionToken=user_1%3A%3A/);
 
-  delete http['https://cursor.com/api/dashboard/v2/usage-status?scope=user'];
-  delete http[`${api}/GetSandUsageStatus`];
-  const fallback = await cursor.fetch(env({ platform: 'darwin', files: { [db]: '' }, commands, http }).env);
-  assert.deepEqual(fallback.metrics.map((m) => [m.label, m.used]), [['플랜', 2]]);
+  for (const url of Object.keys(http)) if (!url.endsWith('GetCurrentPeriodUsage')) delete http[url];
+  assert.deepEqual((await cursor.fetch(env({ platform: 'darwin', files: { [db]: '' }, commands, http }).env)).metrics.map((m) => [m.label, m.used]), [['전체', 1.68]]);
 });
