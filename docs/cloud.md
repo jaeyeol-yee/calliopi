@@ -7,7 +7,7 @@ Dockerfile로 바꿀 수는 없으므로([공식 문서](https://code.claude.com
 |---|---|---|
 | 파일 | [`scripts/cloud-setup.sh`](../scripts/cloud-setup.sh) | [`.claude/settings.json`](../.claude/settings.json) → [`scripts/cloud-install.sh`](../scripts/cloud-install.sh) |
 | 설정 위치 | claude.ai/code 환경 설정의 **Setup script** (붙여넣기 또는 Choose file) | 저장소에 커밋됨. 따로 할 일 없음 |
-| 하는 일 | 시스템 도구: fzf, less, 빌드 도구, Node ≥ 22.18 | `npm ci` (입력 파일이 바뀌었을 때만) |
+| 하는 일 | 시스템 도구: fzf, less, 빌드 도구, Node ≥ 22.18, 데모 녹화(VHS) | `npm ci` (입력 파일이 바뀌었을 때만) |
 | 실행 | Claude Code 시작 전, root, Ubuntu 24.04. 5분 안에 끝나면 **스냅샷으로 캐시** | 매 세션 시작·재개. 로컬에서는 아무것도 하지 않음(`CLAUDE_CODE_REMOTE`) |
 
 ## 1. 환경 만들기
@@ -38,6 +38,7 @@ claude.ai/code → 메시지 입력창 아래 환경 선택기 → 환경 추가
 | Node 헤더 | node-gyp가 기본으로 `nodejs.org`에서 받음 → 차단됨 | Node 설치에 포함 | hook이 `npm_config_nodedir`로 설치된 헤더를 가리킴 |
 | fzf, less | PTY 테스트(`editor-pty`, `git-log`, `preview-*`) | 없음 | apt 설치 |
 | git, ripgrep, vim | 같은 테스트 | 있음 | — |
+| VHS, ttyd, ffmpeg, fd, CJK 폰트 | `npm run demo` 녹화 | 없음 | apt 설치, VHS는 버전을 고정해 GitHub release `.deb`로 설치 (`api.github.com`은 차단, release 다운로드는 허용). `DEMO_FONT_FAMILY`는 `/etc/profile.d/calliopi-demo.sh` |
 | `gh` 로그인, API 키 | 불필요 | — | 테스트는 가짜 실행기와 faux 모델 사용 |
 
 `npm ci`는 루트와 workspace의 의존성(Pi 1.5.2, `@cursor/sdk`, `node-pty`, `@xterm/headless`, TypeScript 등 144개)을
@@ -51,7 +52,7 @@ lock 그대로 설치하고, `node-pty` 빌드와 `@calliopi/ui`의 `postinstall
 | 시스템 도구 추가 | `scripts/cloud-setup.sh` 수정 → 환경의 Setup script에 다시 붙여넣기 → 캐시 재생성 |
 | 약 7일 경과 | 캐시 만료, setup script 재실행 |
 | idle 후 복원된 세션 | setup script는 다시 돌지 않음. 바로 적용하려면 새 세션 |
-| 데모 GIF | 클라우드 대신 GitHub Actions `demo` workflow 수동 실행. 클라우드에서 녹화하려면 setup script의 주석 처리된 VHS 블록 사용 (5분 캐시 한도 주의) |
+| 데모 GIF | 클라우드 세션에서 `npm run demo -- <시나리오>`로 바로 녹화. 저장소 GIF를 갱신할 때는 GitHub Actions `demo` workflow 사용 |
 
 ## 5. 문제 해결
 
@@ -59,7 +60,7 @@ lock 그대로 설치하고, `node-pty` 빌드와 `@calliopi/ui`의 `postinstall
 |---|---|
 | `npm ci`가 `gyp ERR! ... nodejs.org ... ECONNREFUSED`로 실패 | 헤더를 찾지 못함. `ls "$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")"/include/node/node.h` 확인. 없으면 setup script 로그 확인, 또는 환경 허용 도메인에 `nodejs.org` 추가 |
 | `npm warn EBADENGINE ... required: { node: '>=22.18' }` | Node 교체 실패. setup script의 `cloud-setup: Node … is older than 22.18` 메시지 확인 |
-| 매 세션 setup script가 다시 돎 | 5분 초과로 캐시되지 않음. 선택 블록(VHS)을 끄거나 설치를 병렬화 |
+| 매 세션 setup script가 다시 돎 | 5분 초과로 캐시되지 않음. VHS 블록(CJK 폰트가 가장 큼)을 빼거나 설치를 병렬화 |
 | hook이 실행되지 않음 | 저장소 여러 개를 연 세션, project 스레드에서는 저장소 hook이 실행되지 않음. 그 경우 `npm ci`를 setup script로 옮김 |
 
 ## 검증 기록

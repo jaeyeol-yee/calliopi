@@ -35,11 +35,18 @@ node_ok || echo "cloud-setup: Node $(node -v) is older than 22.18" >&2
 # node-gyp needs the headers; scripts/cloud-install.sh points it at them (npm_config_nodedir).
 [ -f "$NODE_PREFIX/include/node/node.h" ] || echo "cloud-setup: no Node headers under $NODE_PREFIX/include" >&2
 
-# Optional: demo recording (VHS). Heavy, and may push setup past the five-minute cache limit;
-# GIFs are recorded by the GitHub Actions demo workflow instead. Uncomment to record in the cloud.
-# apt-get install -y -qq ttyd ffmpeg fd-find fonts-noto-cjk && ln -sf "$(command -v fdfind)" /usr/local/bin/fd
-# url=$(curl -fsSL https://api.github.com/repos/charmbracelet/vhs/releases/latest | grep -o 'https://[^"]*vhs_[^"]*_amd64\.deb' | head -1)
-# curl -fsSL -o /tmp/vhs.deb "$url" && dpkg -i /tmp/vhs.deb
-# echo 'export DEMO_FONT_FAMILY="Noto Sans Mono CJK KR"' > /etc/profile.d/calliopi-demo.sh
+# Demo recording (npm run demo): VHS with ttyd and ffmpeg, fd, and a CJK monospace font. VHS is
+# pinned and fetched from its release download URL: api.github.com is blocked by the default
+# allowlist, so "latest" cannot be looked up.
+VHS_VERSION=0.10.0
+apt-get install -y -qq --no-install-recommends ttyd ffmpeg fd-find fonts-noto-cjk \
+  && ln -sf "$(command -v fdfind)" /usr/local/bin/fd || true
+if ! command -v vhs >/dev/null; then
+  deb="$(mktemp --suffix=.deb)"
+  curl -fsSL -o "$deb" "https://github.com/charmbracelet/vhs/releases/download/v$VHS_VERSION/vhs_${VHS_VERSION}_$(dpkg --print-architecture).deb" \
+    && dpkg -i "$deb" >/dev/null || echo "cloud-setup: could not install VHS $VHS_VERSION" >&2
+  rm -f "$deb"
+fi
+echo 'export DEMO_FONT_FAMILY="Noto Sans Mono CJK KR"' > /etc/profile.d/calliopi-demo.sh
 
 exit 0
