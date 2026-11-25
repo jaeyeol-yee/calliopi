@@ -1,0 +1,124 @@
+# Record demo GIFs: demo/scenarios/<name>.yaml → assets/scenarios/<name>.gif.
+#
+# A pull request records only scenarios it *adds* (a rename counts as an add) that have no GIF yet or
+# changed after it was recorded. Changing the code a scenario shows does not re-record; run this
+# workflow by hand for that. Same-repository PRs get
+# the GIFs committed to their branch; fork PRs get them as artifacts.
+name: demo
+
+on:
+  pull_request:
+    paths: ["demo/scenarios/**"]
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Scenario names, space-separated (empty = all)"
+        required: false
+        default: ""
+
+concurrency:
+  group: demo-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      # Planning only parses YAML: skip install scripts (node-pty build).
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - id: plan
+        env:
+          ONLY: ${{ github.event.inputs.only }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            node demo/build.ts --plan --base "$BASE" >> "$GITHUB_OUTPUT"
+          elif [ -n "$ONLY" ]; then
+            echo "matrix=$(printf '%s\n' $ONLY | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          else
+            node demo/build.ts --plan --all >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+  record:
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        scenario: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      # Two-cell-wide CJK glyphs, so Korean text keeps the terminal grid.
+      DEMO_FONT_FAMILY: "Noto Sans Mono CJK KR"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # Pi warns on screen when fd or ripgrep is missing (it cannot download them offline).
+      - name: Install vhs, ttyd, ffmpeg, fd, ripgrep and fonts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ttyd ffmpeg fd-find ripgrep fonts-noto-cjk
+          sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+          gh release download --repo charmbracelet/vhs --pattern 'vhs_*_amd64.deb' --dir /tmp/vhs
+          sudo dpkg -i /tmp/vhs/vhs_*_amd64.deb
+          vhs --version
+      - run: node demo/build.ts "${{ matrix.scenario }}"
+      # Keep the scenario's sub-path inside the artifact, so publishing can put it back.
+      - id: stage
+        env:
+          NAME: ${{ matrix.scenario }}
+        run: |
+          mkdir -p "out/$(dirname "$NAME")"
+          cp "assets/scenarios/$NAME.gif" "out/$NAME.gif"
+          echo "artifact=demo-${NAME//\//-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.stage.outputs.artifact }}
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    needs: [plan, record]
+    # Fork PRs cannot be pushed to with this token; their GIFs stay as artifacts.
+    if: >-
+      needs.plan.outputs.matrix != '[]' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: demo-*
+          merge-multiple: true
+          path: assets/scenarios
+      - name: Commit GIFs
+        run: |
+          git add assets/scenarios
+          if git diff --cached --quiet; then echo "No GIF changes"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # [skip ci]: no workflow run for this commit (planning would find nothing to record anyway).
+          git commit -m "Record demo GIFs [skip ci]" -m "$(git diff --cached --name-only | sed 's/^/- /')"
+          git push

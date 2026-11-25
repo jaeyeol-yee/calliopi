@@ -6,3 +6,6 @@ dist/
 .env.*
 !.env.example
 .cursor-fanout/
+
+# demo/build.ts output (generated tapes)
+demo/.out/
