@@ -2,7 +2,7 @@
   "name": "@calliopi/core",
   "version": "0.0.0",
   "private": true,
-  "description": "Execution primitives shared by Calliopi layers: fzf selection, program runners, workflows. No dependencies.",
+  "description": "Execution primitives shared by Calliopi layers: fzf selection, program runners, workflows, PR lookup. No dependencies.",
   "type": "module",
   "calliopi": {
     "layer": "core"
@@ -15,6 +15,8 @@
     "./workflow": "./lib/workflow.ts",
     "./types": "./lib/types.ts",
     "./tty": "./lib/tty.ts",
+    "./capture": "./lib/capture.ts",
+    "./pr-lookup": "./lib/pr-lookup.ts",
     "./package.json": "./package.json"
   },
   "pi": {
