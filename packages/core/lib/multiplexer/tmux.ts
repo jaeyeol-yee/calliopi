@@ -23,6 +23,16 @@ export const tmux: MultiplexerStrategy = {
       async moveBeside(exec, pane, ratio) {
         await run(exec, 'tmux', ['join-pane', '-h', '-d', '-l', `${ratio}%`, '-s', pane, '-t', self], 'tmux pane 이동');
       },
+      async openBackground(exec, { command, cwd, label }) {
+        // new-window takes no pane as its target; without one it opens after the window TMUX_PANE is in.
+        const stdout = await run(exec, 'tmux', ['new-window', '-d', '-a', '-n', label, '-c', cwd, '-P', '-F', '#{pane_id}', '--', ...command], 'tmux 창 열기');
+        return { paneId: stdout.trim() || null };
+      },
+      async focus(exec, pane) {
+        await run(exec, 'tmux', ['select-window', '-t', pane], 'tmux 창 이동');
+        await run(exec, 'tmux', ['select-pane', '-t', pane], 'tmux pane 이동');
+      },
+      capture: (exec, pane) => run(exec, 'tmux', ['capture-pane', '-p', '-t', pane], 'tmux pane 읽기'),
     };
   },
 };

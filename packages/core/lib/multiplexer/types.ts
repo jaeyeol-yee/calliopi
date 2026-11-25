@@ -22,6 +22,9 @@ export interface SidePaneOptions {
   focus?: boolean;
 }
 
+/** A pane in a window (tab) of its own, opened without leaving the current one. */
+export type BackgroundPaneOptions = Pick<SidePaneOptions, 'command' | 'cwd' | 'label'>;
+
 /** A pane, as stored to find it again from another Pi process. */
 export interface PaneRef {
   multiplexer: MultiplexerId;
@@ -39,6 +42,12 @@ export interface Multiplexer {
   openSide(exec: Exec, options: SidePaneOptions): Promise<{ paneId: string | null }>;
   /** Move an existing pane of the same session to the right of this one, `ratio` percent wide. */
   moveBeside(exec: Exec, pane: string, ratio: number): Promise<void>;
+  /** Open `command` in a new window behind the current one. Absent where the multiplexer has no such thing (yet). */
+  openBackground?(exec: Exec, options: BackgroundPaneOptions): Promise<{ paneId: string | null }>;
+  /** Bring a pane of the same session to the front and focus it. */
+  focus?(exec: Exec, pane: string): Promise<void>;
+  /** The pane's visible screen as text. */
+  capture?(exec: Exec, pane: string): Promise<string>;
 }
 
 export interface MultiplexerStrategy {

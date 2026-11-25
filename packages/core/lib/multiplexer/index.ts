@@ -7,7 +7,7 @@ import { rex } from '#lib/multiplexer/rex.ts';
 import { tmux } from '#lib/multiplexer/tmux.ts';
 import type { Exec, Multiplexer, MultiplexerId, MultiplexerStrategy, SidePaneOptions } from '#lib/multiplexer/types.ts';
 
-export type { Exec, Multiplexer, MultiplexerId, PaneRef, SidePaneOptions } from '#lib/multiplexer/types.ts';
+export type { BackgroundPaneOptions, Exec, Multiplexer, MultiplexerId, PaneRef, SidePaneOptions } from '#lib/multiplexer/types.ts';
 
 /** Fallback order when the process tree does not decide. */
 export const STRATEGIES: readonly MultiplexerStrategy[] = [rex, herdr, tmux];

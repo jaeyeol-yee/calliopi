@@ -10,7 +10,7 @@ Pi 위에 얹는 모듈형 로컬 하네스. 브랜드는 Calliopi, 내부 패�
 
 회전목마에서는 말들이 각자의 움직임을 가지면서도 하나의 틀 안에서 함께 돕니다. Calliopi는 그 곁에서 흐르는 음악처럼, Pi 위의 여러 기능에 일관된 흐름과 사용 경험을 더하는 하네스를 지향합니다.
 
-브랜드에는 회전목마의 이미지를 남기되, 내부 패키지는 `core`, `context`, `ui`처럼 역할이 드러나는 이름을 사용합니다. Pi에서 직접 입력하는 명령은 짧게 `/cl-` 접두사를 씁니다(`/cl-edit`, `/cl-log`, `/cl-fanout`, `/cl-headers`, `/cl-branch`, `/cl-usage`). 모델이 호출하는 도구 이름은 `calliopi_fanout_*`를 유지합니다. npm·GitHub·도메인 이름의 사용 가능 여부는 확인하지 않았습니다.
+브랜드에는 회전목마의 이미지를 남기되, 내부 패키지는 `core`, `context`, `ui`처럼 역할이 드러나는 이름을 사용합니다. Pi에서 직접 입력하는 명령은 짧게 `/cl-` 접두사를 씁니다(`/cl-edit`, `/cl-log`, `/cl-run`, `/cl-jobs`, `/cl-fanout`, `/cl-headers`, `/cl-branch`, `/cl-usage`). 모델이 호출하는 도구 이름은 `calliopi_fanout_*`를 유지합니다. npm·GitHub·도메인 이름의 사용 가능 여부는 확인하지 않았습니다.
 
 참고: [Calliope](https://en.wikipedia.org/wiki/Calliope_(instrument)), [Fairground organ](https://en.wikipedia.org/wiki/Fairground_organ).
 
@@ -40,7 +40,7 @@ calliopi/
 
 `calliopi-fanout`은 Pi manifest에 등록된 확장으로 `/cl-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/calliopi-fanout/README.md](packages/calliopi-fanout/README.md)를 보세요.
 
-`calliopi-workflows`의 `/cl-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/cl-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
+`calliopi-workflows`의 `/cl-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/cl-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. `/cl-run`은 명령을 옆 pane(또는 tmux 백그라운드 창)에서 실행해 Pi를 붙잡지 않고, `/cl-jobs`로 상태와 출력을 봅니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
 
 `ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙이고(`/cl-headers`), 현재 브랜치가 PR에 들어 있으면 footer에 `onto owner/repo#N open|merged…`를 표시합니다(`/cl-branch`). `/cl-usage`는 Claude·Codex·Cursor 구독 사용량을 gauge로 보여 줍니다. 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
 
