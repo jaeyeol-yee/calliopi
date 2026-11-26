@@ -2,7 +2,7 @@
 
 서브에이전트: 모델이 일을 맡기면 **자식 Pi가 터미널 멀티플렉서 pane에서** 그 일을 하고, 계약(과제, 완료 조건, 예산)에 따라 `finish`로 결과를 보고합니다. 자식은 진짜 Pi 화면이라 thinking, 도구 호출을 그대로 보고, pane에 직접 입력해 끼어들 수 있습니다. 기록과 규칙은 `@calliopi/core/agents`에 있습니다.
 
-> 진행 상황: 위임(`subagent` 도구), 자식(child 확장), 위임 시점 요약과 배경까지. tree viewer, 이탈 대응, 내보내기, worktree 격리는 다음 단계입니다. 설계: `/load-plan subagents`.
+> 진행 상황: 위임(`subagent` 도구), 자식(child 확장), 위임 시점 요약과 배경, 계약 알림까지. tree viewer, 이탈 대응, 내보내기, worktree 격리는 다음 단계입니다. 설계: `/load-plan subagents`.
 
 ## 위임: `subagent` 도구
 
@@ -44,6 +44,7 @@ env CALLIOPI_AGENT_DIR=<dir> PI_CODING_AGENT_DIR=… pi --session-dir <dir> --se
 - **과제는 자식이 직접 제출합니다.** 명령줄에 과제를 넣으면 Pi가 바로 제출해 버려, 부모의 배경을 그 앞에 둘 수 없기 때문입니다. `context: summary`면 inbox에 배경이 오기를 최대 10초 기다렸다가(`배경 대기 중…`) 세션에 [배경][과제] 순으로 넣고, 늦으면 과제를 먼저 보내고 배경은 도착할 때 steer로 넣습니다(늦게 왔다고 표시).
 - **세션 파일**은 부모가 미리 만들어 두고(`<시각>_<id>.jsonl`), 헤더의 `parentSession`이 부모 세션을 가리킵니다. Pi는 이 파일을 열어 이어 씁니다.
 - **system prompt**: 서브에이전트 규칙(혼자 일함, 범위를 지킴, 끝나면 `finish`) + 역할 파일 본문.
+- **계약 알림(목적 고정)**: 과제를 보낸 뒤 매 모델 요청의 맨 끝에 `[Subagent contract] Task … Done when … Budget used …`를 붙입니다. 세션에는 저장하지 않으므로 맥락이 길어지거나 compaction이 일어나도 목적이 항상 최근 위치에 보이고, 요청의 꼬리만 바뀌어 prompt cache는 유지됩니다. 목적은 추론된 요약이 아니라 호출할 때 선언한 계약입니다.
 - **`finish` 도구**: `status`(`done` | `partial` | `blocked`), `summary`, `evidence`, `artifacts`. 결과를 쓰고 실행을 끝냅니다(`terminate`).
 - **finish 없이 멈추면** 한 번 상기시키고, 그래도 없으면 마지막 답을 요약 삼아 `unanswered`로 보고합니다.
 - **inbox**(`inbox/NNNNNN.json`): `briefing`, `steer`, `stop`을 순번대로 한 번씩 받습니다(`delivered.json`). 파일 변경 감지 + 1초 확인.

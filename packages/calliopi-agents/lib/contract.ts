@@ -1,7 +1,7 @@
 // What a child is told: its role and the rules of being a subagent (system prompt), its contract
 // (the first user message), the parent's background (briefing), and reminders. The contract is the
 // declared purpose; the child is held to it, not to a purpose inferred later from its transcript.
-import { formatBudget, type AgentMeta } from '@calliopi/core/agents';
+import { formatBudget, type AgentMeta, type BudgetUsage } from '@calliopi/core/agents';
 
 export const FINISH_TOOL = 'finish';
 
@@ -33,6 +33,16 @@ export function briefingMessage(text: string, late: boolean): string {
     ? 'Background from the agent that delegated this task. It arrived after you started: check whether it changes anything you did or planned.'
     : 'Background from the agent that delegated this task: its own goal, constraints and decisions so far. Use it to understand the task; the task itself is in the next message.';
   return `${head}\n\n<background>\n${text.trim()}\n</background>`;
+}
+
+/** Added at the end of each request (not stored): the declared purpose and what is left of the budget. */
+export function contractReminder(meta: AgentMeta, usage: BudgetUsage): string {
+  return [
+    `[Subagent contract] Task: ${meta.call.task}`,
+    ...(meta.call.done ? [`Done when: ${meta.call.done}`] : []),
+    `Budget used: ${formatBudget(meta.call.budget, usage)}.`,
+    `Stay within the task; when it is done or blocked, call ${FINISH_TOOL}.`,
+  ].join('\n');
 }
 
 export const steerMessage = (text: string) => `Message from the agent that delegated this task:\n\n${text.trim()}`;

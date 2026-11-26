@@ -69,6 +69,25 @@ test('requests: every provider payload is appended as a delta (the faux model se
   assert.equal(fs.statSync(path.join(dir, FILES.requests)).mode & 0o777, 0o600);
 });
 
+test('contract reminder: added at the end of every request once the task is sent, never stored', async t => {
+  const root = tmp(t);
+  const { dir } = createAgent(root, baseMeta(root)); // context none: the task goes at once
+  const handlers = new Map<string, (event: unknown, ctx?: unknown) => unknown>();
+  const sent: string[] = [];
+  const fake = { on: (name: string, fn: (event: unknown) => unknown) => handlers.set(name, fn), registerTool: () => {}, setSessionName: () => {}, sendMessage: () => {}, sendUserMessage: (text: string) => sent.push(text) };
+  installChild(fake as never, dir);
+  const before = handlers.get('context')!({ type: 'context', messages: [] });
+  assert.equal(before, undefined); // nothing before the task
+  await handlers.get('session_start')!({ type: 'session_start' }, { ui: { setStatus: () => {}, notify: () => {} }, isIdle: () => true, abort: () => {} });
+  assert.match(sent[0]!, /^Task: Find where login is defined/);
+  const messages = [{ role: 'user', content: [{ type: 'text', text: 'Task' }], timestamp: 1 }];
+  const out = handlers.get('context')!({ type: 'context', messages }) as { messages: { role: string; content: { text: string }[] }[] };
+  assert.equal(out.messages.length, 2);
+  assert.equal(messages.length, 1); // the stored messages are not touched
+  assert.match(out.messages[1]!.content[0]!.text, /^\[Subagent contract\] Task: Find where login is defined\nDone when: The file and line are named\nBudget used: 턴 0\/6 · 0\/15분 · 0\/300k\.\nStay within the task; when it is done or blocked, call finish\.$/);
+  handlers.get('session_shutdown')!({ type: 'session_shutdown' });
+});
+
 // A real child Pi in a private tmux server, answering with the faux model of the demo harness.
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
 test('child Pi: background before task, finish ends it, inbox stop, reminder then unanswered', { skip: !hasTmux, timeout: 120_000 }, async t => {

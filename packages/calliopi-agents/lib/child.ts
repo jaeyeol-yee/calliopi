@@ -11,7 +11,7 @@ import {
   FILES, classifyEnd, encodeRequest, exceeded, markDelivered, nearLimit, readAgent, readDelivered, readInbox, writeResult, writeStatus,
   type AgentMeta, type AgentStatus, type EndFacts, type InboxMessage,
 } from '@calliopi/core/agents';
-import { FINISH_REMINDER, FINISH_TOOL, briefingMessage, steerMessage, taskMessage, wrapUpReminder } from '#lib/contract.ts';
+import { FINISH_REMINDER, FINISH_TOOL, briefingMessage, contractReminder, steerMessage, taskMessage, wrapUpReminder } from '#lib/contract.ts';
 
 /** How long the task waits for the parent's background before it starts without it. */
 export const BRIEFING_WAIT_MS = 10_000;
@@ -153,6 +153,12 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
     const near = nearLimit(meta.call.budget, usage());
     if (near.length && !wrapUpSent && !ended) { wrapUpSent = true; pi.sendUserMessage(wrapUpReminder(near), { deliverAs: 'steer' }); }
     watchdog();
+  });
+  // The contract at the end of every request, not stored: the purpose stays in view however long the
+  // context grows and whatever compaction makes of the start; only the tail changes, so the cache holds.
+  pi.on('context', (event) => {
+    if (!taskSent || ended) return;
+    return { messages: [...event.messages, { role: 'user', content: [{ type: 'text', text: contractReminder(meta, usage()) }], timestamp: Date.now() }] };
   });
   pi.on('before_provider_request', (event) => {
     const record = encodeRequest(lastPayload, event.payload, ++requestSeq, Date.now());
