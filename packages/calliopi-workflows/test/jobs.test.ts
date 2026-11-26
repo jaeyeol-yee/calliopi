@@ -7,7 +7,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectMultiplexer, type Exec } from '@calliopi/core/multiplexer';
 import { inferCommand, inferContext, inferPrompt, parseInferred, INFER_SYSTEM } from '#lib/job-infer.ts';
-import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, interruptJob, tailLog, writeExit,
+import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, interruptJob, lingers, closeJobPane, tailLog, writeExit,
   KEEP_MS, LOG_FILE, PID_FILE, type Job, type JobMeta } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
@@ -215,7 +215,12 @@ test('tmux: a job beside Pi and one in a background window, peeked while running
   assert.equal(job(busy.jobDir).exitCode, 130); // 128 + SIGINT, as for a typed Ctrl+C
   assert.doesNotMatch(tailLog(busy.jobDir).text, /after/);
   assert.match(await mux.capture!(exec, busy.pane), /\[busy 종료 130\] Enter로 닫기/); // an interrupted job stays to be read
-  tmux('send-keys', '-t', busy.pane, 'Enter');
+  assert.equal(lingers(job(busy.jobDir)), true);
+  // the stop key again: the pane closes, as Ctrl+C twice would
+  assert.equal(closeJobPane(job(busy.jobDir)), true);
+  await until('the pane closes', () => !panes().includes(busy.pane));
+  assert.equal(lingers(job(busy.jobDir)), false);
+  assert.equal(job(busy.jobDir).exitCode, 130); // closing keeps the job's own exit code
 
   // input typed into the pane reaches the command whole, multibyte characters included
   const typed = await start(meta('typed', { command: 'read line; echo "got:$line"', cwd: dir, silent: true }));

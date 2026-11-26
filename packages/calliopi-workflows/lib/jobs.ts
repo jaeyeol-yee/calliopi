@@ -160,6 +160,16 @@ export const stopJob = (job: Job): boolean => signalRunner(job, 'SIGTERM');
 /** Ctrl+C, as if typed in the pane: the runner writes it to the command's terminal, which interrupts its foreground process group. */
 export const interruptJob = (job: Job): boolean => signalRunner(job, 'SIGINT');
 
+/** An ended job whose pane still shows its output, waiting for Enter: the runner has written the exit code and lives on. */
+export function lingers(job: Job): boolean {
+  if (job.state !== 'exited') return false;
+  try { process.kill(Number(fs.readFileSync(path.join(job.dir, PID_FILE), 'utf8')), 0); return true; }
+  catch { return false; }
+}
+
+/** Close a lingering pane: once the command has ended, any signal makes the runner exit. */
+export const closeJobPane = (job: Job): boolean => signalRunner(job, 'SIGTERM');
+
 /** Terminal output as the text a reader would have seen: no escapes, and a line redrawn with \r keeps its last version. */
 export function plainLog(raw: string): string {
   return stripAnsi(raw).replace(/\r\n/g, '\n').split('\n')

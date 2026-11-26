@@ -34,11 +34,13 @@ child.onData(data => { fs.writeSync(log, data); out.write(data); });
 // SIGINT (alt+k in Pi) is Ctrl+C: written to the command's terminal, whose line discipline signals the
 // foreground process group. Signalling only the shell would miss the program it is waiting for, and
 // a program that turned Ctrl+C off (an editor) keeps running, as it would for a typed Ctrl+C.
-process.on('SIGINT', () => { try { child.write('\x03'); } catch { /* gone */ } });
+let ended = false; // once the command is over, a signal only closes the pane (Pi's stop key pressed again)
+process.on('SIGINT', () => { if (ended) process.exit(0); try { child.write('\x03'); } catch { /* gone */ } });
 // /cl-jobs "중지" and a second alt+k send SIGTERM here; a closed pane sends SIGHUP. Either way the command goes too.
 let asked = false;
 for (const signal of ['SIGTERM', 'SIGHUP'] as const) {
   process.on(signal, () => {
+    if (ended) process.exit(0);
     // Asked twice: the whole process group, so a descendant that ignores SIGHUP goes as well.
     if (asked) { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } return; }
     asked = true;
@@ -48,6 +50,7 @@ for (const signal of ['SIGTERM', 'SIGHUP'] as const) {
 
 child.onExit(({ exitCode, signal }) => {
   const code = signal ? 128 + signal : exitCode;
+  ended = true;
   fs.closeSync(log);
   if (!fs.existsSync(path.join(dir, EXIT_FILE))) writeExit(dir, code);
   input.off('data', forward);

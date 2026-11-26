@@ -8,7 +8,7 @@ import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec, type Multiplexer } fro
 import { runWorkflow } from '@calliopi/core/workflow';
 import { preflight, openOverlaySession } from '@calliopi/ui/overlay-session';
 import { inferCommand, inferContext } from '#lib/job-infer.ts';
-import { createJob, interruptJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, EXIT_FILE, JOB_LIST, type Job } from '#lib/jobs.ts';
+import { createJob, interruptJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, closeJobPane, lingers, EXIT_FILE, JOB_LIST, type Job } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
 const preview = fileURLToPath(new URL('../bin/job-preview.ts', import.meta.url));
@@ -22,6 +22,7 @@ const SHARE = '출력 끝부분을 대화에 전달', SCREEN = '지금 화면을
 // /cl-run ? <words>: the current model writes the command; it runs only after the user confirms it.
 // /cl-jobs: every job with its state; pick one to pass its output on, go to its pane, stop or forget it.
 // ctrl+\ or alt+k: Ctrl+C to the newest job started here; pressed again soon after, stop it, then kill it.
+// Once it has ended, the same key closes its pane, so pressing it twice both interrupts and closes, like Ctrl+C twice in Pi.
 // ctrl+\ reaches Pi in any terminal; alt+k only where Option (macOS) is sent as Alt, not as a character (˚).
 export const STOP_KEYS = ['ctrl+\\', 'alt+k'] as const;
 /** Presses this close together escalate: Ctrl+C, then SIGTERM, then SIGKILL to the process group. */
@@ -29,6 +30,7 @@ const ESCALATE_MS = 3000;
 
 export default function (pi: ExtensionAPI) {
   const watched = new Set<string>(); // job directories started here and still running
+  const started = new Set<string>(); // every job directory started here, for the stop key to close a pane left open
   // The runner writes the exit code the moment the command ends; watching for it tells Pi at once.
   // The poll stays for what leaves no file (a runner killed outright) and for file systems without events.
   const watchers = new Map<string, fs.FSWatcher>();
@@ -65,14 +67,18 @@ export default function (pi: ExtensionAPI) {
   const stop = async (key: string, ctx: ExtensionContext) => {
     const running = [...watched].flatMap(dir => readJob(dir) ?? []).filter(j => j.state === 'running').sort((a, b) => b.startedAt - a.startedAt);
     const job = running[0];
-    if (!job) return ctx.ui.notify('끊을 작업이 없습니다. 이 세션에서 /cl-run으로 시작해 실행 중인 작업에만 보냅니다.', 'info');
+    if (!job) {
+      const open = [...started].flatMap(dir => readJob(dir) ?? []).filter(lingers).sort((a, b) => b.startedAt - a.startedAt)[0];
+      if (open && closeJobPane(open)) { started.delete(open.dir); return ctx.ui.notify(`${open.name} pane을 닫았습니다.`, 'info'); }
+      return ctx.ui.notify('끊을 작업이 없습니다. 이 세션에서 /cl-run으로 시작해 실행 중인 작업에만 보냅니다.', 'info');
+    }
     const now = Date.now();
     const count = presses?.dir === job.dir && now - presses.at < ESCALATE_MS ? presses.count + 1 : 1;
     presses = { dir: job.dir, at: now, count };
     const sent = count === 1 ? interruptJob(job) : stopJob(job);
     if (!sent) return ctx.ui.notify(`${job.name}: 실행 중인 프로세스를 찾지 못했습니다.`, 'warning');
     const others = running.length > 1 ? ` (실행 중 ${running.length}개 중 가장 최근)` : '';
-    ctx.ui.notify(count === 1 ? `${job.name}에 Ctrl+C를 보냈습니다${others}. 3초 안에 ${key}를 다시 누르면 종료합니다.`
+    ctx.ui.notify(count === 1 ? `${job.name}에 Ctrl+C를 보냈습니다${others}. ${key}를 한 번 더 누르면 pane을 닫습니다(안 끝났으면 종료).`
       : count === 2 ? `${job.name}에 종료 신호를 보냈습니다. 다시 누르면 강제 종료합니다.`
       : `${job.name}을(를) 강제 종료합니다.`, 'info');
   };
@@ -139,6 +145,7 @@ export default function (pi: ExtensionAPI) {
       }
       lastCtx = ctx;
       watched.add(dir);
+      started.add(dir);
       try { watchers.set(dir, fs.watch(dir, (_event, file) => { if (!file || file === EXIT_FILE) check(); })); } catch { /* the poll covers it */ }
       poll ??= setInterval(check, 1000);
       ctx.ui.notify(`${name} 시작${parsed.silent ? '(백그라운드 창)' : ''}: ${parsed.command}`, 'info');
