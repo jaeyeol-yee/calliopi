@@ -8,7 +8,8 @@ import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec, type Multiplexer } fro
 import { runWorkflow } from '@calliopi/core/workflow';
 import { preflight, openOverlaySession } from '@calliopi/ui/overlay-session';
 import { inferCommand, inferContext } from '#lib/job-infer.ts';
-import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, JOB_LIST, type Job } from '#lib/jobs.ts';
+import { fitAnsi } from '#lib/preview-render.ts';
+import { createJob, interruptJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, closeJobPane, lingers, interrupted, EXIT_FILE, JOB_LIST, type Job } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
 const preview = fileURLToPath(new URL('../bin/job-preview.ts', import.meta.url));
@@ -21,8 +22,24 @@ const SHARE = '출력 끝부분을 대화에 전달', SCREEN = '지금 화면을
 // end of the output for the next turn.
 // /cl-run ? <words>: the current model writes the command; it runs only after the user confirms it.
 // /cl-jobs: every job with its state; pick one to pass its output on, go to its pane, stop or forget it.
+// ctrl+\ or alt+k: Ctrl+C to the newest job started here; pressed again soon after, stop it, then kill it.
+// Once it has ended, the same key closes its pane, so pressing it twice both interrupts and closes, like Ctrl+C twice in Pi.
+// ctrl+\ reaches Pi in any terminal; alt+k only where Option (macOS) is sent as Alt, not as a character (˚).
+export const STOP_KEYS = ['ctrl+\\', 'alt+k'] as const;
+/** Presses this close together escalate: Ctrl+C, then SIGTERM, then SIGKILL to the process group. */
+const ESCALATE_MS = 3000;
+
+/** Shown for a job message in the transcript. */
+interface JobDetails { name: string; command: string; status: string; ok: boolean; interrupted: boolean }
+
 export default function (pi: ExtensionAPI) {
   const watched = new Set<string>(); // job directories started here and still running
+  const started = new Set<string>(); // every job directory started here, for the stop key to close a pane left open
+  // The runner writes the exit code the moment the command ends; watching for it tells Pi at once.
+  // The poll stays for what leaves no file (a runner killed outright) and for file systems without events.
+  const watchers = new Map<string, fs.FSWatcher>();
+  const unwatch = (dir: string) => { watchers.get(dir)?.close(); watchers.delete(dir); };
+  let presses: { dir: string; at: number; count: number } | undefined;
   let poll: NodeJS.Timeout | undefined;
   let lastCtx: ExtensionContext | undefined;
   let picking = false;
@@ -30,22 +47,72 @@ export default function (pi: ExtensionAPI) {
   let closeOverlay: (() => void) | undefined;
   const exec: Exec = (command, args, options) => pi.exec(command, args, options);
 
+  const details = (job: Job): JobDetails => ({ name: job.name, command: job.command, status: statusText(job), ok: job.state === 'exited' && job.exitCode === 0, interrupted: interrupted(job) });
+  /** Passed on from /cl-jobs: context for the user's next message. */
   const share = (job: Job, content = jobMessage(job)) =>
-    pi.sendMessage({ customType: 'calliopi-job', content, display: false, details: { name: job.name, state: job.state, exitCode: job.exitCode } }, { deliverAs: 'nextTurn' });
+    pi.sendMessage({ customType: 'calliopi-job', content, display: false, details: details(job) }, { deliverAs: 'nextTurn' });
+  /**
+   * A job started here has ended: the model answers at once when idle, and while it works the result
+   * is steered in before its next request, so it can change course. Shown as one line in the transcript.
+   */
+  const announce = (job: Job) =>
+    pi.sendMessage({ customType: 'calliopi-job', content: jobMessage(job, Date.now(), true), display: true, details: details(job) }, { deliverAs: 'steer', triggerTurn: true });
+
+  pi.registerMessageRenderer<JobDetails>('calliopi-job', (message, { expanded }, theme) => ({
+    render(width: number) {
+      const d = message.details;
+      if (!d) return [];
+      const mark = d.ok ? theme.fg('success', '✓') : d.interrupted ? theme.fg('warning', '■') : theme.fg('error', '✗');
+      const head = `${mark} ${theme.fg('accent', `/cl-run ${d.name}`)} ${theme.fg('dim', `· ${d.status} · ${d.command}`)}`;
+      const text = typeof message.content === 'string' ? message.content : message.content.flatMap(c => c.type === 'text' ? c.text : []).join('\n');
+      const body = expanded ? text.split('\n').map(line => theme.fg('dim', line)) : [];
+      return [head, ...body].map(line => fitAnsi(line, width));
+    },
+    invalidate() {},
+  }));
 
   const check = () => {
     for (const dir of watched) {
       const job = readJob(dir);
       if (job?.state === 'running') continue;
       watched.delete(dir);
+      unwatch(dir);
       if (!job) continue; // forgotten from /cl-jobs
-      share(job);
-      lastCtx?.ui.notify(`${job.name}: ${statusText(job)}. 결과를 다음 대화에 전달합니다.`, job.state === 'exited' && job.exitCode === 0 ? 'info' : 'warning');
+      announce(job);
+      lastCtx?.ui.notify(`${job.name}: ${statusText(job)}. 결과를 모델에 전달합니다.`, job.state === 'exited' && job.exitCode === 0 ? 'info' : 'warning');
     }
     if (!watched.size) { clearInterval(poll); poll = undefined; }
   };
 
-  pi.on('session_shutdown', () => { shuttingDown = true; closeOverlay?.(); clearInterval(poll); poll = undefined; }); // the jobs themselves keep running
+  pi.on('session_shutdown', () => { // the jobs themselves keep running
+    shuttingDown = true; closeOverlay?.(); clearInterval(poll); poll = undefined;
+    for (const dir of [...watchers.keys()]) unwatch(dir);
+  });
+
+  const stop = async (key: string, ctx: ExtensionContext) => {
+    const running = [...watched].flatMap(dir => readJob(dir) ?? []).filter(j => j.state === 'running').sort((a, b) => b.startedAt - a.startedAt);
+    const job = running[0];
+    if (!job) {
+      const open = [...started].flatMap(dir => readJob(dir) ?? []).filter(lingers).sort((a, b) => b.startedAt - a.startedAt)[0];
+      if (open && closeJobPane(open)) { started.delete(open.dir); return ctx.ui.notify(`${open.name} pane을 닫았습니다.`, 'info'); }
+      return ctx.ui.notify('끊을 작업이 없습니다. 이 세션에서 /cl-run으로 시작해 실행 중인 작업에만 보냅니다.', 'info');
+    }
+    const now = Date.now();
+    const count = presses?.dir === job.dir && now - presses.at < ESCALATE_MS ? presses.count + 1 : 1;
+    presses = { dir: job.dir, at: now, count };
+    const sent = count === 1 ? interruptJob(job) : stopJob(job);
+    if (!sent) return ctx.ui.notify(`${job.name}: 실행 중인 프로세스를 찾지 못했습니다.`, 'warning');
+    const others = running.length > 1 ? ` (실행 중 ${running.length}개 중 가장 최근)` : '';
+    ctx.ui.notify(count === 1 ? `${job.name}에 Ctrl+C를 보냈습니다${others}. ${key}를 한 번 더 누르면 pane을 닫습니다(안 끝났으면 종료).`
+      : count === 2 ? `${job.name}에 종료 신호를 보냈습니다. 다시 누르면 강제 종료합니다.`
+      : `${job.name}을(를) 강제 종료합니다.`, 'info');
+  };
+  for (const key of STOP_KEYS) {
+    pi.registerShortcut(key, {
+      description: '/cl-run 작업 끊기: 이 세션에서 시작한 가장 최근 작업에 Ctrl+C. 3초 안에 다시 누르면 종료(SIGTERM), 한 번 더 누르면 강제 종료(SIGKILL)',
+      handler: ctx => stop(key, ctx),
+    });
+  }
 
   pi.registerCommand('cl-run', {
     description: '명령을 옆 pane에서 실행하고 바로 돌아옵니다(! 와 달리 Pi를 붙잡지 않습니다). 끝나면 알리고 종료 코드와 출력 끝부분을 다음 대화에 전달합니다. -s(--silent): 백그라운드 창에서 실행(tmux). -n <이름>: 작업 이름. ? <하고 싶은 일>: 모델이 명령을 추론하고 확인을 받은 뒤 실행. /cl-jobs로 조회합니다.',
@@ -103,6 +170,8 @@ export default function (pi: ExtensionAPI) {
       }
       lastCtx = ctx;
       watched.add(dir);
+      started.add(dir);
+      try { watchers.set(dir, fs.watch(dir, (_event, file) => { if (!file || file === EXIT_FILE) check(); })); } catch { /* the poll covers it */ }
       poll ??= setInterval(check, 1000);
       ctx.ui.notify(`${name} 시작${parsed.silent ? '(백그라운드 창)' : ''}: ${parsed.command}`, 'info');
     },

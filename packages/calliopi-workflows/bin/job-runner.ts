@@ -14,6 +14,9 @@ process.title = `cl-run ${meta.name}`;
 fs.writeFileSync(path.join(dir, PID_FILE), String(process.pid), { mode: 0o600 });
 const log = fs.openSync(path.join(dir, LOG_FILE), 'a', 0o600);
 
+// Create stderr now, while the terminal is up. Node opens it on first use, and after the pane closes
+// (hangup) opening that terminal blocks for ever: the event loop stops before the exit code is written.
+void process.stderr;
 const out = process.stdout, input = process.stdin;
 out.write(`\x1b[2m$ ${meta.command}\x1b[0m\r\n`);
 const child = pty.spawn(process.env.SHELL || '/bin/sh', ['-c', meta.command], {
@@ -28,19 +31,26 @@ input.on('data', forward);
 out.on('resize', () => { try { child.resize(out.columns || 80, out.rows || 24); } catch { /* already gone */ } });
 child.onData(data => { fs.writeSync(log, data); out.write(data); });
 
-// /cl-jobs "중지" sends SIGTERM here; a closed pane sends SIGHUP. Either way the command goes too.
+// SIGINT (alt+k in Pi) is Ctrl+C: written to the command's terminal, whose line discipline signals the
+// foreground process group. Signalling only the shell would miss the program it is waiting for, and
+// a program that turned Ctrl+C off (an editor) keeps running, as it would for a typed Ctrl+C.
+let ended = false; // once the command is over, a signal only closes the pane (Pi's stop key pressed again)
+process.on('SIGINT', () => { if (ended) process.exit(0); try { child.write('\x03'); } catch { /* gone */ } });
+// /cl-jobs "중지" and a second alt+k send SIGTERM here; a closed pane sends SIGHUP. Either way the command goes too.
 let asked = false;
-for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT'] as const) {
+for (const signal of ['SIGTERM', 'SIGHUP'] as const) {
   process.on(signal, () => {
+    if (ended) process.exit(0);
     // Asked twice: the whole process group, so a descendant that ignores SIGHUP goes as well.
     if (asked) { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } return; }
     asked = true;
-    try { child.kill(signal === 'SIGINT' ? 'SIGINT' : 'SIGHUP'); } catch { /* gone */ }
+    try { child.kill('SIGHUP'); } catch { /* gone */ }
   });
 }
 
 child.onExit(({ exitCode, signal }) => {
   const code = signal ? 128 + signal : exitCode;
+  ended = true;
   fs.closeSync(log);
   if (!fs.existsSync(path.join(dir, EXIT_FILE))) writeExit(dir, code);
   input.off('data', forward);

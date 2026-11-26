@@ -149,11 +149,26 @@ export function pruneJobs(root: string, now = Date.now()): void {
   }
 }
 
-/** Ask the runner to end the command (it forwards the signal). False when there is nothing to signal. */
-export function stopJob(job: Job): boolean {
-  try { process.kill(Number(fs.readFileSync(path.join(job.dir, PID_FILE), 'utf8')), 'SIGTERM'); return true; }
+const signalRunner = (job: Job, signal: NodeJS.Signals) => {
+  try { process.kill(Number(fs.readFileSync(path.join(job.dir, PID_FILE), 'utf8')), signal); return true; }
+  catch { return false; }
+};
+
+/** Ask the runner to end the command: SIGHUP to it, and the whole process group when asked again. False when there is nothing to signal. */
+export const stopJob = (job: Job): boolean => signalRunner(job, 'SIGTERM');
+
+/** Ctrl+C, as if typed in the pane: the runner writes it to the command's terminal, which interrupts its foreground process group. */
+export const interruptJob = (job: Job): boolean => signalRunner(job, 'SIGINT');
+
+/** An ended job whose pane still shows its output, waiting for Enter: the runner has written the exit code and lives on. */
+export function lingers(job: Job): boolean {
+  if (job.state !== 'exited') return false;
+  try { process.kill(Number(fs.readFileSync(path.join(job.dir, PID_FILE), 'utf8')), 0); return true; }
   catch { return false; }
 }
+
+/** Close a lingering pane: once the command has ended, any signal makes the runner exit. */
+export const closeJobPane = (job: Job): boolean => signalRunner(job, 'SIGTERM');
 
 /** Terminal output as the text a reader would have seen: no escapes, and a line redrawn with \r keeps its last version. */
 export function plainLog(raw: string): string {
@@ -190,12 +205,22 @@ export function statusText(job: Job, now = Date.now()): string {
   return `종료 ${job.exitCode} · ${formatElapsed((job.endedAt ?? now) - job.startedAt)}`;
 }
 
-/** What the model is told about a job: its state and the end of its output. */
-export function jobMessage(job: Job, now = Date.now()): string {
+/** Interrupted by the user: Ctrl+C (130) or the pane closed (129). */
+export const interrupted = (job: Job) => job.state === 'exited' && (job.exitCode === 130 || job.exitCode === 129);
+
+/**
+ * What the model is told about a job: its state and the end of its output. `respond`: the job has just
+ * ended and the model is woken to answer (or, mid-task, to take it into account); otherwise the user
+ * passed it on from /cl-jobs as context for their next message.
+ */
+export function jobMessage(job: Job, now = Date.now(), respond = false): string {
   const state = job.state === 'running' ? `is still running after ${formatElapsed(now - job.startedAt)}`
     : job.state === 'lost' ? 'ended without an exit code (its pane was probably closed)'
     : `exited with code ${job.exitCode} after ${formatElapsed((job.endedAt ?? now) - job.startedAt)}`;
-  const intro = `The user ran a command with /cl-run (job "${job.name}", in ${job.cwd}); it ${state}. This is context, not a request by itself.`;
+  const ask = !respond ? 'This is context, not a request by itself.'
+    : interrupted(job) ? 'The user interrupted it themselves: acknowledge it in a sentence, or carry on with what you were doing.'
+    : 'It has just ended. If you are in the middle of a task, take it into account and carry on; otherwise tell the user in a sentence or two how it went, and if it failed, what went wrong and what to do next. Do not run it again unless asked.';
+  const intro = `The user ran a command with /cl-run (job "${job.name}", in ${job.cwd}); it ${state}. ${ask}`;
   const { text, truncated } = tailLog(job.dir);
   const command = `<command>\n${job.command}\n</command>`;
   if (!text) return `${intro}\n\n${command}\n\nIt printed nothing${job.state === 'running' ? ' so far' : ''}.`;
