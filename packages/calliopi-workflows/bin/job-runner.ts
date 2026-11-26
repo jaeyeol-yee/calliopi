@@ -31,14 +31,18 @@ input.on('data', forward);
 out.on('resize', () => { try { child.resize(out.columns || 80, out.rows || 24); } catch { /* already gone */ } });
 child.onData(data => { fs.writeSync(log, data); out.write(data); });
 
-// /cl-jobs "중지" sends SIGTERM here; a closed pane sends SIGHUP. Either way the command goes too.
+// SIGINT (alt+k in Pi) is Ctrl+C: written to the command's terminal, whose line discipline signals the
+// foreground process group. Signalling only the shell would miss the program it is waiting for, and
+// a program that turned Ctrl+C off (an editor) keeps running, as it would for a typed Ctrl+C.
+process.on('SIGINT', () => { try { child.write('\x03'); } catch { /* gone */ } });
+// /cl-jobs "중지" and a second alt+k send SIGTERM here; a closed pane sends SIGHUP. Either way the command goes too.
 let asked = false;
-for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT'] as const) {
+for (const signal of ['SIGTERM', 'SIGHUP'] as const) {
   process.on(signal, () => {
     // Asked twice: the whole process group, so a descendant that ignores SIGHUP goes as well.
     if (asked) { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } return; }
     asked = true;
-    try { child.kill(signal === 'SIGINT' ? 'SIGINT' : 'SIGHUP'); } catch { /* gone */ }
+    try { child.kill('SIGHUP'); } catch { /* gone */ }
   });
 }
 

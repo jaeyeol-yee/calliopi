@@ -149,11 +149,16 @@ export function pruneJobs(root: string, now = Date.now()): void {
   }
 }
 
-/** Ask the runner to end the command (it forwards the signal). False when there is nothing to signal. */
-export function stopJob(job: Job): boolean {
-  try { process.kill(Number(fs.readFileSync(path.join(job.dir, PID_FILE), 'utf8')), 'SIGTERM'); return true; }
+const signalRunner = (job: Job, signal: NodeJS.Signals) => {
+  try { process.kill(Number(fs.readFileSync(path.join(job.dir, PID_FILE), 'utf8')), signal); return true; }
   catch { return false; }
-}
+};
+
+/** Ask the runner to end the command: SIGHUP to it, and the whole process group when asked again. False when there is nothing to signal. */
+export const stopJob = (job: Job): boolean => signalRunner(job, 'SIGTERM');
+
+/** Ctrl+C, as if typed in the pane: the runner writes it to the command's terminal, which interrupts its foreground process group. */
+export const interruptJob = (job: Job): boolean => signalRunner(job, 'SIGINT');
 
 /** Terminal output as the text a reader would have seen: no escapes, and a line redrawn with \r keeps its last version. */
 export function plainLog(raw: string): string {

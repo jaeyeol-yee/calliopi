@@ -7,7 +7,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectMultiplexer, type Exec } from '@calliopi/core/multiplexer';
 import { inferCommand, inferContext, inferPrompt, parseInferred, INFER_SYSTEM } from '#lib/job-infer.ts';
-import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, tailLog, writeExit,
+import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, interruptJob, tailLog, writeExit,
   KEEP_MS, LOG_FILE, PID_FILE, type Job, type JobMeta } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
@@ -204,6 +204,18 @@ test('tmux: a job beside Pi and one in a background window, peeked while running
   assert.equal(stopJob(job(long.jobDir)), true);
   await until('stopped', () => job(long.jobDir).state === 'exited');
   assert.notEqual(job(long.jobDir).exitCode, 0);
+
+  // interrupt (alt+k): Ctrl+C reaches the program the shell is waiting for, not just the shell
+  const busy = await start(meta('busy', { command: 'echo started; sleep 60; echo after', cwd: dir }));
+  await until('started', () => /started/.test(tailLog(busy.jobDir).text));
+  const sent = Date.now();
+  assert.equal(interruptJob(job(busy.jobDir)), true);
+  await until('interrupted', () => job(busy.jobDir).state === 'exited');
+  assert.ok(Date.now() - sent < 5000, 'ends at once, not after sleep');
+  assert.equal(job(busy.jobDir).exitCode, 130); // 128 + SIGINT, as for a typed Ctrl+C
+  assert.doesNotMatch(tailLog(busy.jobDir).text, /after/);
+  assert.match(await mux.capture!(exec, busy.pane), /\[busy 종료 130\] Enter로 닫기/); // an interrupted job stays to be read
+  tmux('send-keys', '-t', busy.pane, 'Enter');
 
   // input typed into the pane reaches the command whole, multibyte characters included
   const typed = await start(meta('typed', { command: 'read line; echo "got:$line"', cwd: dir, silent: true }));
