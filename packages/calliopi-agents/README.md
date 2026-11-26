@@ -2,7 +2,7 @@
 
 서브에이전트: 모델이 일을 맡기면 **자식 Pi가 터미널 멀티플렉서 pane에서** 그 일을 하고, 계약(과제, 완료 조건, 예산)에 따라 `finish`로 결과를 보고합니다. 자식은 진짜 Pi 화면이라 thinking, 도구 호출을 그대로 보고, pane에 직접 입력해 끼어들 수 있습니다. 기록과 규칙은 `@calliopi/core/agents`에 있습니다.
 
-> 진행 상황: 위임(`subagent` 도구)과 자식(child 확장)까지. 위임 시점 요약과 배경 주입, 목적 고정, tree viewer는 다음 단계입니다. 설계: `/load-plan subagents`.
+> 진행 상황: 위임(`subagent` 도구), 자식(child 확장), 위임 시점 요약과 배경까지. tree viewer, 이탈 대응, 내보내기, worktree 격리는 다음 단계입니다. 설계: `/load-plan subagents`.
 
 ## 위임: `subagent` 도구
 
@@ -22,6 +22,15 @@ subagent({
 - **실행**: 자식마다 기록(`<Pi agent dir>/calliopi-agents/<최상위 세션>/<id>/`), system prompt, 세션 파일을 먼저 만들고 multiplexer의 백그라운드 창(tmux) 또는 옆 pane(Rex, herdr)에 띄웁니다. 부모가 `-e`로 받은 확장도 자식에게 넘깁니다.
 - **foreground**(기본): 진행 상황을 한 줄씩 보여 주며 모두 끝날 때까지 기다리고, 결과(`resultForParent`)를 도구 결과로 돌려줍니다. 중단(Esc)하면 자식들에게 `stop`을 보냅니다.
 - **background**: 바로 돌아오고, 자식이 끝나면 결과를 `steer` + `triggerTurn`으로 보내 모델을 깨웁니다(`/cl-run`과 같은 방식). 대화 기록에는 `✓ scout-2 · 완료 · 12초 · 턴 2`처럼 한 줄로 보이고 펼치면 전달한 내용이 보입니다.
+
+## 위임 시점 요약과 배경 (`context: summary`, 역할 기본값)
+
+요약은 매 턴 만들지 않고 **일을 맡기는 순간에만** 만듭니다. auto compaction과는 별개입니다.
+
+- 마지막 위임 요약(없으면 마지막 compaction 요약) 이후의 메시지만, Pi가 compaction에 쓰는 요약기(`generateSummaryWithUsage`)로 이전 요약에 이어 갱신합니다. 형식도 같습니다(Goal, Constraints & Preferences, Progress, Key Decisions, Next Steps, Critical Context). 새 메시지가 없으면 요청 없이 이전 요약을 씁니다.
+- 요약은 부모 세션에 `calliopi-summary` 항목으로 남습니다(모델 맥락에는 들어가지 않음). "맡길 때 부모가 무엇을 알고 있었나"의 기록입니다.
+- 요약은 자식들이 시작하는 동안 **병렬로** 만들고, 한 번 만든 것을 역할에 맞게 잘라(파일을 바꾸지 않는 역할은 Progress 제외) 각 자식의 inbox에 보냅니다. 자식은 과제보다 먼저 받거나(최대 10초 대기), 늦으면 steer로 받습니다.
+- 요약이 실패하면 빈 배경을 보내 자식이 기다리지 않게 하고, 과제만으로 진행합니다.
 
 ## 자식 Pi
 
@@ -48,6 +57,7 @@ env CALLIOPI_AGENT_DIR=<dir> PI_CODING_AGENT_DIR=… pi --session-dir <dir> --se
 extensions/agents.ts   진입점: 최상위면 installParent, 자식이면 installChild (+ 위임할 수 있는 역할이면 installParent)
 lib/parent.ts          subagent 도구: 검사, 승인, 기록, pane 실행, foreground 대기, background 알림
 lib/catalog.ts         역할 파일 읽기 (기본 → 사용자 → 프로젝트)
+lib/briefing.ts        위임 시점 요약: 입력 고르기, 역할별 자르기, 자식 inbox로 보내기
 agents/                기본 역할: scout, reviewer
 lib/child.ts           자식: finish 도구, 과제 제출, inbox, 예산, 기록
 lib/contract.ts        자식에게 주는 문구: system prompt, 과제, 배경, 상기
@@ -56,4 +66,4 @@ lib/launch.ts          자식 준비: 세션 파일(parentSession), pane 명령(
 
 ## 테스트
 
-`npm test -w @calliopi/calliopi-agents`. 실제 tmux 서버(전용 socket)에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, 세션 헤더의 `parentSession`, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.
+`npm test -w @calliopi/calliopi-agents`. 실제 tmux 서버(전용 socket)에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.

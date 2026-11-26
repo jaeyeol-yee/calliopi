@@ -40,16 +40,21 @@ test('top Pi delegates: foreground returns the result as the tool output; backgr
     for (const end = Date.now() + ms; Date.now() < end && !ok();) await new Promise(r => setTimeout(r, 250));
     assert.ok(ok(), what);
   };
+  // Pi's summarizer asks for a "context checkpoint summary" (or to update one in <previous-summary>).
+  let completions: { match: string; text: string }[] = [];
   const scenario = (name: string, replies: unknown[]) => {
     const file = path.join(scenarios, `${name}.yaml`);
-    fs.writeFileSync(file, JSON.stringify({ title: name, turns: replies.map(reply => ({ prompt: 'x', reply })) }));
+    fs.writeFileSync(file, JSON.stringify({ title: name, turns: replies.map(reply => ({ prompt: 'x', reply })), completions }));
     return file;
   };
+  completions = [{ match: 'checkpoint summary|previous-summary', text: '## Goal\nFind login fast\n\n## Progress\n### Done\n- [x] asked twice\n\n## Key Decisions\n- **Scouts first**: cheap\n' }];
   const parent = scenario('parent', [
     [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Find where login is defined', done: 'The file is named', context: 'none' }] } }, { text: 'The scout found it.' }],
     [{ tool: 'subagent', args: { background: true, tasks: [{ role: 'scout', task: 'Look again', context: 'none' }] } }, { text: 'Started; waiting.' }],
     [{ text: 'Background scout reported back.' }],
+    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Check login with background' }] } }, { text: 'Briefed scout done.' }],
   ]);
+  completions = [];
   const child = scenario('child', [[{ tool: 'read', args: { path: 'login.ts' } }, { tool: 'finish', args: { status: 'done', summary: 'login is in login.ts:1', evidence: 'read login.ts' } }]]);
   const pi = [process.execPath, path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
     '-e', path.join(repo, 'demo/faux-extension.ts'), '-e', path.join(repo, 'packages/calliopi-agents/extensions/agents.ts'), '--model', 'faux/demo'];
@@ -89,4 +94,22 @@ test('top Pi delegates: foreground returns the result as the tool output; backgr
   const after = fs.readFileSync(header.parentSession, 'utf8');
   assert.match(after, /Started scout-2 \(scout\) in the background/);
   assert.match(after, /"customType":"calliopi-agent"/);
+
+  // context summary (the role default): the delegation summarizes the conversation, and the child
+  // gets its slice of that summary before its task
+  tmux('send-keys', '-t', '0.0', 'Once more, with background', 'Enter');
+  await until('briefed reply', () => /Briefed scout done\./.test(screen()));
+  const third = agents().find(r => r.meta.id === 'scout-3')!;
+  assert.equal(third.meta.call.context, 'summary');
+  assert.equal(readAgent(third.dir)!.status!.briefing!.how, 'first');
+  const parentNow = fs.readFileSync(header.parentSession, 'utf8');
+  assert.match(parentNow, /"customType":"calliopi-summary"[^\n]*Find login fast/); // the delegation summary, kept in the parent's session
+  const thirdSession = fs.readdirSync(third.dir).find(f => /_scout-3\.jsonl$/.test(f))!;
+  const childEntries = fs.readFileSync(path.join(third.dir, thirdSession), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  const briefing = childEntries.find(e => e.type === 'custom_message' && e.customType === 'calliopi-briefing');
+  assert.ok(briefing, 'briefed');
+  assert.match(briefing.content, /Find login fast[\s\S]*Scouts first/);
+  assert.doesNotMatch(briefing.content, /## Progress/); // a read-only scout does not get Progress
+  const firstUser = childEntries.findIndex(e => e.type === 'message' && e.message.role === 'user');
+  assert.ok(childEntries.indexOf(briefing) < firstUser, 'background before the task');
 });

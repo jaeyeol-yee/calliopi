@@ -6,13 +6,16 @@ import { delegates, readAgent, remaining } from '@calliopi/core/agents';
 import { loadCatalog } from '#lib/catalog.ts';
 import { installChild } from '#lib/child.ts';
 import { AGENT_DIR_ENV } from '#lib/launch.ts';
-import { installParent, registryRoot } from '#lib/parent.ts';
+import { brief } from '#lib/briefing.ts';
+import { installParent, registryRoot, type OnSpawned } from '#lib/parent.ts';
 
 export default function (pi: ExtensionAPI) {
   const cwd = process.cwd();
   const root = () => registryRoot(getAgentDir());
+  // Each delegation summarizes this Pi's work since the last one and briefs the children with it.
+  const onSpawned: OnSpawned = (records, ctx) => { void brief(pi, ctx, records, loadCatalog(ctx.cwd).roles); };
   const dir = process.env[AGENT_DIR_ENV];
-  if (!dir) return installParent(pi, { depth: 0, parentId: null }, { root, cwd });
+  if (!dir) return installParent(pi, { depth: 0, parentId: null }, { root, cwd, onSpawned });
 
   installChild(pi, dir);
   const meta = readAgent(dir)!.meta;
@@ -25,5 +28,5 @@ export default function (pi: ExtensionAPI) {
       const now = Date.now();
       return remaining(meta.call.budget, { turns: s?.turns ?? 0, ms: now - (s?.startedAt ?? now), tokens: s?.tokens ?? 0, idleMs: 0 });
     },
-  }, { root, cwd });
+  }, { root, cwd, onSpawned });
 }

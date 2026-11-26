@@ -72,6 +72,7 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
       ctxRef?.abort();
       return;
     }
+    if (message.kind === 'briefing' && !message.text.trim()) { save({ briefing: { at: Date.now(), how: 'failed' } }); return; } // no background: stop waiting
     const text = message.kind === 'briefing' ? briefingMessage(message.text, taskSent) : steerMessage(message.text);
     if (message.kind === 'briefing') save({ briefing: { at: Date.now(), how: taskSent ? 'steer' : 'first' } });
     if (!taskSent) pi.sendMessage({ customType: 'calliopi-briefing', content: text, display: true });
