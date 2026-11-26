@@ -5,4 +5,5 @@ export { DEFAULT_MAX_DEPTH, delegates, mayDelegate, resolveModel, resolveTools }
 export { MARK, STATUS_TEXT, classifyEnd, resultForParent, type EndFacts } from '#lib/agents/outcome.ts';
 export { FILES, createAgent, listAgents, markDelivered, postInbox, privateDir, readAgent, readDelivered, readInbox, readJson, setPane, treeDir, writeJson, writeResult, writeStatus, type Delivered } from '#lib/agents/registry.ts';
 export { decodeRequest, decodeRequests, encodeRequest, type RequestRecord } from '#lib/agents/requests.ts';
+export { DEFAULT_RETENTION, OPEN, goalAgentTokens, goalOverBudget, goalsDir, listGoals, moveGoal, newGoalId, openGoal, planPrune, saveGoal, staleGoals, type Goal, type GoalStatus, type PruneAction, type Retention } from '#lib/agents/goals.ts';
 export { buildTree, descendantTokens, stateOf, treeCounts, treeRows, type TreeNode, type TreeRow } from '#lib/agents/tree.ts';

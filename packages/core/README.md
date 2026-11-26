@@ -11,7 +11,7 @@ Calliopi의 가장 아래 계층입니다. 다른 패키지를 참조하지 않�
 | `@calliopi/core/pr-lookup` | 현재 브랜치가 속한 PR 조회 `lookupPulls` |
 | `@calliopi/core/usage` | 구독 사용량 strategy(`claude`, `codex`, `cursor`), `fetchUsage`, `defaultEnv` |
 | `@calliopi/core/multiplexer` | 터미널 멀티플렉서 strategy(`rex`, `herdr`, `tmux`), `detectMultiplexer`, `openSidePane` |
-| `@calliopi/core/agents` | 서브에이전트 기록: 레지스트리(`createAgent`, `postInbox`, `writeResult`), 예산과 상속(`budgetFor`, `remaining`, `exceeded`), 역할 카탈로그(`parseRole`, `mergeCatalog`, `roleGuidelines`), 위임 규칙(`mayDelegate`, `resolveModel`, `resolveTools`), 종료 분류(`classifyEnd`), 요청 델타 기록(`encodeRequest`, `decodeRequests`), tree(`buildTree`, `treeRows`) |
+| `@calliopi/core/agents` | 서브에이전트 기록: 레지스트리(`createAgent`, `postInbox`, `writeResult`), 예산과 상속(`budgetFor`, `remaining`, `exceeded`), goal(`moveGoal`, `listGoals`, `planPrune`), 역할 카탈로그(`parseRole`, `mergeCatalog`, `roleGuidelines`), 위임 규칙(`mayDelegate`, `resolveModel`, `resolveTools`), 종료 분류(`classifyEnd`), 요청 델타 기록(`encodeRequest`, `decodeRequests`), tree(`buildTree`, `treeRows`) |
 
 ## PR 조회
 
@@ -71,6 +71,8 @@ Pi는 자기 화면을 나눌 수 없어서(overlay는 대화 기록을 가립�
 - **위임 규칙**: 최상위 Pi는 모든 역할에, 자식은 역할 파일의 `allowed_subagents`에 있는 역할에만, 최대 깊이(기본 2) 미만에서만 위임합니다. 모델은 고정된 역할 → 호출자 → 역할 기본값 → 부모 순. 도구는 부모의 도구 중에서만 고르고 `disallowed_tools`를 뺍니다.
 - **종료**: 자식이 `finish`로 보고하면 그 판정(`done`, `partial`, `blocked`)을, 아니면 하네스가 본 것(`error` → `drifted` → `budget_exceeded` → `idle` → `stopped` → `unanswered`)을 씁니다. `finish` 없이 끝나면 부모에게 "확인된 결과가 아니다"라고 알립니다.
 - **요청 기록**: Pi의 `before_provider_request` payload를 순서대로 남기되, 이전 요청과 같은 최상위 키는 생략하고 배열(messages 등)은 같은 앞부분의 길이와 새 꼬리만 저장합니다. provider 형식에 의존하지 않습니다.
+- **goal**(`goals.ts`): 세션의 열린 goal은 하나(`active` ↔ `paused` → `done` | `abandoned`, 닫힌 goal은 다시 열 수 없음). `goals/<id>.json`에 저장하고, 에이전트의 `meta.goal`이 링크입니다. `goalOverBudget`은 goal 자신과 링크된 에이전트의 토큰을 함께 셉니다.
+- **정리 계획**(`planPrune`): 끝난 에이전트의 `requests.jsonl`은 `requestsDays`, 디렉터리 전체는 `recordsDays`가 지나면 지웁니다. 기준은 goal이 닫힌 시각(goal이 없거나 사라졌으면 자기가 끝난 시각)이고, 실행 중이거나 열린 goal의 것은 건드리지 않습니다. `staleGoals`는 남은 에이전트가 없는 오래된 goal입니다.
 - **역할 카탈로그**: YAML 파싱은 호출자(Pi `parseFrontmatter`)가 하고, 여기서는 값을 역할로 정규화합니다. `when`/`not_when`은 `roleGuidelines`로 도구 이름을 명시한 system prompt 규칙이 됩니다.
 
 ## 구독 사용량

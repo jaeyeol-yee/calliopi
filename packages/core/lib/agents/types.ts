@@ -82,6 +82,8 @@ export interface AgentMeta {
   root: string;
   /** Agent id of the parent; null when the top Pi itself delegated. */
   parent: string | null;
+  /** The goal it works for (the top Pi's open goal when it was started, inherited below); null: none. */
+  goal?: string | null;
   depth: number;
   role: string;
   model: string;

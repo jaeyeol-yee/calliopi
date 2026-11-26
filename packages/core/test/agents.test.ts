@@ -6,8 +6,8 @@ import path from 'node:path';
 import {
   DEFAULT_BUDGET, budgetFor, buildTree, classifyEnd, createAgent, decodeRequests, delegates, encodeRequest, exceeded, formatBudget,
   listAgents, markDelivered, treeDir, mayDelegate, mergeCatalog, nearLimit, parseRole, postInbox, readAgent, readDelivered, readInbox, remaining,
-  resolveModel, resolveTools, descendantTokens, resultForParent, roleGuidelines, setPane, stateOf, treeCounts, treeRows, writeResult, writeStatus,
-  type AgentMeta, type AgentRole, type FullBudget,
+  resolveModel, resolveTools, descendantTokens, DEFAULT_RETENTION, goalAgentTokens, goalOverBudget, goalsDir, listGoals, moveGoal, newGoalId, openGoal, planPrune, saveGoal, staleGoals, resultForParent, roleGuidelines, setPane, stateOf, treeCounts, treeRows, writeResult, writeStatus,
+  type AgentMeta, type AgentRole, type FullBudget, type Goal,
 } from '#lib/agents/index.ts';
 
 const role = (over: Partial<AgentRole> = {}): AgentRole => ({
@@ -192,4 +192,52 @@ test('tree: parents first, siblings by start, orphans at the top, connectors and
   const family = [spend('a', null, 1, false), spend('b', 'a', 2, true), spend('c', 'b', 3, false), spend('d', null, 4, false)];
   assert.equal(descendantTokens(family, 'a'), 20 + 3); // b by its result, c by its status; not a itself, not d
   assert.equal(descendantTokens(family, 'd'), 0);
+});
+
+test('goals: one file each, open goal found, closed goals stay closed, budget over goal and its agents', t => {
+  const root = tmp(t);
+  const goal = (over: Partial<Goal> = {}): Goal => ({ id: newGoalId(1000), session: 'sess-1', objective: 'Ship retries', status: 'active', continuations: 0, usage: { turns: 0, tokens: 0 }, createdAt: 1, updatedAt: 1, ...over });
+  assert.match(newGoalId(1000), /^g-rs-[0-9a-z]{1,4}$/);
+  const g1 = goal({ id: 'g-1', status: 'done', closedAt: 5 }), g2 = goal({ id: 'g-2', createdAt: 2 });
+  saveGoal(root, g2); saveGoal(root, g1);
+  assert.deepEqual(listGoals(root, 'sess-1').map(g => g.id), ['g-1', 'g-2']); // by creation
+  assert.equal(openGoal(listGoals(root, 'sess-1'))!.id, 'g-2');
+  assert.equal(fs.statSync(goalsDir(root, 'sess-1')).mode & 0o777, 0o700);
+
+  const paused = moveGoal(g2, 'paused', 'user stopped', 10) as Goal;
+  assert.deepEqual([paused.status, paused.pausedBecause, paused.closedAt], ['paused', 'user stopped', undefined]);
+  const back = moveGoal(paused, 'active', undefined, 11) as Goal;
+  assert.equal(back.pausedBecause, undefined);
+  const done = moveGoal(back, 'done', 'tests pass', 12) as Goal;
+  assert.deepEqual([done.status, done.closedAt, done.outcome], ['done', 12, 'tests pass']);
+  assert.match((moveGoal(done, 'active', undefined) as { error: string }).error, /바꿀 수 없습니다/);
+  assert.match((moveGoal(back, 'active', undefined) as { error: string }).error, /이미 active/);
+
+  assert.equal(goalOverBudget(goal({ budget: { turns: 5 }, usage: { turns: 4, tokens: 0 } }), 0), null);
+  assert.match(goalOverBudget(goal({ budget: { turns: 5 }, usage: { turns: 5, tokens: 0 } }), 0)!, /턴/);
+  assert.match(goalOverBudget(goal({ budget: { tokens: 100 }, usage: { turns: 0, tokens: 60 } }), 40)!, /토큰/); // its subagents count
+  const linked = (id: string, g: string | null, tokens: number) => ({ dir: id, meta: { id, goal: g } as AgentMeta, result: { status: 'done' as const, summary: '', usage: { turns: 0, tokens, ms: 0 }, endedAt: 0 } });
+  assert.equal(goalAgentTokens(goal({ id: 'g-x' }), [linked('a', 'g-x', 7), linked('b', 'g-y', 9), linked('c', null, 3)]), 7);
+});
+
+test('pruning: request logs then whole records age out after their goal closes; running and open-goal work is kept', () => {
+  const day = 24 * 60 * 60 * 1000, now = 100 * day;
+  const g = (id: string, status: Goal['status'], closedAt?: number): Goal => ({ id, session: 's', objective: '', status, continuations: 0, usage: { turns: 0, tokens: 0 }, createdAt: 0, updatedAt: 0, closedAt });
+  const r = (id: string, goal: string | null, endedAt?: number) => ({ dir: `/r/${id}`, meta: { id, goal } as AgentMeta,
+    result: endedAt === undefined ? undefined : { status: 'done' as const, summary: '', usage: { turns: 0, tokens: 0, ms: 0 }, endedAt } });
+  const goals = [g('open', 'active'), g('old', 'done', now - 20 * day), g('recent', 'abandoned', now - 4 * day), g('fresh', 'done', now - 1 * day)];
+  const records = [
+    r('running', null), // no result: never
+    r('in-open', 'open', now - 30 * day), // its goal is still open: kept however old
+    r('in-old', 'old', now - 25 * day), // goal closed 20 days ago: all of it
+    r('in-recent', 'recent', now - 10 * day), // goal closed 4 days ago (its own end does not count): requests only
+    r('in-fresh', 'fresh', now - 30 * day), // goal closed yesterday: nothing yet
+    r('no-goal', null, now - 5 * day), // no goal: from its own end
+    r('lost-goal', 'gone', now - 15 * day), // goal file gone: from its own end
+  ];
+  assert.deepEqual(planPrune(records, goals, DEFAULT_RETENTION, now), [
+    { dir: '/r/in-old', what: 'all' }, { dir: '/r/in-recent', what: 'requests' }, { dir: '/r/no-goal', what: 'requests' }, { dir: '/r/lost-goal', what: 'all' },
+  ]);
+  assert.deepEqual(planPrune(records, goals, DEFAULT_RETENTION, now, dir => dir !== '/r/no-goal').map(a => a.dir), ['/r/in-old', '/r/in-recent', '/r/lost-goal']); // already pruned
+  assert.deepEqual(staleGoals(goals, records.filter(x => x.meta.id !== 'in-old'), DEFAULT_RETENTION, now).map(x => x.id), ['old']);
 });
