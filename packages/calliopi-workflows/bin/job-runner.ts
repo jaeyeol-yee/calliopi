@@ -14,6 +14,9 @@ process.title = `cl-run ${meta.name}`;
 fs.writeFileSync(path.join(dir, PID_FILE), String(process.pid), { mode: 0o600 });
 const log = fs.openSync(path.join(dir, LOG_FILE), 'a', 0o600);
 
+// Create stderr now, while the terminal is up. Node opens it on first use, and after the pane closes
+// (hangup) opening that terminal blocks for ever: the event loop stops before the exit code is written.
+void process.stderr;
 const out = process.stdout, input = process.stdin;
 out.write(`\x1b[2m$ ${meta.command}\x1b[0m\r\n`);
 const child = pty.spawn(process.env.SHELL || '/bin/sh', ['-c', meta.command], {
