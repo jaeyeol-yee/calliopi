@@ -67,6 +67,10 @@ export interface ParentOptions {
   onSpawned?: OnSpawned;
   /** How children are started; tests pass their own model and scenario. */
   launch?: Partial<ChildLaunch>;
+  /** The goal the children started now belong to (the open goal, or the one this child inherited). */
+  goal?: () => string | null;
+  /** Removes aged records; run before starting children. */
+  collect?: () => void;
 }
 
 export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOptions): Fleet {
@@ -155,12 +159,14 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       }
       if (signal?.aborted) return fail('Cancelled before any subagent started.');
 
-      // 2. Start them together.
+      // 2. Start them together (old records age out first).
+      opts.collect?.();
+      const goal = opts.goal?.() ?? null;
       const root = place.root ?? ctx.sessionManager.getSessionId();
       const launch: ChildLaunch = { pi: piInvocation(), extensions: [AGENTS_EXTENSION, ...extensionArgs()], ...opts.launch };
       const records = plans.map(({ t, role, model, budget }) => {
         const record = createAgent(opts.root(), {
-          root, parent: place.parentId, depth: place.depth + 1, role: role.name, model: model.model, modelSource: model.source,
+          root, parent: place.parentId, goal, depth: place.depth + 1, role: role.name, model: model.model, modelSource: model.source,
           thinking: role.thinking, tools: resolveTools(role, parentTools), cwd: ctx.cwd, createdAt: Date.now(),
           call: { task: t.task, done: t.done, budget, context: (t.context ?? role.context) as ContextMode, background, parentToolCallId: toolCallId },
           pane: null,

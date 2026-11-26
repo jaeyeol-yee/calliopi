@@ -76,6 +76,16 @@ export class Fleet {
     setTimeout(() => { if (!child.exited) child.pane.stop(); }, STOP_GRACE_MS).unref();
   }
 
+  /** Let go of ended children's screens (their goal is closed): the viewer shows their records instead. */
+  release(ids: string[]): void {
+    for (const id of ids) {
+      const child = this.children.get(id);
+      if (!child?.exited) continue; // a running one is stopped first; it is released when its goal is
+      child.pane.dispose();
+      this.children.delete(id);
+    }
+  }
+
   /** This Pi is ending: the children end with it. */
   dispose(): void {
     this.closed = true;

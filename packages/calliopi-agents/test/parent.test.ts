@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listAgents, readAgent, type AgentRecord } from '@calliopi/core/agents';
+import { listAgents, listGoals, readAgent, type AgentRecord } from '@calliopi/core/agents';
 import { TerminalPane } from '@calliopi/ui/terminal-overlay';
 import { extensionArgs } from '#lib/launch.ts';
 import { agentLine, registryRoot } from '#lib/parent.ts';
@@ -54,6 +54,8 @@ test('top Pi delegates: background by default wakes the model when a child ends;
     [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Look in the background', context: 'none' }] } }, { text: 'Started; carrying on.' }],
     [{ text: 'Background scout reported back.' }],
     [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Check login with background' }] } }, { text: 'Briefed scout done.' }],
+    // a goal: /cl-goal starts work at once; the subagent is linked to it; goal_update done closes it
+    [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Find login for the goal', context: 'none' }] } }, { tool: 'goal_update', args: { status: 'done', outcome: 'login is in login.ts' } }, { text: 'Goal reached.' }],
   ]);
   completions = [];
   const child = scenario('child', [[{ tool: 'read', args: { path: 'login.ts' } }, { tool: 'finish', args: { status: 'done', summary: 'login is in login.ts:1', evidence: 'read login.ts' } }]]);
@@ -131,4 +133,16 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   assert.doesNotMatch(briefing.content, /## Progress/); // a read-only scout does not get Progress
   const firstUser = childEntries.findIndex(e => e.type === 'message' && e.message.role === 'user');
   assert.ok(childEntries.indexOf(briefing) < firstUser, 'background before the task');
+
+  // the active goal: created by the user, worked on by itself, its subagent linked, closed when done
+  await type('/cl-goal Find login --done the file is named');
+  await until('goal reached', () => /Goal reached\./.test(screen()));
+  const fifth = agents().find(r => r.meta.id === 'scout-5')!;
+  const [goal] = listGoals(registry, first.meta.root);
+  assert.equal(fifth.meta.goal, goal!.id); // linked to the open goal
+  assert.deepEqual([goal!.status, goal!.objective, goal!.done], ['done', 'Find login', 'the file is named']);
+  assert.match(goal!.outcome!, /^login is in login\.ts\n서브에이전트 1개:\n- scout-5 \(scout\): 완료/);
+  assert.match(topSession(), /"customType":"calliopi-goal-continue"/); // it started by itself
+  await new Promise(r => setTimeout(r, 2000));
+  assert.doesNotMatch(screen(), /시나리오에 \d+번째 답변이 없습니다/); // closed: no more carry-ons
 });

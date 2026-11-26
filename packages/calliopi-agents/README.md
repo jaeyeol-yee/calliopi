@@ -2,7 +2,7 @@
 
 서브에이전트: 모델이 일을 맡기면 **자식 Pi가 부모 Pi의 pseudo-terminal에서** 그 일을 하고, 계약(과제, 완료 조건, 예산)에 따라 `finish`로 결과를 보고합니다. pane은 열지 않습니다. 자식은 진짜 Pi 화면을 그리고 있어서, `/cl-agents`로 floating window에 띄워 thinking과 도구 호출을 그대로 보고 직접 입력해 끼어들 수 있습니다. 터미널 멀티플렉서가 없어도 동작합니다. 기록과 규칙은 `@calliopi/core/agents`에 있습니다.
 
-> 진행 상황: 위임(`subagent` 도구), 자식(child 확장), 위임 시점 요약과 배경, 계약 알림, `/cl-agents`까지. viewer의 상세 탭(요약, 요청, 맥락), 이탈 대응, 내보내기, worktree 격리는 다음 단계입니다. 설계: `/load-plan subagents`.
+> 진행 상황: 위임(`subagent` 도구), 자식(child 확장), 위임 시점 요약과 배경, 계약 알림, `/cl-agents`, **Active Goal**(goal 링크, 자동 계속, 정리, 내보내기)까지. 이탈 판정, worktree 격리와 쓰기 역할은 다음 단계입니다. 설계: `/load-plan subagents`.
 
 ## 위임: `subagent` 도구
 
@@ -25,6 +25,34 @@ subagent({
 - **background**(기본, fire-and-forget): 바로 돌아오고, 자식이 끝나면 결과를 `steer` + `triggerTurn`으로 보내 모델을 깨웁니다(`/cl-run`과 같은 방식). 모델이 쉬고 있으면 바로 답하고, 작업 중이면 다음 요청 전에 끼어듭니다. 대화 기록에는 `✓ scout-2 · 완료 · 12초 · 턴 2`처럼 한 줄로 보이고 펼치면 전달한 내용이 보입니다.
 - **foreground**(`background: false`): 진행 상황을 한 줄씩 보여 주며 모두 끝날 때까지 기다리고, 결과(`resultForParent`)를 도구 결과로 돌려줍니다. 다음 단계가 그 결과에 달려 있을 때만 씁니다. 중단(Esc)하면 자식들에게 `stop`을 보내고, 그 뒤에 끝나는 것은 background처럼 알립니다.
 
+## Active Goal
+
+세션에는 **열린 goal이 하나**만 있습니다(`active` ↔ `paused` → `done` | `abandoned`). 그동안 맡긴 서브에이전트는 그 goal에 링크되고(손자는 상속), goal이 닫히면 그 에이전트들도 함께 정리됩니다.
+
+```text
+/cl-goal 로그인 실패 재시도 구현 --done 테스트 통과, 401은 재시도 안 함   만들고 바로 시작
+/cl-goal                    지금 goal (목표, 진척, 사용량, 서브에이전트)
+/cl-goal pause | resume     일시 중지 / 이어서 (resume은 바로 다시 시작)
+/cl-goal done [메모] | abandon [메모]
+```
+
+- 모델 도구: `goal_get`, `goal_create`(목표, 완료 조건, 예산), `goal_update`(`progress`로 진척 메모, `status: done`은 완료 조건을 실제로 확인한 뒤, `blocked`는 사용자가 필요할 때 → 일시 중지).
+- **목적 고정**: active인 동안 매 요청 끝에 goal(목표, 완료 조건, 진척)을 붙입니다(저장 안 함). footer에 `◆ 목표 · 진행 중`.
+- **자동 계속**: active인 채로 실행이 끝나면 완료 조건을 확인하고 다음 단계를 하라는 메시지로 이어서 일합니다(followUp + triggerTurn). 이어서 하지 않는 경우:
+  - 사용자 메시지가 기다리고 있을 때(그것이 먼저), goal의 서브에이전트가 실행 중일 때(결과가 깨움)
+  - 일시 중지되는 경우: 사용자가 중단(Esc), 모델 요청 실패, 도구 호출 없는 실행이 3번 연속, 자동 계속 20번, goal 예산(턴·토큰, 서브에이전트 포함) 초과 — 이유를 알리고 `/cl-goal resume`으로 이어갑니다.
+- **닫을 때**(`done` | `abandoned`): 링크된 실행 중 서브에이전트를 중지하고, 끝난 것의 화면을 해제하고, goal 결과에 서브에이전트들의 결과 한 줄씩을 붙입니다.
+- 저장: `<레지스트리>/<세션>/goals/<id>.json`, 변경 이력은 세션의 `calliopi-goal` 항목.
+
+## 정리 (GC)
+
+goal을 만들 때, 닫을 때, 서브에이전트를 띄울 때 오래된 기록을 지웁니다.
+
+- 닫힌 goal의 서브에이전트(goal 없는 것은 자기가 끝난 시점부터): **3일** 뒤 `requests.jsonl`, **14일** 뒤 디렉터리 전체. 그다음 아무것도 남지 않은 goal 파일과 빈 세션 디렉터리.
+- 실행 중인 서브에이전트와 열린 goal의 것은 건드리지 않습니다. `exports/`도 지우지 않습니다.
+- 기간: `<Pi agent dir>/calliopi-agents.json` — `{ "retention": { "requestsDays": 3, "recordsDays": 14 } }`.
+- 메모리: 끝난 서브에이전트의 화면은 goal이 닫힐 때 해제됩니다(그 뒤로는 기록으로 보여 줌).
+
 ## `/cl-agents`: 목록과 화면
 
 ```text
@@ -37,9 +65,10 @@ subagent({
 ╰ ↑↓ 이동 · Enter: 화면 · x: 중지 · Esc: 닫기 ─────────────────────────────╯
 ```
 
-- 왼쪽에 이 세션의 서브에이전트 전체를 tree로(부모 아래 자식), 상태 기호(`● 실행 중`, `✓ 완료`, `◐ 일부`, `✗ 막힘/오류`, `⏱ 예산·무응답`, `■ 중지`, `? finish 없음`)와 함께 보여 주고, 오른쪽에 선택한 에이전트를 `@calliopi/ui/table` 표로 보여 줍니다(상태, 역할, 과제, 완료 조건, 모델, 맥락, 예산, 결과, 근거, 세션). 너비가 70칸 미만이면 표가 목록 아래로 갑니다. 상태는 0.5초마다 갱신합니다.
+- 왼쪽에 이 세션의 서브에이전트를 **goal별로**(열린 goal 맨 위에 펼침, 닫힌 goal은 접힘 — Enter로 펴기, goal 없는 것은 마지막) tree로(부모 아래 자식), 상태 기호(`● 실행 중`, `✓ 완료`, `◐ 일부`, `✗ 막힘/오류`, `⏱ 예산·무응답`, `■ 중지`, `? finish 없음`)와 함께 보여 주고, 오른쪽에 선택한 에이전트를 `@calliopi/ui/table` 표로 보여 줍니다(상태, 역할, 과제, 완료 조건, 모델, 맥락, 예산, 결과, 근거, 세션). goal 행을 고르면 goal(상태, 목표, 완료 조건, 진척, 사용량, 에이전트 수, 결과, 시각)을 보여 줍니다. 너비가 70칸 미만이면 표가 목록 아래로 갑니다. 상태는 0.5초마다 갱신합니다.
 - **Enter**: 그 에이전트의 **실제 Pi 화면**을 창에 띄웁니다. 창 크기에 맞춰 자식이 다시 그리고, 입력은 그 자식 Pi로 갑니다(끼어들기, Esc로 중단). **ctrl+]**로 목록에 돌아오며 자식은 계속 실행됩니다(Esc는 자식에게 갑니다). 끝난 에이전트는 마지막 화면을(Esc로도 목록으로), 이 Pi가 실행하지 않은 에이전트(이전 세션)는 기록(과제, 결과, 세션 파일)을 보여 줍니다.
 - **x**: 선택한 에이전트를 중지합니다(stop 요청 → 5초 안에 안 끝나면 종료).
+- **e**: 선택한 goal(에이전트 행이면 그 goal)을 `<레지스트리>/exports/<goal>-….json`으로 내보냅니다: goal, 부모가 만든 위임 시점 요약, 서브에이전트 tree(계약, 상태, 결과, compaction 요약, 세션 파일). 부모가 본 결과와 자식이 한 일을 나란히 볼 수 있습니다.
 
 ## 위임 시점 요약과 배경 (`context: summary`, 역할 기본값)
 
@@ -82,9 +111,12 @@ lib/child.ts           자식: finish 도구, 과제 제출, inbox, 예산, 기�
 lib/contract.ts        자식에게 주는 문구: system prompt, 과제, 배경, 상기
 lib/launch.ts          자식 준비: 세션 파일(parentSession), 실행 명령과 환경
 lib/fleet.ts           자식들의 pseudo-terminal: 시작, 중지, 결과 없이 죽은 자식 기록, 부모와 함께 종료
-lib/viewer.ts          /cl-agents: 목록(tree), 실제 화면 붙이기(ctrl+]로 떼기)
+lib/viewer.ts          /cl-agents: goal별 목록(tree), 오른쪽 표, 실제 화면 붙이기(ctrl+]로 떼기)
+lib/goals.ts           Active Goal: 도구, /cl-goal, 목적 고정, 자동 계속과 안전장치, 닫을 때 정리
+lib/gc.ts              보존 기간에 따른 기록 정리
+lib/export.ts          goal 내보내기(JSON)
 ```
 
 ## 테스트
 
-`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.
+`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.

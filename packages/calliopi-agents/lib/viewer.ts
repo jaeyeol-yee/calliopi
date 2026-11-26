@@ -1,11 +1,12 @@
-// /cl-agents: the subagents of this session in a floating window. The list is the tree with each
-// agent's state; Enter shows an agent's real Pi screen (its pseudo-terminal, lib/fleet.ts) and passes
+// /cl-agents: the subagents of this session in a floating window, grouped by the goal they work for
+// (the open goal first and expanded, closed goals folded, then those without a goal). A goal row
+// shows the goal on the right and folds with Enter; e exports it. On an agent, Enter shows an agent's real Pi screen (its pseudo-terminal, lib/fleet.ts) and passes
 // keys to it, so the user can watch it think and step in. Ctrl+] goes back to the list; the child
 // keeps running. An agent that has ended shows its last screen, or its result when this Pi did not
 // run it (an earlier session).
 import { CURSOR_MARKER, matchesKey, renderFakeCursor, truncateToWidth, visibleWidth, type Component, type Focusable } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { MARK, STATUS_TEXT, buildTree, formatBudget, stateOf, treeCounts, treeRows, type AgentRecord } from '@calliopi/core/agents';
+import { MARK, OPEN, STATUS_TEXT, buildTree, formatBudget, goalAgentTokens, stateOf, treeCounts, treeRows, type AgentRecord, type Goal } from '@calliopi/core/agents';
 import { metadataTable, type MetadataValue } from '@calliopi/ui/table';
 import type { Fleet } from '#lib/fleet.ts';
 import { agentLine } from '#lib/parent.ts';
@@ -19,38 +20,84 @@ interface Theme { fg(color: string, text: string): string }
 /** Below this width the details go under the list instead of beside it. */
 const SPLIT_MIN = 70;
 
+/** One row of the list: a goal (null: the agents without one) or an agent under it. */
+export type Item = { kind: 'goal'; goal: Goal | null; agents: AgentRecord[] } | { kind: 'agent'; record: AgentRecord; prefix: string };
+
+const GOAL_MARK: Record<Goal['status'], string> = { active: '▶', paused: '⏸', done: '✓', abandoned: '✗' };
+const GOAL_STATE: Record<Goal['status'], string> = { active: '진행 중', paused: '일시 중지', done: '완료', abandoned: '포기' };
+
+/** The rows: goals as headers with their agents' trees, unless there are no goals at all (then the tree alone). */
+export function listItems(records: AgentRecord[], goals: Goal[], folded: (key: string, closed: boolean) => boolean): Item[] {
+  const tree = (rs: AgentRecord[], indent: string): Item[] => treeRows(buildTree(rs)).map(r => ({ kind: 'agent', record: r.node.record, prefix: indent + r.prefix }));
+  const known = new Set(goals.map(g => g.id));
+  const loose = records.filter(r => !r.meta.goal || !known.has(r.meta.goal));
+  if (!goals.length) return tree(loose, '');
+  const order = [...goals.filter(g => OPEN.includes(g.status)), ...goals.filter(g => !OPEN.includes(g.status)).sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))];
+  const items: Item[] = [];
+  for (const goal of order) {
+    const agents = records.filter(r => r.meta.goal === goal.id);
+    items.push({ kind: 'goal', goal, agents });
+    if (!folded(goal.id, !OPEN.includes(goal.status))) items.push(...tree(agents, '  '));
+  }
+  if (loose.length) {
+    items.push({ kind: 'goal', goal: null, agents: loose });
+    if (!folded('', false)) items.push(...tree(loose, '  '));
+  }
+  return items;
+}
+
 export class AgentsView implements Component, Focusable {
   focused = false;
   mode: 'list' | 'screen' = 'list';
   selected = 0;
-  private rowsCache: AgentRecord[] = [];
+  /** Goals folded or unfolded by hand; otherwise closed goals are folded. */
+  private toggled = new Map<string, boolean>();
+  private items: Item[] = [];
+  private notice = '';
 
   private readonly tui: Tui;
   private readonly theme: Theme;
   private readonly fleet: Fleet;
   private readonly records: () => AgentRecord[];
+  private readonly goals: () => Goal[];
+  private readonly onExport: (goal: Goal | null) => string;
   private readonly close: () => void;
 
-  constructor(tui: Tui, theme: Theme, fleet: Fleet, records: () => AgentRecord[], close: () => void) {
-    this.tui = tui; this.theme = theme; this.fleet = fleet; this.records = records; this.close = close;
+  constructor(tui: Tui, theme: Theme, fleet: Fleet, records: () => AgentRecord[], close: () => void, goals: () => Goal[] = () => [], onExport: (goal: Goal | null) => string = () => '') {
+    this.tui = tui; this.theme = theme; this.fleet = fleet; this.records = records; this.close = close; this.goals = goals; this.onExport = onExport;
   }
 
-  private current(): AgentRecord | undefined { return this.rowsCache[this.selected]; }
+  private current(): Item | undefined { return this.items[this.selected]; }
+  private agent(): AgentRecord | undefined { const c = this.current(); return c?.kind === 'agent' ? c.record : undefined; }
+  private goalOf(item: Item | undefined): Goal | null | undefined {
+    if (!item) return undefined;
+    if (item.kind === 'goal') return item.goal;
+    return this.goals().find(g => g.id === item.record.meta.goal) ?? null;
+  }
 
   handleInput(data: string): void {
     if (this.mode === 'screen') {
-      const child = this.current() && this.fleet.get(this.current()!.meta.id);
+      const child = this.agent() && this.fleet.get(this.agent()!.meta.id);
       const live = !!child && !child.exited;
       // ctrl+] always leaves; Esc too when nothing is listening (an ended agent): a live one gets it
       if (matchesKey(data, DETACH_KEY) || (!live && (matchesKey(data, 'escape') || data === 'q'))) { this.mode = 'list'; this.tui.requestRender(); return; }
       if (live) child.pane.write(data);
       return;
     }
+    this.notice = '';
+    const item = this.current();
     if (matchesKey(data, 'escape') || data === 'q') return this.close();
     if (matchesKey(data, 'up') || data === 'k') this.selected = Math.max(0, this.selected - 1);
-    else if (matchesKey(data, 'down') || data === 'j') this.selected = Math.min(Math.max(0, this.rowsCache.length - 1), this.selected + 1);
-    else if (matchesKey(data, 'enter') && this.current()) this.mode = 'screen';
-    else if (data === 'x' && this.current()) this.fleet.stop(this.current()!.meta.id);
+    else if (matchesKey(data, 'down') || data === 'j') this.selected = Math.min(Math.max(0, this.items.length - 1), this.selected + 1);
+    else if (matchesKey(data, 'enter') && item?.kind === 'goal') {
+      const key = item.goal?.id ?? '';
+      const closed = !!item.goal && !OPEN.includes(item.goal.status);
+      this.toggled.set(key, !(this.toggled.get(key) ?? closed));
+    } else if (matchesKey(data, 'enter') && item) this.mode = 'screen';
+    else if (data === 'x' && this.agent()) this.fleet.stop(this.agent()!.meta.id);
+    else if (data === 'e' && item) {
+      try { this.notice = `내보냄: ${this.onExport(this.goalOf(item) ?? null)}`; } catch (error) { this.notice = `내보내지 못함: ${error instanceof Error ? error.message : String(error)}`; }
+    }
     this.tui.requestRender();
   }
 
@@ -63,40 +110,40 @@ export class AgentsView implements Component, Focusable {
     const border = (s: string) => this.theme.fg('border', s);
     const fit = (s: string) => truncateToWidth(s, inner, '…', true);
     const records = this.records();
-    const top = buildTree(records);
-    this.rowsCache = treeRows(top).map(r => r.node.record);
-    this.selected = Math.min(this.selected, Math.max(0, this.rowsCache.length - 1));
+    const goals = this.goals();
+    this.items = listItems(records, goals, (key, closed) => this.toggled.get(key) ?? closed);
+    this.selected = Math.min(this.selected, Math.max(0, this.items.length - 1));
     const box = (title: string, body: string[], footer: string) => [
       border('╭') + this.theme.fg('accent', truncateToWidth(title, inner, '…', true)) + border('╮'),
       ...body.map(line => border('│') + line + border('│')),
       border('╰') + this.theme.fg('dim', truncateToWidth(footer, inner, '', true)) + border('╯'),
     ];
 
-    if (this.mode === 'screen' && this.current()) {
-      const r = this.current()!;
-      const child = this.fleet.get(r.meta.id);
-      const state = stateOf(r);
-      const title = ` ${MARK[state]} ${r.meta.id} · ${r.meta.role} · ${r.result ? STATUS_TEXT[r.result.status] : '실행 중'} `;
+    const a = this.agent();
+    if (this.mode === 'screen' && a) {
+      const child = this.fleet.get(a.meta.id);
+      const state = stateOf(a);
+      const title = ` ${MARK[state]} ${a.meta.id} · ${a.meta.role} · ${a.result ? STATUS_TEXT[a.result.status] : '실행 중'} `;
       if (child) {
         child.pane.resize(inner, height);
         const live = !child.exited;
         const lines = child.pane.lines(this.focused && live, { CURSOR_MARKER, renderFakeCursor, truncateToWidth });
         return box(title, lines.map(l => truncateToWidth(l, inner, '', true)), live ? ` ${DETACH_KEY}: 목록 · 입력은 이 에이전트로 갑니다 ` : ` Esc·${DETACH_KEY}: 목록 · 끝난 화면 `);
       }
-      // Not run by this Pi (an earlier session): its record is all there is.
-      const text = [`과제: ${r.meta.call.task}`, ...(r.meta.call.done ? [`완료: ${r.meta.call.done}`] : []), '',
-        ...(r.result ? [r.result.summary || '(요약 없음)', ...(r.result.evidence ? ['', `근거: ${r.result.evidence}`] : [])] : ['(이 Pi에서 실행하지 않아 화면이 없습니다)']),
-        '', `세션: ${r.meta.session}`];
+      // Not run by this Pi (an earlier session, or its goal closed): its record is all there is.
+      const text = [`과제: ${a.meta.call.task}`, ...(a.meta.call.done ? [`완료: ${a.meta.call.done}`] : []), '',
+        ...(a.result ? [a.result.summary || '(요약 없음)', ...(a.result.evidence ? ['', `근거: ${a.result.evidence}`] : [])] : ['(화면이 없습니다)']),
+        '', `세션: ${a.meta.session}`];
       const body = wrap(text, inner).slice(0, height);
       return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), ` Esc·${DETACH_KEY}: 목록 `);
     }
 
     const counts = treeCounts(records);
     const title = ` 서브에이전트 · 실행 중 ${counts.running} · 끝남 ${counts.ended}${counts.problems ? ` · 문제 ${counts.problems}` : ''} `;
-    const footer = ' ↑↓ 이동 · Enter: 화면 · x: 중지 · Esc: 닫기 ';
-    if (!records.length) return box(title, [fit(this.theme.fg('dim', ' 아직 맡긴 일이 없습니다.')), ...Array(height - 1).fill(fit(''))], ' Esc: 닫기 ');
-    const rows = treeRows(top).map((row, i) => {
-      const line = `${row.prefix}${agentLine(row.node.record)}`;
+    const footer = this.notice ? ` ${this.notice} ` : ' ↑↓ 이동 · Enter: 화면/접기 · x: 중지 · e: 내보내기 · Esc: 닫기 ';
+    if (!this.items.length) return box(title, [fit(this.theme.fg('dim', ' 아직 맡긴 일이 없습니다.')), ...Array(height - 1).fill(fit(''))], ' Esc: 닫기 ');
+    const rows = this.items.map((item, i) => {
+      const line = item.kind === 'agent' ? `${item.prefix}${agentLine(item.record)}` : goalLine(item, this.toggled.get(item.goal?.id ?? '') ?? (!!item.goal && !OPEN.includes(item.goal.status)));
       return i === this.selected ? this.theme.fg('accent', `▸${line}`) : ` ${line}`;
     });
     /** The list, scrolled so the selected row is in view. */
@@ -104,8 +151,9 @@ export class AgentsView implements Component, Focusable {
       const start = Math.max(0, Math.min(this.selected - h + 1, rows.length - h));
       return [...rows.slice(start, start + h), ...Array(Math.max(0, h - rows.length)).fill('')];
     };
-    const r = this.current()!;
-    const table = (w: number) => metadataTable(detailRows(r), w, { fg: (token, text) => this.theme.fg(token, text) });
+    const item = this.current()!;
+    const detail = item.kind === 'agent' ? detailRows(item.record) : goalRows(item, records);
+    const table = (w: number) => metadataTable(detail, w, { fg: (token, text) => this.theme.fg(token, text) });
     const pad = (line: string, w: number) => truncateToWidth(line, w, '…', true);
 
     if (inner < SPLIT_MIN) { // narrow: the details under the list
@@ -113,19 +161,46 @@ export class AgentsView implements Component, Focusable {
       const body = [...list(listHeight), ...table(inner)].slice(0, height);
       return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), footer);
     }
-    // wide: the list on the left, the details of the selected agent in a table on the right
+    // wide: the list on the left, the selected goal or agent in a table on the right
     const leftCols = Math.max(28, Math.floor((inner - 1) * 0.42));
     const rightCols = inner - 1 - leftCols;
     const details = table(rightCols);
     const right = details.length > height ? [...details.slice(0, height - 1), this.theme.fg('dim', '…')] : details;
     const left = list(height);
     const label = (text: string, cols: number, color: string) => this.theme.fg(color, truncateToWidth(text, cols, '…', true));
+    const heading = item.kind === 'agent' ? ` ${item.record.meta.id} ` : item.goal ? ` goal ${item.goal.id} ` : ' goal 없음 ';
     return [
-      border('╭') + label(title, leftCols, 'accent') + border('┬') + label(` ${r.meta.id} `, rightCols, 'dim') + border('╮'),
+      border('╭') + label(title, leftCols, 'accent') + border('┬') + label(heading, rightCols, 'dim') + border('╮'),
       ...Array.from({ length: height }, (_, i) => border('│') + pad(left[i] ?? '', leftCols) + border('│') + pad(right[i] ?? '', rightCols) + border('│')),
       border('╰') + this.theme.fg('dim', truncateToWidth(footer, inner, '', true)) + border('╯'),
     ];
   }
+}
+
+/** A goal header row: its mark, objective, state and how many agents (running among them). */
+function goalLine(item: Extract<Item, { kind: 'goal' }>, folded: boolean): string {
+  const running = item.agents.filter(r => !r.result).length;
+  const count = `${item.agents.length}${running ? ` · 실행 ${running}` : ''}`;
+  if (!item.goal) return `${folded ? '▸' : '▾'} · goal 없음 (${count})`;
+  return `${folded ? '▸' : '▾'} ${GOAL_MARK[item.goal.status]} ${item.goal.objective} · ${GOAL_STATE[item.goal.status]} (${count})`;
+}
+
+/** The selected goal as table rows. */
+function goalRows(item: Extract<Item, { kind: 'goal' }>, records: AgentRecord[]): [string, MetadataValue][] {
+  const g = item.goal;
+  const running = item.agents.filter(r => !r.result).length;
+  if (!g) return [['goal', '없음: goal이 열려 있지 않을 때 맡긴 일'], ['에이전트', `${item.agents.length}개${running ? ` · 실행 중 ${running}` : ''}`]];
+  const when = (t: number) => new Date(t).toLocaleString();
+  return [
+    ['상태', `${GOAL_MARK[g.status]} ${GOAL_STATE[g.status]}${g.pausedBecause ? ` (${g.pausedBecause})` : ''}`],
+    ['목표', g.objective],
+    ...(g.done ? [['완료', g.done] as [string, MetadataValue]] : []),
+    ...(g.progress ? [['진척', g.progress] as [string, MetadataValue]] : []),
+    ['사용', `턴 ${g.usage.turns} · 토큰 ${g.usage.tokens + goalAgentTokens(g, records)} (에이전트 포함) · 자동 계속 ${g.continuations}회${g.budget ? ` · 예산 ${[g.budget.turns ? `턴 ${g.budget.turns}` : '', g.budget.tokens ? `토큰 ${g.budget.tokens}` : ''].filter(Boolean).join(' ')}` : ''}`],
+    ['에이전트', `${item.agents.length}개${running ? ` · 실행 중 ${running}` : ''}`],
+    ...(g.outcome ? [['결과', g.outcome] as [string, MetadataValue]] : []),
+    ['시각', `${when(g.createdAt)}${g.closedAt ? ` → ${when(g.closedAt)}` : ''}`],
+  ];
 }
 
 /** The selected agent's contract, run and result, as table rows. */
@@ -164,12 +239,12 @@ function wrap(lines: string[], width: number): string[] {
 }
 
 /** Open the window; resolves when it closes. */
-export async function openAgentsView(ctx: ExtensionContext, fleet: Fleet, records: () => AgentRecord[]): Promise<void> {
+export async function openAgentsView(ctx: ExtensionContext, fleet: Fleet, records: () => AgentRecord[], goals: () => Goal[] = () => [], onExport: (goal: Goal | null) => string = () => ''): Promise<void> {
   let unsubscribe: (() => void) | undefined;
   let timer: NodeJS.Timeout | undefined;
   try {
     await ctx.ui.custom<void>((tui, theme, _keys, done) => {
-      const view = new AgentsView(tui, theme, fleet, records, () => done());
+      const view = new AgentsView(tui, theme, fleet, records, () => done(), goals, onExport);
       fleet.onRender = () => tui.requestRender();
       timer = setInterval(() => tui.requestRender(), 500); // status files change outside any render
       // Keys belong to the window (and, on a screen, to the agent) before Pi's own shortcuts.
