@@ -31,11 +31,12 @@ export default function (pi: ExtensionAPI) {
     return;
   }
 
-  installChild(pi, dir);
+  let fleet: Fleet | undefined; // set below when this child may delegate
+  installChild(pi, dir, () => (fleet?.running() ?? 0) > 0);
   const meta = readAgent(dir)!.meta;
   const role = loadCatalog(cwd).roles.get(meta.role);
   if (!role || !delegates(meta.depth, role)) return;
-  const fleet = installParent(pi, {
+  fleet = installParent(pi, {
     depth: meta.depth, parentId: meta.id, root: meta.root, role,
     budgetLeft: () => {
       const s = readAgent(dir)?.status;

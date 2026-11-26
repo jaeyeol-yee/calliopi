@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
+import { truncateToWidth } from '@earendil-works/pi-tui';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
   FILES, MARK, STATUS_TEXT, budgetFor, createAgent, mayDelegate, readAgent, resolveModel, resolveTools, resultForParent, roleGuidelines, writeResult,
@@ -96,10 +97,12 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
     watched.set(dir, w);
     poll ??= setInterval(check, 1000);
   };
+  // Children live as long as this session of this extension: Pi quitting, and /new, /resume, /fork,
+  // /reload (which replace this instance) end them; nothing would be left to hear from them.
   pi.on('session_shutdown', () => {
     for (const w of watched.values()) w?.close();
     watched.clear(); clearInterval(poll);
-    fleet.dispose(); // children live as long as this Pi
+    fleet.dispose();
   });
 
   const roles = loadCatalog(opts.cwd).roles;
@@ -170,9 +173,10 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       const failed = started.flatMap((s, i) => (s.status === 'rejected' ? [`${records[i]!.meta.id}: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`] : []));
       if (failed.length) {
         for (const r of records) {
-          fleet.stop(r.meta.id); // all or none: a half-started call leaves nothing running
-          // and nothing that looks as if it were still starting
+          // The error first (the first result stands), so a child that did start and takes the stop
+          // cannot record "stopped" instead; then stop it: all or none.
           writeResult(r.dir, { status: 'error', summary: '', reason: `시작하지 못함: ${failed.join('; ')}`, usage: { turns: 0, tokens: 0, ms: 0 }, endedAt: Date.now() });
+          fleet.stop(r.meta.id);
         }
         return fail(`Could not start the subagents (${failed.join('; ')}); none is running.`);
       }
@@ -216,23 +220,9 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       if (!d) return [];
       const text = typeof message.content === 'string' ? message.content : message.content.flatMap(c => (c.type === 'text' ? [c.text] : [])).join('\n');
       const lines = [theme.fg('accent', d.line), ...(expanded ? text.split('\n').map(l => theme.fg('dim', l)) : [])];
-      return lines.map(l => truncate(l, width));
+      return lines.map(l => truncateToWidth(l.replace(/\t/g, '  '), width));
     },
     invalidate() {},
   }));
   return fleet;
-}
-
-/** Cut a styled line to `width` cells (wide characters count two); escapes are kept. */
-function truncate(line: string, width: number): string {
-  let cells = 0, out = '';
-  for (const part of line.split(/(\x1b\[[0-9;:]*m)/)) {
-    if (part.startsWith('\x1b[')) { out += part; continue; }
-    for (const ch of part) {
-      const w = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1;
-      if (cells + w > width) return `${out}\x1b[0m`;
-      out += ch; cells += w;
-    }
-  }
-  return out;
 }

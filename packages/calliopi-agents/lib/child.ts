@@ -31,7 +31,11 @@ const lastText = (messages: unknown[]): string => {
   return '';
 };
 
-export function installChild(pi: ExtensionAPI, dir: string): void {
+/**
+ * `busy`: this child has subagents of its own still running. It then neither ends nor is reminded to
+ * finish (their results are on their way) and is not idle.
+ */
+export function installChild(pi: ExtensionAPI, dir: string, busy: () => boolean = () => false): void {
   const record = readAgent(dir);
   if (!record) throw new Error(`${dir}: 에이전트 기록(meta.json)이 없습니다.`);
   const meta: AgentMeta = record.meta;
@@ -45,6 +49,12 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
   let lastAnswer = '';
   let runningTools = 0; // a tool at work (a long command, a delegation waiting on its children) is not idleness
   const registry = path.dirname(path.dirname(dir));
+  let below = { at: 0, tokens: 0 }; // what its own subagents spent, read at most every 2s
+  const belowTokens = () => {
+    if (Date.now() - below.at > 2000) below = { at: Date.now(), tokens: descendantTokens(listAgents(registry, meta.root), meta.id) };
+    return below.tokens;
+  };
+  let briefingWait: NodeJS.Timeout | undefined;
 
   const save = (patch: Partial<AgentStatus>) => {
     status = { ...status, ...patch, updatedAt: Date.now() };
@@ -53,8 +63,8 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
   const touch = (activity?: string) => { lastEventAt = Date.now(); if (activity !== undefined && activity !== status.activity) save({ activity }); };
   /** Its own use, plus the tokens its own subagents spent: what it delegates counts against its budget. */
   const usage = () => ({
-    turns: status.turns, ms: Date.now() - startedAt, tokens: status.tokens + descendantTokens(listAgents(registry, meta.root), meta.id),
-    idleMs: runningTools > 0 ? 0 : Date.now() - lastEventAt,
+    turns: status.turns, ms: Date.now() - startedAt, tokens: status.tokens + belowTokens(),
+    idleMs: runningTools > 0 || busy() ? 0 : Date.now() - lastEventAt,
   });
 
   const end = (facts: EndFacts) => {
@@ -67,7 +77,7 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
       evidence: facts.finish?.evidence, artifacts: facts.finish?.artifacts,
       usage: { turns: u.turns, tokens: u.tokens, ms: u.ms }, endedAt: Date.now(),
     });
-    clearInterval(poll); watcher?.close();
+    clearInterval(poll); clearInterval(briefingWait); watcher?.close();
     if (written) ctxRef?.ui.notify(`부모에게 결과를 보냈습니다: ${end}${reason ? ` (${reason})` : ''}`, end === 'done' ? 'info' : 'warning');
     // Its work is over: the Pi exits (its last screen stays with the parent, in /cl-agents).
     setTimeout(() => ctxRef?.shutdown?.(), 500).unref?.();
@@ -143,9 +153,9 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
     if (meta.call.context !== 'summary' || status.briefing) return sendTask();
     ctx.ui.setStatus('calliopi-agent', '배경 대기 중…');
     const deadline = Date.now() + BRIEFING_WAIT_MS;
-    const wait = setInterval(() => {
+    briefingWait = setInterval(() => {
       if (status.briefing || Date.now() >= deadline || ended) {
-        clearInterval(wait);
+        clearInterval(briefingWait);
         ctx.ui.setStatus('calliopi-agent', undefined);
         sendTask();
       }
@@ -184,10 +194,10 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
   pi.on('agent_end', (event) => {
     touch('');
     lastAnswer = lastText(event.messages) || lastAnswer;
-    if (ended) return;
+    if (ended || busy()) return; // its own subagents are still working: their results will wake it
     // Ended without finish: remind once, then report it as unanswered.
     if (!reminded) { reminded = true; pi.sendUserMessage(FINISH_REMINDER, { deliverAs: 'followUp' }); return; }
     end({ lastText: lastAnswer });
   });
-  pi.on('session_shutdown', () => { if (!ended) end({ stopped: true, lastText: lastAnswer }); });
+  pi.on('session_shutdown', () => { clearInterval(briefingWait); if (!ended) end({ stopped: true, lastText: lastAnswer }); });
 }

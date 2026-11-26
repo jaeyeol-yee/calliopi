@@ -1,7 +1,8 @@
 // The children of this Pi, each in a pseudo-terminal this process holds: no pane opens. A child Pi
 // draws its real screen into a headless terminal; /cl-agents shows it in a floating window and
-// passes keys to it. A child lives as long as this Pi: when this Pi ends, the children still running
-// are stopped and recorded as such. After a child ends, its last screen stays to be looked at.
+// passes keys to it. A child lives as long as this Pi's session: when it ends (Pi quits, or /new,
+// /resume, /fork, /reload replace this extension), the children still running are stopped and
+// recorded as such. After a child ends, its last screen stays to be looked at.
 import type { TerminalPane as Pane } from '@calliopi/ui/terminal-overlay';
 import { postInbox, readAgent, writeResult, type AgentRecord } from '@calliopi/core/agents';
 import type { ChildSpawn } from '#lib/launch.ts';
@@ -44,7 +45,9 @@ export class Fleet {
 
   async start(record: AgentRecord, spawn: ChildSpawn): Promise<Child> {
     if (this.closed) throw new Error('이 Pi가 종료되는 중입니다.');
-    const pane = new (await paneClass())({ getCwd: () => record.meta.cwd, requestRender: () => this.onRender() });
+    const Pane = await paneClass();
+    if (this.closed) throw new Error('이 Pi가 종료되는 중입니다.'); // disposed while loading: start nothing it cannot stop
+    const pane = new Pane({ getCwd: () => record.meta.cwd, requestRender: () => this.onRender() });
     pane.resize(SCREEN.cols, SCREEN.rows);
     const child: Child = { id: record.meta.id, dir: record.dir, pane };
     this.children.set(child.id, child);
@@ -62,6 +65,8 @@ export class Fleet {
 
   get(id: string): Child | undefined { return this.children.get(id); }
   alive(id: string): boolean { const c = this.children.get(id); return !!c && !c.exited; }
+  /** Children still running. */
+  running(): number { let n = 0; for (const c of this.children.values()) if (!c.exited) n++; return n; }
 
   /** Ask the child to stop (it records `stopped` and exits); kill it if it has not after a grace period. */
   stop(id: string): void {
@@ -76,7 +81,8 @@ export class Fleet {
     this.closed = true;
     for (const child of this.children.values()) {
       if (!child.exited && !readAgent(child.dir)?.result) {
-        writeResult(child.dir, { status: 'stopped', summary: '', reason: '부모 Pi가 종료됨', usage: { turns: 0, tokens: 0, ms: 0 }, endedAt: Date.now() });
+        const meta = readAgent(child.dir)?.meta;
+        writeResult(child.dir, { status: 'stopped', summary: '', reason: '부모 Pi가 종료됨', usage: { turns: 0, tokens: 0, ms: meta ? Date.now() - meta.createdAt : 0 }, endedAt: Date.now() });
       }
       child.pane.dispose();
     }

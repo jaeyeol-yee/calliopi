@@ -122,6 +122,26 @@ test('idle only when nothing runs; a steer that comes before the task waits for 
   assert.equal(readAgent(dir)!.result!.status, 'idle');
 });
 
+test('a child whose own subagents still run is neither reminded nor ended, nor idle', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_000_000 });
+  const root = tmp(t);
+  const { dir } = createAgent(root, { ...baseMeta(root), call: { ...baseMeta(root).call, budget: { ...DEFAULT_BUDGET, idleMinutes: 1 } } });
+  const handlers = new Map<string, (event: unknown, ctx?: unknown) => unknown>();
+  const sent: string[] = [];
+  const fake = { on: (name: string, fn: (event: unknown) => unknown) => handlers.set(name, fn), registerTool: () => {}, setSessionName: () => {}, sendMessage: () => {}, sendUserMessage: (text: string) => sent.push(text.split('\n')[0]!) };
+  let busy = true;
+  installChild(fake as never, dir, () => busy);
+  await handlers.get('session_start')!({ type: 'session_start' }, { ui: { setStatus: () => {}, notify: () => {} }, isIdle: () => true, abort: () => {}, shutdown: () => {} });
+  handlers.get('agent_end')!({ type: 'agent_end', messages: [] }); // it delegated in the background and stopped
+  t.mock.timers.tick(5 * 60_000);
+  assert.deepEqual(sent, ['Task: Find where login is defined']); // no reminder: results are on their way
+  assert.equal(readAgent(dir)!.result, undefined); // and not idle
+  busy = false; // they have reported
+  handlers.get('agent_end')!({ type: 'agent_end', messages: [] });
+  assert.match(sent[1]!, /^You stopped without calling finish/);
+  handlers.get('session_shutdown')!({ type: 'session_shutdown' });
+});
+
 // Real child Pis in pseudo-terminals of this test process (lib/fleet.ts, as the parent runs them),
 // answering with the faux model of the demo harness.
 test('child Pi: background before task, finish ends it, inbox stop, reminder then unanswered', { timeout: 120_000 }, async t => {
