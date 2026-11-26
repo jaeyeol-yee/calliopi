@@ -8,7 +8,7 @@ import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec, type Multiplexer } fro
 import { runWorkflow } from '@calliopi/core/workflow';
 import { preflight, openOverlaySession } from '@calliopi/ui/overlay-session';
 import { inferCommand, inferContext } from '#lib/job-infer.ts';
-import { createJob, interruptJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, JOB_LIST, type Job } from '#lib/jobs.ts';
+import { createJob, interruptJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, EXIT_FILE, JOB_LIST, type Job } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
 const preview = fileURLToPath(new URL('../bin/job-preview.ts', import.meta.url));
@@ -28,6 +28,10 @@ const ESCALATE_MS = 3000;
 
 export default function (pi: ExtensionAPI) {
   const watched = new Set<string>(); // job directories started here and still running
+  // The runner writes the exit code the moment the command ends; watching for it tells Pi at once.
+  // The poll stays for what leaves no file (a runner killed outright) and for file systems without events.
+  const watchers = new Map<string, fs.FSWatcher>();
+  const unwatch = (dir: string) => { watchers.get(dir)?.close(); watchers.delete(dir); };
   let presses: { dir: string; at: number; count: number } | undefined;
   let poll: NodeJS.Timeout | undefined;
   let lastCtx: ExtensionContext | undefined;
@@ -44,6 +48,7 @@ export default function (pi: ExtensionAPI) {
       const job = readJob(dir);
       if (job?.state === 'running') continue;
       watched.delete(dir);
+      unwatch(dir);
       if (!job) continue; // forgotten from /cl-jobs
       share(job);
       lastCtx?.ui.notify(`${job.name}: ${statusText(job)}. 결과를 다음 대화에 전달합니다.`, job.state === 'exited' && job.exitCode === 0 ? 'info' : 'warning');
@@ -53,6 +58,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on('session_shutdown', () => { // the jobs themselves keep running
     shuttingDown = true; closeOverlay?.(); clearInterval(poll); poll = undefined;
+    for (const dir of [...watchers.keys()]) unwatch(dir);
   });
 
   pi.registerShortcut(STOP_KEY, {
@@ -129,6 +135,7 @@ export default function (pi: ExtensionAPI) {
       }
       lastCtx = ctx;
       watched.add(dir);
+      try { watchers.set(dir, fs.watch(dir, (_event, file) => { if (!file || file === EXIT_FILE) check(); })); } catch { /* the poll covers it */ }
       poll ??= setInterval(check, 1000);
       ctx.ui.notify(`${name} 시작${parsed.silent ? '(백그라운드 창)' : ''}: ${parsed.command}`, 'info');
     },
