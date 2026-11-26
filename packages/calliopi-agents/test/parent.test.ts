@@ -35,8 +35,10 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   fs.writeFileSync(path.join(project, 'login.ts'), 'export function login() {}\n');
   const until = async (what: string, ok: () => boolean, ms = 60_000) => {
     for (const end = Date.now() + ms; Date.now() < end && !ok();) await new Promise(r => setTimeout(r, 250));
+    if (!ok()) fs.writeFileSync(path.join(os.tmpdir(), 'calliopi-agents-parent-screen.txt'), screenRef?.() ?? '');
     assert.ok(ok(), what);
   };
+  let screenRef: (() => string) | undefined;
   // Pi's summarizer asks for a "context checkpoint summary" (or to update one in <previous-summary>).
   let completions: { match: string; text: string }[] = [];
   const scenario = (name: string, replies: unknown[]) => {
@@ -46,8 +48,9 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   };
   completions = [{ match: 'checkpoint summary|previous-summary', text: '## Goal\nFind login fast\n\n## Progress\n### Done\n- [x] asked twice\n\n## Key Decisions\n- **Scouts first**: cheap\n' }];
   const parent = scenario('parent', [
-    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Look in the background', context: 'none' }] } }, { text: 'Started; carrying on.' }],
+    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Look in the background', context: 'none' }, { role: 'scout', task: 'Look elsewhere', context: 'none' }] } }, { text: 'Started; carrying on.' }],
     [{ text: 'Background scout reported back.' }],
+    [{ text: 'The other one too.' }],
     [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Find where login is defined', done: 'The file is named', context: 'none' }] } }, { text: 'The scout found it.' }],
     [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Check login with background' }] } }, { text: 'Briefed scout done.' }],
   ]);
@@ -58,13 +61,14 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   t.after(() => top.dispose());
   top.resize(150, 45);
   // CALLIOPI_TEST_PI: another Pi's cli.js (e.g. the installed release), whose extension loader may differ.
-  void top.run(process.execPath, [process.env.CALLIOPI_TEST_PI ?? path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
+  void top.run(process.execPath, [process.env.CALLIOPI_TEST_PI || path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
     '-e', path.join(repo, 'demo/faux-extension.ts'), '-e', path.join(repo, 'packages/calliopi-agents/extensions/agents.ts'), '--model', 'faux/demo'],
   { ...process.env, PI_CODING_AGENT_DIR: agentHome, DEMO_SCENARIO: parent, DEMO_CHILD_SCENARIO: child });
   const screen = () => {
     const b = top.terminal.buffer.active;
     return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true) ?? '').join('\n');
   };
+  screenRef = screen;
   const type = async (text: string) => { top.write(text); await new Promise(r => setTimeout(r, 100)); top.write('\r'); };
   await until('pi up', () => /faux/.test(screen()), 40_000);
 
@@ -81,20 +85,22 @@ test('top Pi delegates: background by default wakes the model when a child ends;
 
   // background (the default): the tool returns at once; when the child ends, the model is woken
   await type('Look in the background');
-  await until('background reply', () => /Background scout reported back\./.test(screen()));
+  // two results may come in one turn or two: wait for both to be announced, not for a number of replies
+  await until('background reply', () => /Background scout reported back\./.test(screen()) && (fs.readFileSync(fs.readdirSync(path.join(agentHome, 'sessions'), { recursive: true }).map(String).filter(f => f.endsWith('.jsonl')).map(f => path.join(agentHome, 'sessions', f))[0]!, 'utf8').match(/"customType":"calliopi-agent"/g) ?? []).length >= 2);
   const first = agents().find(r => r.meta.id === 'scout-1')!;
+  assert.equal(readAgent(agents().find(r => r.meta.id === 'scout-2')!.dir)!.result!.status, 'done'); // two started together
   assert.deepEqual([first.meta.parent, first.meta.depth, first.meta.call.background, first.meta.pane], [null, 1, true, null]); // no pane opened
   assert.equal(readAgent(first.dir)!.result!.status, 'done');
   const header = sessionOf(first)[0];
   assert.match(header.parentSession, new RegExp(`${first.meta.root}\\.jsonl$`)); // the child's session names the top Pi's
   const topSession = () => fs.readFileSync(header.parentSession, 'utf8');
-  assert.match(topSession(), /Started scout-1 \(scout\)\. You will be told as each one ends/);
+  assert.match(topSession(), /Started scout-1 \(scout\), scout-2 \(scout\)\. You will be told as each one ends/);
   assert.match(topSession(), /"customType":"calliopi-agent"/);
 
   // /cl-agents: the list in a floating window, an agent's last screen, back, closed
   await type('/cl-agents');
-  await until('list', () => /서브에이전트 · 실행 중 0 · 끝남 1/.test(screen()));
-  assert.match(screen(), /▸└─ ✓ scout-1 · 완료/);
+  await until('list', () => /서브에이전트 · 실행 중 0 · 끝남 2/.test(screen()));
+  assert.match(screen(), /▸├─ ✓ scout-1 · 완료/);
   top.write('\r');
   await until('its screen', () => /✓ scout-1 · scout · 완료/.test(screen()) && /ctrl\+\]: 목록 · 끝난 화면/.test(screen()));
   top.write('\x1d'); // ctrl+]
@@ -105,16 +111,16 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   // foreground: the tool waits, then hands the result to the model
   await type('Where is login?');
   await until('foreground reply', () => /The scout found it\./.test(screen()));
-  const second = agents().find(r => r.meta.id === 'scout-2')!;
+  const second = agents().find(r => r.meta.id === 'scout-3')!;
   assert.equal(second.result!.status, 'done');
   assert.deepEqual(second.meta.tools.sort(), ['bash', 'find', 'grep', 'ls', 'read']);
-  assert.match(topSession(), /Subagent \\"scout-2\\" \(role scout, model faux\/demo\) ended: done\./);
+  assert.match(topSession(), /Subagent \\"scout-3\\" \(role scout, model faux\/demo\) ended: done\./);
 
   // context summary (the role default): the delegation summarizes the conversation, and the child
   // gets its slice of that summary before its task
   await type('Once more, with background');
   await until('briefed reply', () => /Briefed scout done\./.test(screen()));
-  const third = agents().find(r => r.meta.id === 'scout-3')!;
+  const third = agents().find(r => r.meta.id === 'scout-4')!;
   assert.equal(third.meta.call.context, 'summary');
   assert.equal(readAgent(third.dir)!.status!.briefing!.how, 'first');
   assert.match(topSession(), /"customType":"calliopi-summary"[^\n]*Find login fast/); // the delegation summary, kept in the parent's session

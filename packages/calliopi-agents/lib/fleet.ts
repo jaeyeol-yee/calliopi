@@ -20,17 +20,20 @@ export interface Child {
 }
 
 type PaneClass = typeof import('@calliopi/ui/terminal-overlay').TerminalPane;
-let loaded: PaneClass | undefined;
+let loading: Promise<PaneClass> | undefined;
 /**
- * The pane class, loaded on first use (it brings the native PTY). Pi's extension loader may hand a
- * dynamic import back as a CommonJS namespace, with the exports under `default`: accept both.
+ * The pane class, loaded once (it brings the native PTY). One import shared by every caller: two
+ * children starting together must not import it twice at once, since Pi's extension loader can hand
+ * the second a module that is still being evaluated, with no exports yet. The loader may also give
+ * the module back as a CommonJS namespace, with the exports under `default`: accept both.
  */
-async function paneClass(): Promise<PaneClass> {
-  if (loaded) return loaded;
-  const mod = (await import('@calliopi/ui/terminal-overlay')) as { TerminalPane?: PaneClass; default?: { TerminalPane?: PaneClass } };
-  const found = mod.TerminalPane ?? mod.default?.TerminalPane;
-  if (typeof found !== 'function') throw new Error('@calliopi/ui/terminal-overlay에서 TerminalPane을 찾지 못했습니다');
-  return (loaded = found);
+function paneClass(): Promise<PaneClass> {
+  return loading ??= (async () => {
+    const mod = (await import('@calliopi/ui/terminal-overlay')) as { TerminalPane?: PaneClass; default?: { TerminalPane?: PaneClass } };
+    const found = mod.TerminalPane ?? mod.default?.TerminalPane;
+    if (typeof found !== 'function') { loading = undefined; throw new Error('@calliopi/ui/terminal-overlay에서 TerminalPane을 찾지 못했습니다'); }
+    return found;
+  })();
 }
 
 export class Fleet {
