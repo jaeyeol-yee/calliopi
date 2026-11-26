@@ -6,8 +6,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listAgents, listGoals, readAgent, type AgentRecord } from '@calliopi/core/agents';
 import { TerminalPane } from '@calliopi/ui/terminal-overlay';
-import { extensionArgs } from '#lib/launch.ts';
+import { AGENT_DIR_ENV, extensionArgs } from '#lib/launch.ts';
 import { agentLine, registryRoot } from '#lib/parent.ts';
+
+/**
+ * The test's top Pi must be a top Pi: run from inside a subagent, the inherited agent dir would make
+ * it that subagent's child and write its faux result into the real subagent's record.
+ */
+function topEnv(extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...extra };
+  delete env[AGENT_DIR_ENV];
+  return env;
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../../..');
@@ -66,7 +76,7 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   // CALLIOPI_TEST_PI: another Pi's cli.js (e.g. the installed release), whose extension loader may differ.
   void top.run(process.execPath, [process.env.CALLIOPI_TEST_PI || path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
     '-e', path.join(repo, 'demo/faux-extension.ts'), '-e', path.join(repo, 'packages/calliopi-agents/extensions/agents.ts'), '--model', 'faux/demo'],
-  { ...process.env, PI_CODING_AGENT_DIR: agentHome, DEMO_SCENARIO: parent, DEMO_CHILD_SCENARIO: child });
+  topEnv({ PI_CODING_AGENT_DIR: agentHome, DEMO_SCENARIO: parent, DEMO_CHILD_SCENARIO: child }));
   const screen = () => {
     const b = top.terminal.buffer.active;
     return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true) ?? '').join('\n');
