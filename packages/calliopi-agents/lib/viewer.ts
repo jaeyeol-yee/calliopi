@@ -6,6 +6,7 @@
 import { CURSOR_MARKER, matchesKey, renderFakeCursor, truncateToWidth, visibleWidth, type Component, type Focusable } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { MARK, STATUS_TEXT, buildTree, formatBudget, stateOf, treeCounts, treeRows, type AgentRecord } from '@calliopi/core/agents';
+import { metadataTable, type MetadataValue } from '@calliopi/ui/table';
 import type { Fleet } from '#lib/fleet.ts';
 import { agentLine } from '#lib/parent.ts';
 
@@ -13,7 +14,10 @@ import { agentLine } from '#lib/parent.ts';
 export const DETACH_KEY = 'ctrl+]';
 
 interface Tui { terminal: { columns: number; rows: number }; requestRender(): void }
-interface Theme { fg(color: string, text: string): string; bold?(text: string): string }
+interface Theme { fg(color: string, text: string): string }
+
+/** Below this width the details go under the list instead of beside it. */
+const SPLIT_MIN = 70;
 
 export class AgentsView implements Component, Focusable {
   focused = false;
@@ -35,9 +39,11 @@ export class AgentsView implements Component, Focusable {
 
   handleInput(data: string): void {
     if (this.mode === 'screen') {
-      if (matchesKey(data, DETACH_KEY)) { this.mode = 'list'; this.tui.requestRender(); return; }
       const child = this.current() && this.fleet.get(this.current()!.meta.id);
-      if (child && !child.exited) child.pane.write(data);
+      const live = !!child && !child.exited;
+      // ctrl+] always leaves; Esc too when nothing is listening (an ended agent): a live one gets it
+      if (matchesKey(data, DETACH_KEY) || (!live && (matchesKey(data, 'escape') || data === 'q'))) { this.mode = 'list'; this.tui.requestRender(); return; }
+      if (live) child.pane.write(data);
       return;
     }
     if (matchesKey(data, 'escape') || data === 'q') return this.close();
@@ -75,38 +81,70 @@ export class AgentsView implements Component, Focusable {
         child.pane.resize(inner, height);
         const live = !child.exited;
         const lines = child.pane.lines(this.focused && live, { CURSOR_MARKER, renderFakeCursor, truncateToWidth });
-        return box(title, lines.map(l => truncateToWidth(l, inner, '', true)), live ? ` ${DETACH_KEY}: 목록 · 입력은 이 에이전트로 갑니다 ` : ` ${DETACH_KEY}: 목록 · 끝난 화면 `);
+        return box(title, lines.map(l => truncateToWidth(l, inner, '', true)), live ? ` ${DETACH_KEY}: 목록 · 입력은 이 에이전트로 갑니다 ` : ` Esc·${DETACH_KEY}: 목록 · 끝난 화면 `);
       }
       // Not run by this Pi (an earlier session): its record is all there is.
       const text = [`과제: ${r.meta.call.task}`, ...(r.meta.call.done ? [`완료: ${r.meta.call.done}`] : []), '',
         ...(r.result ? [r.result.summary || '(요약 없음)', ...(r.result.evidence ? ['', `근거: ${r.result.evidence}`] : [])] : ['(이 Pi에서 실행하지 않아 화면이 없습니다)']),
         '', `세션: ${r.meta.session}`];
       const body = wrap(text, inner).slice(0, height);
-      return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), ` ${DETACH_KEY}: 목록 `);
+      return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), ` Esc·${DETACH_KEY}: 목록 `);
     }
 
     const counts = treeCounts(records);
     const title = ` 서브에이전트 · 실행 중 ${counts.running} · 끝남 ${counts.ended}${counts.problems ? ` · 문제 ${counts.problems}` : ''} `;
+    const footer = ' ↑↓ 이동 · Enter: 화면 · x: 중지 · Esc: 닫기 ';
     if (!records.length) return box(title, [fit(this.theme.fg('dim', ' 아직 맡긴 일이 없습니다.')), ...Array(height - 1).fill(fit(''))], ' Esc: 닫기 ');
     const rows = treeRows(top).map((row, i) => {
-      const r = row.node.record;
-      const line = `${row.prefix}${agentLine(r)} · ${r.meta.role}`;
+      const line = `${row.prefix}${agentLine(row.node.record)}`;
       return i === this.selected ? this.theme.fg('accent', `▸${line}`) : ` ${line}`;
     });
+    /** The list, scrolled so the selected row is in view. */
+    const list = (h: number) => {
+      const start = Math.max(0, Math.min(this.selected - h + 1, rows.length - h));
+      return [...rows.slice(start, start + h), ...Array(Math.max(0, h - rows.length)).fill('')];
+    };
     const r = this.current()!;
-    const details = [
-      '', this.theme.fg('dim', '─'.repeat(inner)),
-      `과제   ${r.meta.call.task}`,
-      ...(r.meta.call.done ? [`완료   ${r.meta.call.done}`] : []),
-      `모델   ${r.meta.model} (${r.meta.modelSource}) · 맥락 ${r.meta.call.context}${r.status?.briefing ? ` · 배경 ${r.status.briefing.how}` : ''}`,
-      `예산   ${formatBudget(r.meta.call.budget, r.status ? { turns: r.status.turns, ms: (r.result?.endedAt ?? Date.now()) - r.status.startedAt, tokens: r.status.tokens, idleMs: 0 } : undefined)}`,
-      ...(r.result ? [`결과   ${STATUS_TEXT[r.result.status]}${r.result.reason ? ` (${r.result.reason})` : ''} · ${r.result.summary.split('\n')[0] ?? ''}`] : []),
+    const table = (w: number) => metadataTable(detailRows(r), w, { fg: (token, text) => this.theme.fg(token, text) });
+    const pad = (line: string, w: number) => truncateToWidth(line, w, '…', true);
+
+    if (inner < SPLIT_MIN) { // narrow: the details under the list
+      const listHeight = Math.min(rows.length, Math.max(3, Math.floor(height / 3)));
+      const body = [...list(listHeight), ...table(inner)].slice(0, height);
+      return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), footer);
+    }
+    // wide: the list on the left, the details of the selected agent in a table on the right
+    const leftCols = Math.max(28, Math.floor((inner - 1) * 0.42));
+    const rightCols = inner - 1 - leftCols;
+    const details = table(rightCols);
+    const right = details.length > height ? [...details.slice(0, height - 1), this.theme.fg('dim', '…')] : details;
+    const left = list(height);
+    const label = (text: string, cols: number, color: string) => this.theme.fg(color, truncateToWidth(text, cols, '…', true));
+    return [
+      border('╭') + label(title, leftCols, 'accent') + border('┬') + label(` ${r.meta.id} `, rightCols, 'dim') + border('╮'),
+      ...Array.from({ length: height }, (_, i) => border('│') + pad(left[i] ?? '', leftCols) + border('│') + pad(right[i] ?? '', rightCols) + border('│')),
+      border('╰') + this.theme.fg('dim', truncateToWidth(footer, inner, '', true)) + border('╯'),
     ];
-    const listHeight = Math.max(3, height - details.length);
-    const start = Math.max(0, Math.min(this.selected - listHeight + 1, rows.length - listHeight));
-    const body = [...rows.slice(start, start + listHeight), ...Array(Math.max(0, listHeight - rows.length)).fill(''), ...details].slice(0, height);
-    return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), ' ↑↓ 이동 · Enter: 화면 · x: 중지 · Esc: 닫기 ');
   }
+}
+
+/** The selected agent's contract, run and result, as table rows. */
+function detailRows(r: AgentRecord): [string, MetadataValue][] {
+  const state = stateOf(r);
+  const now = r.result?.endedAt ?? Date.now();
+  const usage = r.status ? { turns: r.status.turns, ms: now - r.status.startedAt, tokens: r.status.tokens, idleMs: 0 } : undefined;
+  return [
+    ['상태', `${MARK[state]} ${r.result ? STATUS_TEXT[r.result.status] : state === 'starting' ? '시작 중' : `실행 중${r.status?.activity ? ` · ${r.status.activity}` : ''}`}${r.result?.reason ? ` (${r.result.reason})` : ''}`],
+    ['역할', `${r.meta.role} · 깊이 ${r.meta.depth}${r.meta.parent ? ` · 부모 ${r.meta.parent}` : ''}`],
+    ['과제', r.meta.call.task],
+    ...(r.meta.call.done ? [['완료', r.meta.call.done] as [string, MetadataValue]] : []),
+    ['모델', `${r.meta.model} (${r.meta.modelSource})${r.meta.thinking ? ` · thinking ${r.meta.thinking}` : ''}`],
+    ['맥락', `${r.meta.call.context}${r.status?.briefing ? ` · 배경 ${r.status.briefing.how}` : ''} · ${r.meta.call.background ? 'background' : 'foreground'}`],
+    ['예산', formatBudget(r.meta.call.budget, usage)],
+    ...(r.result ? [['결과', r.result.summary || '(요약 없음)'] as [string, MetadataValue]] : []),
+    ...(r.result?.evidence ? [['근거', r.result.evidence] as [string, MetadataValue]] : []),
+    ['세션', r.meta.session],
+  ];
 }
 
 /** Lines cut to `width` cells, wide characters counted. */

@@ -7,13 +7,13 @@ import { AgentsView } from '#lib/viewer.ts';
 
 const rec = (id: string, parent: string | null, createdAt: number, over: Partial<AgentRecord> = {}): AgentRecord => ({
   dir: `/r/${id}`,
-  meta: { id, parent, createdAt, role: id.replace(/-\d+$/, ''), model: 'm/x', modelSource: 'inherit', session: `/r/${id}/s.jsonl`,
+  meta: { id, parent, createdAt, depth: parent ? 2 : 1, role: id.replace(/-\d+$/, ''), model: 'm/x', modelSource: 'inherit', session: `/r/${id}/s.jsonl`,
     call: { task: `task of ${id}`, done: 'checked', budget: DEFAULT_BUDGET, context: 'summary', background: true } } as AgentMeta,
   ...over,
 });
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
-test('viewer: the tree with states, details of the selected one, moving and switching to a screen', () => {
+test('viewer: the tree on the left, the selected agent as a table on the right; moving, a screen, back', () => {
   let renders = 0, closed = false;
   const tui = { terminal: { columns: 100, rows: 30 }, requestRender: () => { renders++; } };
   const theme = { fg: (_c: string, s: string) => s };
@@ -25,21 +25,31 @@ test('viewer: the tree with states, details of the selected one, moving and swit
   const view = new AgentsView(tui, theme, new Fleet(), () => records, () => { closed = true; });
   let lines = view.render(100).map(plain);
   assert.ok(lines.every(l => visibleWidth(l) === 100), 'every line fills the width exactly');
-  assert.match(lines[0]!, /서브에이전트 · 실행 중 2 · 끝남 1/);
-  assert.match(lines[1]!, /▸├─ ● scout-1 · read · 5초 · 턴 2 · scout/);
-  assert.match(lines[2]!, / │  └─ ○ verifier-1|│  └─ ● verifier-1/);
-  assert.match(lines[3]!, / └─ ✓ reviewer-1 · 완료 · 1분 1초 · reviewer/);
-  assert.ok(lines.some(l => /과제   task of scout-1/.test(l)));
+  assert.match(lines[0]!, /^╭ 서브에이전트 · 실행 중 2 · 끝남 1 .*┬ scout-1 .*╮$/);
+  assert.match(lines[1]!, /^│▸├─ ● scout-1 · read · 5초 · 턴 2 *│┌/);
+  assert.match(lines[2]!, /^│ │  └─ ● verifier-1/);
+  assert.match(lines[3]!, /^│ └─ ✓ reviewer-1 · 완료 · 1분 1초/);
+  assert.ok(lines.some(l => /│ 상태 *│ ● 실행 중 · read/.test(l)));
+  assert.ok(lines.some(l => /│ 과제 *│ task of scout-1/.test(l)));
+  assert.ok(lines.some(l => /│ 예산 *│ 턴 2\/30/.test(l)));
 
   view.handleInput('\x1b[B'); view.handleInput('\x1b[B'); // down twice
   lines = view.render(100).map(plain);
-  assert.ok(lines.some(l => /결과   완료 · No blockers/.test(l)));
+  assert.match(lines[0]!, /┬ reviewer-1 /);
+  assert.ok(lines.some(l => /│ 결과 *│ No blockers/.test(l)) && lines.some(l => /│ 근거 *│ npm test/.test(l)));
+  // narrow: the details go under the list
+  const narrow = view.render(60).map(plain);
+  assert.ok(narrow.every(l => visibleWidth(l) === 60));
+  assert.ok(!narrow[0]!.includes('┬') && narrow.some(l => /│ 결과 *│ No blockers/.test(l)));
+
   view.handleInput('\r'); // a screen; this Pi did not run it, so its record
   lines = view.render(100).map(plain);
   assert.match(lines[0]!, /✓ reviewer-1 · reviewer · 완료/);
   assert.ok(lines.some(l => /No blockers/.test(l)) && lines.some(l => /근거: npm test/.test(l)));
-  assert.match(lines.at(-1)!, /ctrl\+\]: 목록/);
-  view.handleInput('\x1d'); // ctrl+]
+  assert.match(lines.at(-1)!, /Esc·ctrl\+\]: 목록/);
+  view.handleInput('\x1b'); // nothing listens on an ended agent: Esc goes back too
+  assert.equal(view.mode, 'list');
+  view.handleInput('\r'); view.handleInput('\x1d'); // ctrl+]
   assert.equal(view.mode, 'list');
   view.handleInput('\x1b');
   assert.ok(closed && renders > 0);
