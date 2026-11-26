@@ -2,7 +2,7 @@
 
 서브에이전트: 모델이 일을 맡기면 **자식 Pi가 부모 Pi의 pseudo-terminal에서** 그 일을 하고, 계약(과제, 완료 조건, 예산)에 따라 `finish`로 결과를 보고합니다. pane은 열지 않습니다. 자식은 진짜 Pi 화면을 그리고 있어서, `/cl-agents`로 floating window에 띄워 thinking과 도구 호출을 그대로 보고 직접 입력해 끼어들 수 있습니다. 터미널 멀티플렉서가 없어도 동작합니다. 기록과 규칙은 `@calliopi/core/agents`에 있습니다.
 
-> 진행 상황: 위임(`subagent` 도구), 자식(child 확장), 위임 시점 요약과 배경, 계약 알림까지. tree viewer, 이탈 대응, 내보내기, worktree 격리는 다음 단계입니다. 설계: `/load-plan subagents`.
+> 진행 상황: 위임(`subagent` 도구), 자식(child 확장), 위임 시점 요약과 배경, 계약 알림, `/cl-agents`까지. viewer의 상세 탭(요약, 요청, 맥락), 이탈 대응, 내보내기, worktree 격리는 다음 단계입니다. 설계: `/load-plan subagents`.
 
 ## 위임: `subagent` 도구
 
@@ -24,6 +24,23 @@ subagent({
 - **수명**: 자식은 부모 Pi와 함께 삽니다. 부모 Pi가 끝나면 실행 중인 자식은 `stopped`로 기록하고 종료합니다. 결과를 보고한 자식은 Pi를 종료하고, 마지막 화면은 `/cl-agents`에서 볼 수 있게 남습니다. 결과 없이 죽은 자식도 `stopped`로 기록해 아무도 기다리지 않게 합니다.
 - **background**(기본, fire-and-forget): 바로 돌아오고, 자식이 끝나면 결과를 `steer` + `triggerTurn`으로 보내 모델을 깨웁니다(`/cl-run`과 같은 방식). 모델이 쉬고 있으면 바로 답하고, 작업 중이면 다음 요청 전에 끼어듭니다. 대화 기록에는 `✓ scout-2 · 완료 · 12초 · 턴 2`처럼 한 줄로 보이고 펼치면 전달한 내용이 보입니다.
 - **foreground**(`background: false`): 진행 상황을 한 줄씩 보여 주며 모두 끝날 때까지 기다리고, 결과(`resultForParent`)를 도구 결과로 돌려줍니다. 다음 단계가 그 결과에 달려 있을 때만 씁니다. 중단(Esc)하면 자식들에게 `stop`을 보내고, 그 뒤에 끝나는 것은 background처럼 알립니다.
+
+## `/cl-agents`: 목록과 화면
+
+```text
+╭ 서브에이전트 · 실행 중 1 · 끝남 2 ─────────────────────────────╮
+│▸├─ ● scout-1 · read · 12초 · 턴 2 · scout                      │
+│ │  └─ ○ verifier-1 · 시작 중 · 1초 · verifier                   │
+│ └─ ✓ reviewer-1 · 완료 · 1분 1초 · 턴 3 · reviewer              │
+│ ─────────────────────────────────────────────────────────────── │
+│ 과제   …   완료   …   모델 … · 맥락 summary · 배경 first         │
+│ 예산   턴 2/20 · 0/10분 · 10/300k                                │
+╰ ↑↓ 이동 · Enter: 화면 · x: 중지 · Esc: 닫기 ───────────────────╯
+```
+
+- 이 세션의 서브에이전트 전체를 tree로(부모 아래 자식), 상태 기호(`● 실행 중`, `✓ 완료`, `◐ 일부`, `✗ 막힘/오류`, `⏱ 예산·무응답`, `■ 중지`, `? finish 없음`)와 함께 보여 주고, 선택한 에이전트의 계약·모델·배경·예산·결과를 아래에 보여 줍니다. 상태는 0.5초마다 갱신합니다.
+- **Enter**: 그 에이전트의 **실제 Pi 화면**을 창에 띄웁니다. 창 크기에 맞춰 자식이 다시 그리고, 입력은 그 자식 Pi로 갑니다(끼어들기, Esc로 중단). **ctrl+]**로 목록에 돌아오며 자식은 계속 실행됩니다. 끝난 에이전트는 마지막 화면을, 이 Pi가 실행하지 않은 에이전트(이전 세션)는 기록(과제, 결과, 세션 파일)을 보여 줍니다.
+- **x**: 선택한 에이전트를 중지합니다(stop 요청 → 5초 안에 안 끝나면 종료).
 
 ## 위임 시점 요약과 배경 (`context: summary`, 역할 기본값)
 
@@ -66,8 +83,9 @@ lib/child.ts           자식: finish 도구, 과제 제출, inbox, 예산, 기�
 lib/contract.ts        자식에게 주는 문구: system prompt, 과제, 배경, 상기
 lib/launch.ts          자식 준비: 세션 파일(parentSession), 실행 명령과 환경
 lib/fleet.ts           자식들의 pseudo-terminal: 시작, 중지, 결과 없이 죽은 자식 기록, 부모와 함께 종료
+lib/viewer.ts          /cl-agents: 목록(tree), 실제 화면 붙이기(ctrl+]로 떼기)
 ```
 
 ## 테스트
 
-`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.
+`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.

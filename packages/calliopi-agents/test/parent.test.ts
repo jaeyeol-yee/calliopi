@@ -90,6 +90,17 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   assert.match(topSession(), /Started scout-1 \(scout\)\. You will be told as each one ends/);
   assert.match(topSession(), /"customType":"calliopi-agent"/);
 
+  // /cl-agents: the list in a floating window, an agent's last screen, back, closed
+  await type('/cl-agents');
+  await until('list', () => /서브에이전트 · 실행 중 0 · 끝남 1/.test(screen()));
+  assert.match(screen(), /▸└─ ✓ scout-1 · 완료/);
+  top.write('\r');
+  await until('its screen', () => /✓ scout-1 · scout · 완료/.test(screen()) && /ctrl\+\]: 목록 · 끝난 화면/.test(screen()));
+  top.write('\x1d'); // ctrl+]
+  await until('back to the list', () => /Enter: 화면/.test(screen()));
+  top.write('\x1b');
+  await until('closed', () => !/서브에이전트 · 실행 중/.test(screen()));
+
   // foreground: the tool waits, then hands the result to the model
   await type('Where is login?');
   await until('foreground reply', () => /The scout found it\./.test(screen()));
