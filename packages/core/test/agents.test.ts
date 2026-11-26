@@ -38,6 +38,10 @@ test('budget: call over role over default, capped, and never more than the paren
   const spent = budgetFor(undefined, undefined, remaining(parent, usage(30, 9.7, 100_000)));
   assert.deepEqual(spent.exhausted, ['turns', 'minutes', 'tokens']);
   assert.equal(spent.budget.minutes, 0.3); // a tenth of a minute at most
+  // rounding never gives a child more than its parent has left
+  const close = budgetFor(undefined, undefined, { turns: 5, minutes: 0.96, tokens: 1000, idleMinutes: 5 });
+  assert.equal(close.budget.minutes, 0.9);
+  assert.deepEqual(budgetFor(undefined, undefined, { turns: 5, minutes: 0.46, tokens: 1000, idleMinutes: 5 }).exhausted, ['minutes']);
   assert.deepEqual(budgetFor({ turns: 5 }, undefined, left).exhausted, []);
 });
 
@@ -69,6 +73,8 @@ test('catalog: frontmatter becomes a role; bad files are errors, odd keys warnin
   assert.match((parseRole('x', {}, '', 'x.md') as { error: string }).error, /description이 없습니다/);
   assert.match((parseRole('Bad Name', { description: 'd' }, '', 'b.md') as { error: string }).error, /이름/);
   assert.match((parseRole('x', { description: 'd', approval: 'sometimes' }, '', 'x.md') as { error: string }).error, /approval/);
+  const none = parseRole('quiet', { description: 'No tools', tools: [] }, '', 'q.md');
+  assert.ok('role' in none && Array.isArray(none.role.tools) && none.role.tools.length === 0); // empty means none, not all
   const defaults = parseRole('scout', { description: 'Recon' }, '', 's.md');
   assert.ok('role' in defaults && defaults.role.context === 'summary' && defaults.role.approval === 'none' && defaults.role.tools === undefined);
 
@@ -97,6 +103,7 @@ test('delegation: depth cap, allowed roles, model precedence, tools never widen'
 
   assert.deepEqual(resolveTools(role({ tools: ['read', 'web_search'] }), ['read', 'bash']), ['read']); // not the parent's: dropped
   assert.deepEqual(resolveTools(role({ disallowedTools: ['edit', 'write'] }), ['read', 'edit', 'write', 'bash']), ['read', 'bash']);
+  assert.deepEqual(resolveTools(role({ tools: [] }), ['read', 'bash']), []);
 });
 
 test('outcome: finish wins, then what the harness saw; the parent is told when there was no finish', () => {
@@ -121,6 +128,8 @@ test('registry: one private directory per agent, results written once, inbox in 
   assert.equal(treeDir('/r', 'abc-1_2'), '/r/abc-1_2');
   for (const bad of ['..', '.', '', '../x', 'a/b']) assert.equal(path.dirname(treeDir('/r', bad)), '/r', bad); // nothing escapes the root
   assert.notEqual(treeDir('/r', 'a/b'), treeDir('/r', 'a_b')); // and ids do not collide
+  const hashed = path.basename(treeDir('/r', 'a/b'));
+  assert.notEqual(treeDir('/r', hashed), treeDir('/r', 'a/b')); // not even with an id shaped like a hash
   assert.throws(() => createAgent(root, { ...base, role: '../../x' }), /역할 이름/);
   assert.equal(fs.statSync(path.dirname(a.dir)).mode & 0o777, 0o700);
   assert.equal(a.meta.session, path.join(a.dir, 'session.jsonl'));
@@ -175,6 +184,9 @@ test('tree: parents first, siblings by start, orphans at the top, connectors and
   assert.deepEqual(treeRows(top).map(r => `${r.prefix}${r.node.record.meta.id}`), ['├─ scout-1', '├─ research-1', '│  └─ verify-1', '└─ lost-1']);
   assert.deepEqual(treeRows(top, new Set(['research-1'])).map(r => r.node.record.meta.id), ['scout-1', 'research-1', 'lost-1']);
   assert.deepEqual(treeCounts(records), { running: 2, ended: 2, problems: 1 });
+  // a damaged pair naming each other as parents still shows
+  const loop = buildTree([rec('x-1', 'y-1', 1), rec('y-1', 'x-1', 2), rec('z-1', null, 3)]);
+  assert.deepEqual(treeRows(loop).map(r => `${r.prefix}${r.node.record.meta.id}`), ['├─ z-1', '└─ x-1', '   └─ y-1']);
   const spend = (id: string, parent: string | null, tokens: number, done: boolean) => ({ dir: id, meta: { id, parent, createdAt: 0 } as AgentMeta,
     status: { state: 'running' as const, turns: 0, tokens, startedAt: 0, updatedAt: 0 }, result: done ? { status: 'done' as const, summary: '', usage: { turns: 0, tokens: tokens * 10, ms: 0 }, endedAt: 0 } : undefined });
   const family = [spend('a', null, 1, false), spend('b', 'a', 2, true), spend('c', 'b', 3, false), spend('d', null, 4, false)];

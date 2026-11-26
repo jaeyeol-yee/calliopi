@@ -38,7 +38,8 @@ export function parseRole(fileName: string, frontmatter: Record<string, unknown>
   return {
     role: {
       name, description, when: text(frontmatter.when), notWhen: text(frontmatter.not_when),
-      tools: tools.length ? tools : undefined, disallowedTools: nameList(frontmatter.disallowed_tools),
+      // An empty list means no tools (besides finish), not the parent's: only a missing key inherits them.
+      tools: 'tools' in frontmatter ? tools : undefined, disallowedTools: nameList(frontmatter.disallowed_tools),
       model: text(frontmatter.model), modelLocked: frontmatter.model_locked === true, thinking: text(frontmatter.thinking),
       allowedSubagents: nameList(frontmatter.allowed_subagents), approval, budget: budget(frontmatter.budget), context,
       instructions: body.trim(), source,

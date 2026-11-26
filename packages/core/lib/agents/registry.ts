@@ -43,7 +43,9 @@ export function readJson<T>(file: string): T | undefined {
  * or share a directory with another.
  */
 export const treeDir = (root: string, topSession: string) =>
-  path.join(root, /^[\w-]+$/.test(topSession) ? topSession : `h-${createHash('sha256').update(topSession).digest('hex').slice(0, 24)}`);
+  path.join(root, /^[\w-]+$/.test(topSession) && !HASHED.test(topSession) ? topSession : `h-${createHash('sha256').update(topSession).digest('hex').slice(0, 24)}`);
+/** The shape of a hashed name: a plain id that looks like one is hashed too, so the two never meet. */
+const HASHED = /^h-[0-9a-f]{24}$/;
 
 /** A new agent directory named after its role ("reviewer-1", "reviewer-2", …), with its meta written. */
 export function createAgent(root: string, meta: Omit<AgentMeta, 'id' | 'session'>): AgentRecord {

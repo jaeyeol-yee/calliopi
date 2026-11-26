@@ -1,5 +1,5 @@
-// Subagents: a parent Pi delegates a task to a child Pi that runs in a multiplexer pane, and gets a
-// result back. Everything a child needs or reports goes through its own directory in a registry,
+// Subagents: a parent Pi delegates a task to a child Pi that runs in a pseudo-terminal of the parent,
+// and gets a result back. Everything a child needs or reports goes through its own directory in a registry,
 // so the parent, the child and any viewer agree on one record without talking to each other.
 
 /** What the child reports with its finish tool: its own verdict. */
@@ -39,7 +39,7 @@ export interface AgentRole {
   /** When a model should delegate to this role, and when not: they become prompt guidelines. */
   when?: string;
   notWhen?: string;
-  /** Tools the child may use, from those the parent has; undefined: the parent's tools. */
+  /** Tools the child may use, from those the parent has; undefined: the parent's tools; empty: none. */
   tools?: string[];
   disallowedTools: string[];
   model?: string;
@@ -93,6 +93,7 @@ export interface AgentMeta {
   call: AgentCall;
   /** The child's Pi session file. */
   session: string;
+  /** Unused since children run in the parent's pseudo-terminals (always null); kept for old records. */
   pane: PaneLocation | null;
 }
 

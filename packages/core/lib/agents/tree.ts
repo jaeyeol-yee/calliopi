@@ -18,6 +18,19 @@ export function buildTree(records: AgentRecord[]): TreeNode[] {
     if (into && into !== node) into.children.push(node);
     else { node.orphan = parent !== null; top.push(node); }
   }
+  // Records that name each other as parents (a damaged record) are reached from nowhere: cut the loop
+  // at its oldest member, so every agent is still shown.
+  const reached = new Set<TreeNode>();
+  const reach = (n: TreeNode) => { if (reached.has(n)) return; reached.add(n); n.children.forEach(reach); };
+  top.forEach(reach);
+  for (const node of [...nodes.values()].sort((a, b) => a.record.meta.createdAt - b.record.meta.createdAt)) {
+    if (reached.has(node)) continue;
+    const parent = nodes.get(node.record.meta.parent!);
+    if (parent) parent.children = parent.children.filter(c => c !== node);
+    node.orphan = true;
+    top.push(node);
+    reach(node);
+  }
   return top;
 }
 

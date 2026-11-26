@@ -65,7 +65,7 @@ Pi는 자기 화면을 나눌 수 없어서(overlay는 대화 기록을 가립�
 
 ## 서브에이전트 기록
 
-부모 Pi가 맡긴 일을 자식 Pi가 multiplexer pane에서 하고 결과를 돌려줍니다. 부모, 자식, viewer는 서로 직접 통신하지 않고 **레지스트리의 같은 기록**을 봅니다: `<root>/<최상위 세션 id>/<agent id>/`(0700)에 `meta.json`(부모가 쓴 호출), `status.json`(자식의 진행), `result.json`(한 번만, 먼저 쓴 쪽이 남음), `inbox/NNNNNN.json`(부모 → 자식, 순번대로), `delivered.json`(자식이 받은 마지막 순번과 id), `requests.jsonl`(모델 요청), `session.jsonl`(자식의 Pi 세션).
+부모 Pi가 맡긴 일을 자식 Pi가 부모의 pseudo-terminal에서 하고 결과를 돌려줍니다. 부모, 자식, viewer는 서로 직접 통신하지 않고 **레지스트리의 같은 기록**을 봅니다: `<root>/<최상위 세션 id>/<agent id>/`(0700)에 `meta.json`(부모가 쓴 호출), `status.json`(자식의 진행), `result.json`(한 번만, 먼저 쓴 쪽이 남음), `inbox/NNNNNN.json`(부모 → 자식, 순번대로), `delivered.json`(자식이 받은 마지막 순번과 id), `requests.jsonl`(모델 요청), `session.jsonl`(자식의 Pi 세션).
 
 - **예산은 재귀의 줄어드는 인자처럼**: 자식의 예산은 요청 → 역할 기본값 → `DEFAULT_BUDGET` 순으로 정하고, `MAX_BUDGET`과 **부모의 남은 예산**을 넘지 못합니다(`budgetFor`). 무응답 시간은 소모되지 않으므로 상속하지 않습니다.
 - **위임 규칙**: 최상위 Pi는 모든 역할에, 자식은 역할 파일의 `allowed_subagents`에 있는 역할에만, 최대 깊이(기본 2) 미만에서만 위임합니다. 모델은 고정된 역할 → 호출자 → 역할 기본값 → 부모 순. 도구는 부모의 도구 중에서만 고르고 `disallowed_tools`를 뺍니다.

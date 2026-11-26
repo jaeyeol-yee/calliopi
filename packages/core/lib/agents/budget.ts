@@ -31,7 +31,8 @@ export function budgetFor(requested: Budget | undefined, role: Budget | undefine
     const asked = positive(requested?.[d]) ?? positive(role?.[d]) ?? DEFAULT_BUDGET[d];
     let value = Math.min(asked, MAX_BUDGET[d]);
     if (parentLeft && d !== 'idleMinutes' && parentLeft[d] < value) { value = parentLeft[d]; clamped.push(d); }
-    budget[d] = d === 'turns' || d === 'tokens' ? Math.floor(value) : Math.round(value * 10) / 10;
+    // Always down: a child never gets more than its parent has left, not even by rounding.
+    budget[d] = d === 'turns' || d === 'tokens' ? Math.floor(value) : Math.floor(value * 10) / 10;
   }
   // Nothing left to give: the caller should not delegate rather than start a child that ends at once.
   const exhausted = clamped.filter(d => budget[d] < (d === 'minutes' ? 0.5 : 1));
