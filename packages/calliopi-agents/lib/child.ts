@@ -69,6 +69,8 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
     });
     clearInterval(poll); watcher?.close();
     if (written) ctxRef?.ui.notify(`부모에게 결과를 보냈습니다: ${end}${reason ? ` (${reason})` : ''}`, end === 'done' ? 'info' : 'warning');
+    // Its work is over: the Pi exits (its last screen stays with the parent, in /cl-agents).
+    setTimeout(() => ctxRef?.shutdown?.(), 500).unref?.();
   };
 
   const deliver = (message: InboxMessage) => {

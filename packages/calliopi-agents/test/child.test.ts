@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_BUDGET, FILES, createAgent, decodeRequests, postInbox, readAgent, type AgentMeta, type AgentRecord } from '@calliopi/core/agents';
 import { briefingMessage, childSystemPrompt, taskMessage } from '#lib/contract.ts';
-import { AGENT_DIR_ENV, PROMPT_FILE, childCommand, piInvocation, prepareSession } from '#lib/launch.ts';
+import { AGENT_DIR_ENV, PROMPT_FILE, childSpawn, piInvocation, prepareSession } from '#lib/launch.ts';
+import { Fleet } from '#lib/fleet.ts';
 import { installChild, spent } from '#lib/child.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -36,18 +36,19 @@ test('contract: the system prompt makes it a subagent that ends with finish; the
   assert.equal(spent(undefined), 0);
 });
 
-test('launch: a session file naming the parent, and a pane command that carries the environment, not the task', t => {
+test('launch: a session file naming the parent, and a command that carries the agent directory in its environment, not the task', t => {
   const root = tmp(t);
   const { dir, meta } = createAgent(root, baseMeta(root));
   const file = prepareSession(dir, meta, '/sessions/top.jsonl', new Date('2026-11-26T07:00:00.000Z'));
   assert.equal(path.basename(file), '2026-11-26T07-00-00-000Z_scout-1.jsonl');
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'session', version: 3, id: 'scout-1', timestamp: '2026-11-26T07:00:00.000Z', cwd: root, parentSession: '/sessions/top.jsonl' });
   assert.throws(() => prepareSession(dir, meta, undefined, new Date('2026-11-26T07:00:00.000Z'))); // never overwrites
-  const cmd = childCommand(dir, { ...meta, thinking: 'low' }, { pi: ['node', '/pi/cli.js'], extensions: ['/x/agents.ts'], env: { DEMO_SCENARIO: '/s.yaml' } }, { PI_CODING_AGENT_DIR: '/agent', HOME: '/h' });
-  assert.deepEqual(cmd, ['env', `${AGENT_DIR_ENV}=${dir}`, 'PI_CODING_AGENT_DIR=/agent', 'DEMO_SCENARIO=/s.yaml', 'node', '/pi/cli.js',
-    '--session-dir', dir, '--session-id', 'scout-1', '-e', '/x/agents.ts', '--model', 'faux/demo', '--thinking', 'low', '--tools', 'read,finish',
+  const spawn = childSpawn(dir, { ...meta, thinking: 'low' }, { pi: ['node', '/pi/cli.js'], extensions: ['/x/agents.ts'], env: { EXTRA: '1' } }, { HOME: '/h', DEMO_CHILD_SCENARIO: '/c.yaml' });
+  assert.equal(spawn.command, 'node');
+  assert.deepEqual(spawn.args, ['/pi/cli.js', '--session-dir', dir, '--session-id', 'scout-1', '-e', '/x/agents.ts', '--model', 'faux/demo', '--thinking', 'low', '--tools', 'read,finish',
     '--append-system-prompt', path.join(dir, PROMPT_FILE)]);
-  assert.ok(!cmd.some(a => a.includes('Find where login'))); // the child submits its task itself
+  assert.deepEqual(spawn.env, { HOME: '/h', DEMO_CHILD_SCENARIO: '/c.yaml', [AGENT_DIR_ENV]: dir, DEMO_SCENARIO: '/c.yaml', EXTRA: '1' }); // the parent's environment, inherited
+  assert.ok(!spawn.args.some(a => a.includes('Find where login'))); // the child submits its task itself
   assert.deepEqual(piInvocation(['node', fileURLToPath(import.meta.url)], '/usr/bin/node'), ['/usr/bin/node', fileURLToPath(import.meta.url)]);
   assert.deepEqual(piInvocation(['node', '/nope.js'], '/usr/bin/node'), ['pi']);
 });
@@ -121,15 +122,13 @@ test('idle only when nothing runs; a steer that comes before the task waits for 
   assert.equal(readAgent(dir)!.result!.status, 'idle');
 });
 
-// A real child Pi in a private tmux server, answering with the faux model of the demo harness.
-const hasTmux = spawnSync('tmux', ['-V']).status === 0;
-test('child Pi: background before task, finish ends it, inbox stop, reminder then unanswered', { skip: !hasTmux, timeout: 120_000 }, async t => {
+// Real child Pis in pseudo-terminals of this test process (lib/fleet.ts, as the parent runs them),
+// answering with the faux model of the demo harness.
+test('child Pi: background before task, finish ends it, inbox stop, reminder then unanswered', { timeout: 120_000 }, async t => {
   const root = tmp(t), agentHome = tmp(t), project = tmp(t);
   fs.writeFileSync(path.join(project, 'login.ts'), 'export function login() {}\n');
-  const socket = `calliopi-agents-${process.pid}`;
-  const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8' });
-  t.after(() => tmux('kill-server'));
-  assert.equal(tmux('new-session', '-d', '-x', '140', '-y', '40', 'sleep 300').status, 0);
+  const fleet = new Fleet();
+  t.after(() => fleet.dispose());
   const until = async (what: string, ok: () => boolean, ms = 40_000) => {
     for (const end = Date.now() + ms; Date.now() < end && !ok();) await new Promise(r => setTimeout(r, 200));
     assert.ok(ok(), what);
@@ -142,20 +141,19 @@ test('child Pi: background before task, finish ends it, inbox stop, reminder the
   const start = (record: AgentRecord, scenarioFile: string) => {
     fs.writeFileSync(path.join(record.dir, PROMPT_FILE), childSystemPrompt(record.meta, 'You scout.'));
     prepareSession(record.dir, record.meta, '/sessions/top.jsonl');
-    const cmd = childCommand(record.dir, record.meta, {
+    return fleet.start(record, childSpawn(record.dir, record.meta, {
       pi: [process.execPath, path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js')],
       extensions: [path.join(repo, 'demo/faux-extension.ts'), path.join(repo, 'packages/calliopi-agents/extensions/agents.ts')],
       env: { DEMO_SCENARIO: scenarioFile, PI_CODING_AGENT_DIR: agentHome },
-    });
-    assert.equal(tmux('new-window', '-d', '-c', project, '--', ...cmd).status, 0);
+    }));
   };
   const session = (record: AgentRecord) => fs.readdirSync(record.dir).find(f => f.endsWith('.jsonl') && f !== FILES.requests)!;
   const entries = (record: AgentRecord) => fs.readFileSync(path.join(record.dir, session(record)), 'utf8').trim().split('\n').map(l => JSON.parse(l));
 
-  // 1. a briefing that is already there comes first, then the task; finish ends the work
+  // 1. a briefing that is already there comes first, then the task; finish ends the work and the Pi
   const a = createAgent(root, baseMeta(project, { context: 'summary' }));
   postInbox(a.dir, { id: 'brief-1', kind: 'briefing', text: '## Goal\nShip login retries', at: Date.now() });
-  start(a, scenario('finish', [[{ tool: 'read', args: { path: 'login.ts' } }, { tool: 'finish', args: { status: 'done', summary: 'login is in login.ts:1', evidence: 'read login.ts' } }]]));
+  const childA = await start(a, scenario('finish', [[{ tool: 'read', args: { path: 'login.ts' } }, { tool: 'finish', args: { status: 'done', summary: 'login is in login.ts:1', evidence: 'read login.ts' } }]]));
   await until('a finished', () => !!readAgent(a.dir)?.result);
   const ra = readAgent(a.dir)!;
   assert.equal(ra.result!.status, 'done');
@@ -167,20 +165,32 @@ test('child Pi: background before task, finish ends it, inbox stop, reminder the
   assert.equal(ea[0].parentSession, '/sessions/top.jsonl');
   const order = ea.flatMap(e => e.type === 'custom_message' ? ['briefing'] : e.type === 'message' && e.message.role === 'user' ? ['task'] : []);
   assert.deepEqual(order.slice(0, 2), ['briefing', 'task']);
+  await until('a exited', () => !!childA.exited); // its Pi quits once it has reported
+  const buffer = childA.pane.terminal.buffer.active;
+  const screen = Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '').join('\n');
+  assert.match(screen, /finish/); // the last screen stays to be looked at
 
-  // 2. stopped from the inbox while it works
+  // 2. stopped while it works
   const b = createAgent(root, { ...baseMeta(project), tools: ['bash'] });
-  start(b, scenario('slow', [[{ tool: 'bash', args: { command: 'sleep 30' } }]]));
+  await start(b, scenario('slow', [[{ tool: 'bash', args: { command: 'sleep 30' } }]]));
   await until('b running', () => readAgent(b.dir)?.status?.activity === 'bash');
-  postInbox(b.dir, { id: 'stop-1', kind: 'stop', text: '', at: Date.now() });
+  fleet.stop(b.meta.id);
   await until('b stopped', () => readAgent(b.dir)?.result?.status === 'stopped');
 
   // 3. no finish: reminded once, then reported as unanswered with its last words
   const c = createAgent(root, baseMeta(project));
-  start(c, scenario('chatty', [[{ text: 'I think it is in login.ts' }], [{ text: 'Still in login.ts' }]]));
+  await start(c, scenario('chatty', [[{ text: 'I think it is in login.ts' }], [{ text: 'Still in login.ts' }]]));
   await until('c unanswered', () => !!readAgent(c.dir)?.result);
   const rc = readAgent(c.dir)!.result!;
   assert.equal(rc.status, 'unanswered');
   assert.equal(rc.summary, 'Still in login.ts');
   assert.ok(entries(c).some(e => e.type === 'message' && JSON.stringify(e.message.content).includes('You stopped without calling finish')));
+
+  // 4. a child whose Pi dies without a result is recorded, so nobody waits for it
+  const d = createAgent(root, { ...baseMeta(project), tools: ['bash'] });
+  const childD = await start(d, scenario('slow', [[{ tool: 'bash', args: { command: 'sleep 30' } }]]));
+  await until('d running', () => readAgent(d.dir)?.status?.activity === 'bash');
+  childD.pane.stop(); // killed outright
+  await until('d recorded', () => !!readAgent(d.dir)?.result);
+  assert.equal(readAgent(d.dir)!.result!.status, 'stopped');
 });

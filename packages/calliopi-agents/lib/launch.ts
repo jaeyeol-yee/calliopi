@@ -1,7 +1,7 @@
 // Starting a child: everything the child Pi needs is put in its directory first (the system prompt,
-// a session file whose header names the parent session), then the command for its pane is built.
-// The pane may not inherit Pi's environment (tmux starts panes from its server's), so the variables
-// the child needs are passed through `env` on the command line.
+// a session file whose header names the parent session), then the command that runs it. The parent
+// runs it in a pseudo-terminal of its own (lib/fleet.ts) with its environment plus the agent
+// directory; nothing of the environment goes on the command line.
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentMeta } from '@calliopi/core/agents';
@@ -9,11 +9,6 @@ import { FINISH_TOOL } from '#lib/contract.ts';
 
 /** Set in a child Pi: its agent directory. Its presence is what makes a Pi a child. */
 export const AGENT_DIR_ENV = 'CALLIOPI_AGENT_DIR';
-/**
- * Variables a child inherits from its parent when set, besides the agent directory. An explicit
- * list: the command line of a pane is visible to other processes, so secrets never go on it.
- */
-export const PASSED_ENV = ['PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR', 'PI_OFFLINE'] as const;
 /** Demo and tests: the child's scripted replies (the faux model reads DEMO_SCENARIO). */
 export const CHILD_SCENARIO_ENV = 'DEMO_CHILD_SCENARIO';
 
@@ -40,22 +35,27 @@ export function prepareSession(dir: string, meta: AgentMeta, parentSession: stri
   return file;
 }
 
-/** The pane's command: `env K=V … pi --session-dir <dir> --session-id <id> …`. The task is not on it: the child submits it itself. */
-export function childCommand(dir: string, meta: AgentMeta, launch: ChildLaunch, env: NodeJS.ProcessEnv = process.env): string[] {
-  const vars: Record<string, string> = { [AGENT_DIR_ENV]: dir };
-  for (const name of PASSED_ENV) if (env[name]) vars[name] = env[name]!;
-  if (env[CHILD_SCENARIO_ENV]) Object.assign(vars, { DEMO_SCENARIO: env[CHILD_SCENARIO_ENV], [CHILD_SCENARIO_ENV]: env[CHILD_SCENARIO_ENV] });
+export interface ChildSpawn { command: string; args: string[]; env: NodeJS.ProcessEnv }
+
+/** How to run the child: `pi --session-dir <dir> --session-id <id> …`. The task is not on it: the child submits it itself. */
+export function childSpawn(dir: string, meta: AgentMeta, launch: ChildLaunch, env: NodeJS.ProcessEnv = process.env): ChildSpawn {
+  const vars: NodeJS.ProcessEnv = { ...env, [AGENT_DIR_ENV]: dir };
+  if (env[CHILD_SCENARIO_ENV]) vars.DEMO_SCENARIO = env[CHILD_SCENARIO_ENV];
   Object.assign(vars, launch.env);
-  return [
-    'env', ...Object.entries(vars).map(([k, v]) => `${k}=${v}`),
-    ...launch.pi,
-    '--session-dir', dir, '--session-id', meta.id,
-    ...launch.extensions.flatMap(e => ['-e', e]),
-    '--model', meta.model,
-    ...(meta.thinking ? ['--thinking', meta.thinking] : []),
-    '--tools', [...meta.tools, FINISH_TOOL].join(','),
-    '--append-system-prompt', path.join(dir, PROMPT_FILE),
-  ];
+  const [command, ...pre] = launch.pi;
+  return {
+    command: command!,
+    args: [
+      ...pre,
+      '--session-dir', dir, '--session-id', meta.id,
+      ...launch.extensions.flatMap(e => ['-e', e]),
+      '--model', meta.model,
+      ...(meta.thinking ? ['--thinking', meta.thinking] : []),
+      '--tools', [...meta.tools, FINISH_TOOL].join(','),
+      '--append-system-prompt', path.join(dir, PROMPT_FILE),
+    ],
+    env: vars,
+  };
 }
 
 /** The extensions this Pi was started with (-e, --extension), so a child loads them too. */

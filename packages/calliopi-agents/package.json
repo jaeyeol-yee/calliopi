@@ -2,7 +2,7 @@
   "name": "@calliopi/calliopi-agents",
   "version": "0.0.0",
   "private": true,
-  "description": "Subagents: a model delegates a task to a child Pi running in a multiplexer pane, with a contract, a budget and a result it reports through finish.",
+  "description": "Subagents: a model delegates a task to a child Pi that runs in a pseudo-terminal of the parent, with a contract, a budget and a result it reports through finish; /cl-agents shows them.",
   "type": "module",
   "calliopi": {
     "layer": "app"
@@ -23,7 +23,8 @@
     "node": ">=22.18"
   },
   "dependencies": {
-    "@calliopi/core": "*"
+    "@calliopi/core": "*",
+    "@calliopi/ui": "*"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

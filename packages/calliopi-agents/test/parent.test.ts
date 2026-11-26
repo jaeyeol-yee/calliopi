@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { listAgents, readAgent, type AgentRecord } from '@calliopi/core/agents';
+import { TerminalPane } from '@calliopi/ui/terminal-overlay';
 import { extensionArgs } from '#lib/launch.ts';
 import { agentLine, registryRoot } from '#lib/parent.ts';
 
@@ -28,14 +28,11 @@ test('progress line: state mark, what it does, how long, turns', () => {
   assert.equal(agentLine(done), '✓ scout-1 · 완료 · 1분 15초 · 턴 2');
 });
 
-// A top Pi and its children in a private tmux server, all answering with the demo's faux model.
-const hasTmux = spawnSync('tmux', ['-V']).status === 0;
-test('top Pi delegates: foreground returns the result as the tool output; background wakes the model when it ends', { skip: !hasTmux, timeout: 180_000 }, async t => {
+// A top Pi in a pseudo-terminal of this test, typed into like a user would; its children run in its
+// own pseudo-terminals. Everything answers with the demo's faux model.
+test('top Pi delegates: background by default wakes the model when a child ends; foreground returns the results; briefed children', { timeout: 180_000 }, async t => {
   const agentHome = tmp(t), project = tmp(t), scenarios = tmp(t);
   fs.writeFileSync(path.join(project, 'login.ts'), 'export function login() {}\n');
-  const socket = `calliopi-agents-parent-${process.pid}`;
-  const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8' });
-  t.after(() => tmux('kill-server'));
   const until = async (what: string, ok: () => boolean, ms = 60_000) => {
     for (const end = Date.now() + ms; Date.now() < end && !ok();) await new Promise(r => setTimeout(r, 250));
     assert.ok(ok(), what);
@@ -49,17 +46,25 @@ test('top Pi delegates: foreground returns the result as the tool output; backgr
   };
   completions = [{ match: 'checkpoint summary|previous-summary', text: '## Goal\nFind login fast\n\n## Progress\n### Done\n- [x] asked twice\n\n## Key Decisions\n- **Scouts first**: cheap\n' }];
   const parent = scenario('parent', [
-    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Find where login is defined', done: 'The file is named', context: 'none' }] } }, { text: 'The scout found it.' }],
-    [{ tool: 'subagent', args: { background: true, tasks: [{ role: 'scout', task: 'Look again', context: 'none' }] } }, { text: 'Started; waiting.' }],
+    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Look in the background', context: 'none' }] } }, { text: 'Started; carrying on.' }],
     [{ text: 'Background scout reported back.' }],
-    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Check login with background' }] } }, { text: 'Briefed scout done.' }],
+    [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Find where login is defined', done: 'The file is named', context: 'none' }] } }, { text: 'The scout found it.' }],
+    [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Check login with background' }] } }, { text: 'Briefed scout done.' }],
   ]);
   completions = [];
   const child = scenario('child', [[{ tool: 'read', args: { path: 'login.ts' } }, { tool: 'finish', args: { status: 'done', summary: 'login is in login.ts:1', evidence: 'read login.ts' } }]]);
-  const pi = [process.execPath, path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
-    '-e', path.join(repo, 'demo/faux-extension.ts'), '-e', path.join(repo, 'packages/calliopi-agents/extensions/agents.ts'), '--model', 'faux/demo'];
-  assert.equal(tmux('new-session', '-d', '-x', '150', '-y', '45', '-c', project, '--', 'env', `PI_CODING_AGENT_DIR=${agentHome}`, `DEMO_SCENARIO=${parent}`, `DEMO_CHILD_SCENARIO=${child}`, ...pi).status, 0);
-  const screen = () => tmux('capture-pane', '-p', '-t', '0.0').stdout;
+
+  const top = new TerminalPane({ getCwd: () => project, requestRender: () => {} });
+  t.after(() => top.dispose());
+  top.resize(150, 45);
+  void top.run(process.execPath, [path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
+    '-e', path.join(repo, 'demo/faux-extension.ts'), '-e', path.join(repo, 'packages/calliopi-agents/extensions/agents.ts'), '--model', 'faux/demo'],
+  { ...process.env, PI_CODING_AGENT_DIR: agentHome, DEMO_SCENARIO: parent, DEMO_CHILD_SCENARIO: child });
+  const screen = () => {
+    const b = top.terminal.buffer.active;
+    return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true) ?? '').join('\n');
+  };
+  const type = async (text: string) => { top.write(text); await new Promise(r => setTimeout(r, 100)); top.write('\r'); };
   await until('pi up', () => /faux/.test(screen()), 40_000);
 
   const registry = registryRoot(agentHome);
@@ -68,44 +73,40 @@ test('top Pi delegates: foreground returns the result as the tool output; backgr
     try { roots = fs.readdirSync(registry); } catch { return []; }
     return roots.flatMap(r => listAgents(registry, r));
   };
+  const sessionOf = (r: AgentRecord) => {
+    const file = fs.readdirSync(r.dir).find(f => new RegExp(`_${r.meta.id}\\.jsonl$`).test(f))!;
+    return fs.readFileSync(path.join(r.dir, file), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  };
 
-  // foreground: the tool waits, then hands the child's result to the model
-  tmux('send-keys', '-t', '0.0', 'Where is login?', 'Enter');
-  await until('foreground reply', () => /The scout found it\./.test(screen()));
-  const [first] = agents();
-  assert.ok(first, 'a record');
-  assert.deepEqual([first.meta.id, first.meta.parent, first.meta.depth, first.meta.role, first.meta.modelSource], ['scout-1', null, 1, 'scout', 'inherit']);
-  assert.equal(first.result!.status, 'done');
-  assert.deepEqual(first.meta.tools.sort(), ['bash', 'find', 'grep', 'ls', 'read']);
-  assert.ok(first.meta.pane?.pane, 'opened in a pane');
-  const childSession = fs.readdirSync(first.dir).find(f => /_scout-1\.jsonl$/.test(f))!;
-  const header = JSON.parse(fs.readFileSync(path.join(first.dir, childSession), 'utf8').split('\n')[0]!);
-  assert.match(header.parentSession, new RegExp(`${first.meta.root}\\.jsonl$`)); // the child's session names the top Pi's
-  const parentSession = fs.readFileSync(header.parentSession, 'utf8');
-  assert.match(parentSession, /Subagent \\"scout-1\\" \(role scout, model faux\/demo\) ended: done\./); // the tool result
-  assert.match(parentSession, /login is in login\.ts:1/);
-  assert.equal(tmux('list-windows').stdout.trim().split('\n').length, 2, 'the child ran in a background window');
-
-  // background: the tool returns at once; when the child ends, the model is woken without a prompt
-  tmux('send-keys', '-t', '0.0', 'Look again in the background', 'Enter');
+  // background (the default): the tool returns at once; when the child ends, the model is woken
+  await type('Look in the background');
   await until('background reply', () => /Background scout reported back\./.test(screen()));
+  const first = agents().find(r => r.meta.id === 'scout-1')!;
+  assert.deepEqual([first.meta.parent, first.meta.depth, first.meta.call.background, first.meta.pane], [null, 1, true, null]); // no pane opened
+  assert.equal(readAgent(first.dir)!.result!.status, 'done');
+  const header = sessionOf(first)[0];
+  assert.match(header.parentSession, new RegExp(`${first.meta.root}\\.jsonl$`)); // the child's session names the top Pi's
+  const topSession = () => fs.readFileSync(header.parentSession, 'utf8');
+  assert.match(topSession(), /Started scout-1 \(scout\)\. You will be told as each one ends/);
+  assert.match(topSession(), /"customType":"calliopi-agent"/);
+
+  // foreground: the tool waits, then hands the result to the model
+  await type('Where is login?');
+  await until('foreground reply', () => /The scout found it\./.test(screen()));
   const second = agents().find(r => r.meta.id === 'scout-2')!;
-  assert.equal(readAgent(second.dir)!.result!.status, 'done');
-  const after = fs.readFileSync(header.parentSession, 'utf8');
-  assert.match(after, /Started scout-2 \(scout\) in the background/);
-  assert.match(after, /"customType":"calliopi-agent"/);
+  assert.equal(second.result!.status, 'done');
+  assert.deepEqual(second.meta.tools.sort(), ['bash', 'find', 'grep', 'ls', 'read']);
+  assert.match(topSession(), /Subagent \\"scout-2\\" \(role scout, model faux\/demo\) ended: done\./);
 
   // context summary (the role default): the delegation summarizes the conversation, and the child
   // gets its slice of that summary before its task
-  tmux('send-keys', '-t', '0.0', 'Once more, with background', 'Enter');
+  await type('Once more, with background');
   await until('briefed reply', () => /Briefed scout done\./.test(screen()));
   const third = agents().find(r => r.meta.id === 'scout-3')!;
   assert.equal(third.meta.call.context, 'summary');
   assert.equal(readAgent(third.dir)!.status!.briefing!.how, 'first');
-  const parentNow = fs.readFileSync(header.parentSession, 'utf8');
-  assert.match(parentNow, /"customType":"calliopi-summary"[^\n]*Find login fast/); // the delegation summary, kept in the parent's session
-  const thirdSession = fs.readdirSync(third.dir).find(f => /_scout-3\.jsonl$/.test(f))!;
-  const childEntries = fs.readFileSync(path.join(third.dir, thirdSession), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  assert.match(topSession(), /"customType":"calliopi-summary"[^\n]*Find login fast/); // the delegation summary, kept in the parent's session
+  const childEntries = sessionOf(third);
   const briefing = childEntries.find(e => e.type === 'custom_message' && e.customType === 'calliopi-briefing');
   assert.ok(briefing, 'briefed');
   assert.match(briefing.content, /Find login fast[\s\S]*Scouts first/);

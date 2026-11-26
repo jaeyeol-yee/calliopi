@@ -1,20 +1,21 @@
-// The delegating side: the subagent tool. Each task becomes a child Pi in a multiplexer pane, with
-// its record, system prompt and session file prepared first. In the foreground the tool waits and
-// returns the results; in the background it returns at once and the model is woken as each child
-// ends (as /cl-run does for commands). A child that may delegate gets the same tool, one level down.
+// The delegating side: the subagent tool. Each task becomes a child Pi in a pseudo-terminal this Pi
+// holds (lib/fleet.ts) — no pane opens; /cl-agents shows them. Everything is checked before anything
+// starts, then the children start together. By default the tool returns at once and the model is
+// woken as each child ends (as /cl-run does for commands); in the foreground it waits and returns
+// the results. A child that may delegate gets the same tool, one level down.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
-  FILES, MARK, STATUS_TEXT, budgetFor, createAgent, mayDelegate, postInbox, readAgent, resolveModel, resolveTools, resultForParent, roleGuidelines, setPane,
+  FILES, MARK, STATUS_TEXT, budgetFor, createAgent, mayDelegate, readAgent, resolveModel, resolveTools, resultForParent, roleGuidelines,
   type AgentRecord, type AgentRole, type ContextMode, type FullBudget,
 } from '@calliopi/core/agents';
-import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec } from '@calliopi/core/multiplexer';
+import { Fleet } from '#lib/fleet.ts';
 import { loadCatalog } from '#lib/catalog.ts';
 import { FINISH_TOOL, childSystemPrompt } from '#lib/contract.ts';
-import { PROMPT_FILE, childCommand, extensionArgs, piInvocation, prepareSession } from '#lib/launch.ts';
+import { PROMPT_FILE, childSpawn, extensionArgs, piInvocation, prepareSession, type ChildLaunch } from '#lib/launch.ts';
 
 export const SUBAGENT_TOOL = 'subagent';
 /** Tasks in one call, and delegations in one session: the caps on how wide a tree grows. */
@@ -59,14 +60,22 @@ export function agentLine(r: AgentRecord, now = Date.now()): string {
   return `${MARK[state]} ${r.meta.id} · ${what} · ${elapsed(took)}${r.status ? ` · 턴 ${r.status.turns}` : ''}`;
 }
 
-export function installParent(pi: ExtensionAPI, place: Place, opts: { root: () => string; cwd: string; onSpawned?: OnSpawned }) {
-  const exec: Exec = (command, args, options) => pi.exec(command, args, options);
+export interface ParentOptions {
+  root: () => string;
+  cwd: string;
+  onSpawned?: OnSpawned;
+  /** How children are started; tests pass their own model and scenario. */
+  launch?: Partial<ChildLaunch>;
+}
+
+export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOptions): Fleet {
+  const fleet = new Fleet();
   const approved = new Set<string>();
   const watched = new Map<string, fs.FSWatcher | undefined>();
   let delegations = 0;
   let poll: NodeJS.Timeout | undefined;
 
-  /** A background child ended: tell the model at once, as /cl-run does. */
+  /** A child ended after the tool returned: tell the model at once, as /cl-run does. */
   const announce = (r: AgentRecord) => pi.sendMessage(
     { customType: 'calliopi-agent', content: resultForParent(r.meta, r.result!), display: true, details: { id: r.meta.id, line: agentLine(r) } },
     { deliverAs: 'steer', triggerTurn: true },
@@ -81,12 +90,17 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: { root: () =
     if (!watched.size) { clearInterval(poll); poll = undefined; }
   };
   const watch = (dir: string) => {
+    if (watched.has(dir)) return;
     let w: fs.FSWatcher | undefined;
     try { w = fs.watch(dir, (_e, file) => { if (!file || file === FILES.result) check(); }); } catch { /* the poll covers it */ }
     watched.set(dir, w);
     poll ??= setInterval(check, 1000);
   };
-  pi.on('session_shutdown', () => { for (const w of watched.values()) w?.close(); watched.clear(); clearInterval(poll); });
+  pi.on('session_shutdown', () => {
+    for (const w of watched.values()) w?.close();
+    watched.clear(); clearInterval(poll);
+    fleet.dispose(); // children live as long as this Pi
+  });
 
   const roles = loadCatalog(opts.cwd).roles;
   const offered = place.depth === 0 ? [...roles.values()] : [...roles.values()].filter(r => mayDelegate(place.depth, place.role, r.name).ok);
@@ -95,90 +109,94 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: { root: () =
     name: SUBAGENT_TOOL,
     label: 'Subagent',
     description: [
-      `Delegate tasks to subagents: each runs as its own Pi in a terminal pane, with a fresh context, and reports back through ${FINISH_TOOL}.`,
-      `Up to ${MAX_TASKS} tasks per call run in parallel. background: true returns at once and you are told as each one ends; otherwise this waits for all.`,
+      `Delegate tasks to subagents: each runs as its own Pi with a fresh context and reports back through ${FINISH_TOOL}.`,
+      `Up to ${MAX_TASKS} tasks per call run in parallel. By default this returns at once and you are told as each one ends, so you can carry on; background: false waits for all.`,
       `Roles: ${offered.map(r => `${r.name} (${r.description})`).join('; ') || 'none'}.`,
     ].join(' '),
     promptSnippet: 'Delegate self-contained tasks to subagents (separate Pi processes) and get their results',
-    promptGuidelines: roleGuidelines(SUBAGENT_TOOL, offered),
+    promptGuidelines: [
+      ...roleGuidelines(SUBAGENT_TOOL, offered),
+      `Use ${SUBAGENT_TOOL} in the background (the default) and carry on; set background: false only when your very next step needs the results.`,
+    ],
     parameters: Type.Object({
       tasks: Type.Array(Task, { minItems: 1, maxItems: MAX_TASKS }),
-      background: Type.Optional(Type.Boolean({ description: 'Return at once; you are told when each ends. Default false: wait for all.' })),
+      background: Type.Optional(Type.Boolean({ description: 'Default true: return at once; you are told when each ends. false: wait for all.' })),
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const catalog = loadCatalog(ctx.cwd).roles;
       const fail = (text: string) => ({ content: [{ type: 'text' as const, text }], details: undefined, isError: true });
+      const background = params.background !== false;
+
+      // 1. Check everything before anything starts: no child is left behind by a refusal.
       if (delegations + params.tasks.length > MAX_PER_SESSION) return fail(`This session may delegate at most ${MAX_PER_SESSION} tasks; ${delegations} already were.`);
-      const chosen: AgentRole[] = [];
+      const catalog = loadCatalog(ctx.cwd).roles;
+      const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : '';
+      const parentTools = pi.getAllTools().map(t => t.name).filter(n => n !== SUBAGENT_TOOL && n !== FINISH_TOOL);
+      const left = place.budgetLeft?.();
+      const plans = [];
       for (const t of params.tasks) {
         const role = catalog.get(t.role);
         if (!role) return fail(`Unknown role "${t.role}". Roles: ${[...catalog.keys()].join(', ')}.`);
         const may = mayDelegate(place.depth, place.role, role.name);
         if (!may.ok) return fail(may.why);
-        chosen.push(role);
+        const model = resolveModel(role, t.model, parentModel);
+        if (!model.model) return fail('No model to run the subagent with: pick a model, or set one on the role.');
+        const budget = budgetFor(t.budget, role.budget, left);
+        if (budget.exhausted.length) return fail(`Not enough budget left to delegate (${budget.exhausted.join(', ')}); finish with what you have.`);
+        plans.push({ t, role, model, budget: budget.budget });
       }
-      for (const [i, role] of chosen.entries()) {
+      for (const { t, role } of plans) {
         if (role.approval === 'none' || (role.approval === 'once' && approved.has(role.name))) continue;
         if (!ctx.hasUI) return fail(`Role ${role.name} needs the user's approval, and there is no UI to ask.`);
-        const ok = await ctx.ui.confirm('서브에이전트에 맡길까요?', `${role.name}: ${params.tasks[i]!.task}`);
-        if (!ok) return fail(`The user declined delegating to ${role.name}.`);
+        if (!(await ctx.ui.confirm('서브에이전트에 맡길까요?', `${role.name}: ${t.task}`))) return fail(`The user declined delegating to ${role.name}.`);
         approved.add(role.name);
       }
-      const mux = await detectMultiplexer({ exec });
-      if (!mux) return fail(`Subagents run in a terminal multiplexer pane (${MULTIPLEXER_NAMES}); this Pi is not in one.`);
-      const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
-      const parentTools = pi.getAllTools().map(t => t.name).filter(n => n !== SUBAGENT_TOOL && n !== FINISH_TOOL);
-      const root = place.root ?? ctx.sessionManager.getSessionId();
-      const left = place.budgetLeft?.();
+      if (signal?.aborted) return fail('Cancelled before any subagent started.');
 
-      const started: AgentRecord[] = [];
-      for (const [i, t] of params.tasks.entries()) {
-        const role = chosen[i]!;
-        const model = resolveModel(role, t.model, parentModel ?? '');
-        if (!model.model) return fail('No model to run the subagent with: pick a model, or set one on the role.');
+      // 2. Start them together.
+      const root = place.root ?? ctx.sessionManager.getSessionId();
+      const launch: ChildLaunch = { pi: piInvocation(), extensions: [AGENTS_EXTENSION, ...extensionArgs()], ...opts.launch };
+      const records = plans.map(({ t, role, model, budget }) => {
         const record = createAgent(opts.root(), {
           root, parent: place.parentId, depth: place.depth + 1, role: role.name, model: model.model, modelSource: model.source,
           thinking: role.thinking, tools: resolveTools(role, parentTools), cwd: ctx.cwd, createdAt: Date.now(),
-          call: { task: t.task, done: t.done, budget: budgetFor(t.budget, role.budget, left).budget, context: (t.context ?? role.context) as ContextMode, background: !!params.background, parentToolCallId: toolCallId },
+          call: { task: t.task, done: t.done, budget, context: (t.context ?? role.context) as ContextMode, background, parentToolCallId: toolCallId },
           pane: null,
         });
         fs.writeFileSync(path.join(record.dir, PROMPT_FILE), childSystemPrompt(record.meta, role.instructions), { mode: 0o600 });
         prepareSession(record.dir, record.meta, ctx.sessionManager.getSessionFile());
-        const command = childCommand(record.dir, record.meta, { pi: piInvocation(), extensions: [AGENTS_EXTENSION, ...extensionArgs()] });
-        try {
-          const label = `agent ${record.meta.id}`;
-          const { paneId } = mux.openBackground ? await mux.openBackground(exec, { command, cwd: ctx.cwd, label })
-            : await mux.openSide(exec, { command, cwd: ctx.cwd, label, ratio: 45, focus: false });
-          if (paneId) setPane(record.dir, { ...mux.self, pane: paneId });
-        } catch (error) {
-          return fail(`Could not open a pane for ${record.meta.id}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-        delegations++;
-        started.push(readAgent(record.dir) ?? record);
+        return record;
+      });
+      const started = await Promise.allSettled(records.map(r => fleet.start(r, childSpawn(r.dir, r.meta, launch))));
+      const failed = started.flatMap((s, i) => (s.status === 'rejected' ? [`${records[i]!.meta.id}: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`] : []));
+      if (failed.length) {
+        for (const r of records) fleet.stop(r.meta.id); // all or none: a half-started call leaves nothing running
+        return fail(`Could not start the subagents (${failed.join('; ')}); none is running.`);
       }
-      opts.onSpawned?.(started, ctx);
+      delegations += records.length;
+      opts.onSpawned?.(records, ctx);
 
-      if (params.background) {
-        for (const r of started) watch(r.dir);
-        const text = `Started ${started.map(r => `${r.meta.id} (${r.meta.role})`).join(', ')} in the background. You will be told as each one ends; carry on meanwhile.`;
-        return { content: [{ type: 'text', text }], details: { agents: started.map(r => r.meta.id) } };
+      if (background) {
+        for (const r of records) watch(r.dir);
+        const text = `Started ${records.map(r => `${r.meta.id} (${r.meta.role})`).join(', ')}. You will be told as each one ends; carry on meanwhile. The user can watch them with /cl-agents.`;
+        return { content: [{ type: 'text', text }], details: { agents: records.map(r => r.meta.id) } };
       }
 
-      // Foreground: wait for every child, showing progress; an abort stops them.
-      const onAbort = () => { for (const r of started) if (!readAgent(r.dir)?.result) postInbox(r.dir, { id: `stop-${Date.now()}`, kind: 'stop', text: '', at: Date.now() }); };
+      // 3. Foreground: wait for every child, showing progress. An abort stops them; whatever still
+      // ends afterwards is announced like a background result.
+      const onAbort = () => { for (const r of records) fleet.stop(r.meta.id); };
       signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort(); // aborted while starting: the listener would never fire
       try {
         for (;;) {
-          const now = started.map(r => readAgent(r.dir) ?? r);
+          const now = records.map(r => readAgent(r.dir) ?? r);
           onUpdate?.({ content: [{ type: 'text', text: now.map(r => agentLine(r)).join('\n') }], details: { agents: now.map(r => r.meta.id) } });
           if (now.every(r => r.result)) {
             const text = now.map(r => resultForParent(r.meta, r.result!)).join('\n\n---\n\n');
             return { content: [{ type: 'text', text }], details: { agents: now.map(r => r.meta.id) } };
           }
           if (signal?.aborted) {
-            await new Promise(res => setTimeout(res, 300));
-            const ended = started.map(r => readAgent(r.dir) ?? r);
-            return { content: [{ type: 'text', text: `Stopped: ${ended.map(r => agentLine(r)).join('; ')}` }], details: { agents: ended.map(r => r.meta.id) } };
+            for (const r of now) if (!r.result) watch(r.dir);
+            return { content: [{ type: 'text', text: `Stopping: ${now.map(r => agentLine(r)).join('; ')}. Any that still ends will be reported.` }], details: { agents: now.map(r => r.meta.id) } };
           }
           await new Promise(res => setTimeout(res, 500));
         }
@@ -198,6 +216,7 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: { root: () =
     },
     invalidate() {},
   }));
+  return fleet;
 }
 
 /** Cut a styled line to `width` cells (wide characters count two); escapes are kept. */
