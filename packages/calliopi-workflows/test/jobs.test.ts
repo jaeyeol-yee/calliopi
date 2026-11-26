@@ -7,7 +7,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectMultiplexer, type Exec } from '@calliopi/core/multiplexer';
 import { inferCommand, inferContext, inferPrompt, parseInferred, INFER_SYSTEM } from '#lib/job-infer.ts';
-import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, interruptJob, lingers, closeJobPane, tailLog, writeExit,
+import { createJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, interruptJob, interrupted, lingers, closeJobPane, tailLog, writeExit,
   KEEP_MS, LOG_FILE, PID_FILE, type Job, type JobMeta } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
@@ -109,6 +109,12 @@ test('message for the model: state, command and the end of the output', t => {
   assert.match(message, /<output last-lines="40">\nline 61\n[\s\S]*line 100\n<\/output>\nEarlier output is in /);
   assert.deepEqual(tailLog(a, 2), { text: 'line 99\nline 100', truncated: true });
   assert.equal(tailLog(a, 5, 40).text, 'line 99\nline 100'); // a byte limit drops the line it cut
+  // passed on from /cl-jobs: context only; just ended: the model is asked to answer, briefly when interrupted
+  assert.match(message, /This is context, not a request by itself\./);
+  assert.match(jobMessage(readJob(a)!, Date.now(), true), /It has just ended\. If you are in the middle of a task[\s\S]*Do not run it again unless asked\./);
+  writeExit(a, 130);
+  assert.equal(interrupted(readJob(a)!), true);
+  assert.match(jobMessage(readJob(a)!, Date.now(), true), /The user interrupted it themselves/);
 });
 
 test('inference: the project is described, the reply is cleaned, and nothing runs unconfirmed', async t => {

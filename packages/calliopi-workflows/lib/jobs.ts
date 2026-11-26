@@ -205,12 +205,22 @@ export function statusText(job: Job, now = Date.now()): string {
   return `종료 ${job.exitCode} · ${formatElapsed((job.endedAt ?? now) - job.startedAt)}`;
 }
 
-/** What the model is told about a job: its state and the end of its output. */
-export function jobMessage(job: Job, now = Date.now()): string {
+/** Interrupted by the user: Ctrl+C (130) or the pane closed (129). */
+export const interrupted = (job: Job) => job.state === 'exited' && (job.exitCode === 130 || job.exitCode === 129);
+
+/**
+ * What the model is told about a job: its state and the end of its output. `respond`: the job has just
+ * ended and the model is woken to answer (or, mid-task, to take it into account); otherwise the user
+ * passed it on from /cl-jobs as context for their next message.
+ */
+export function jobMessage(job: Job, now = Date.now(), respond = false): string {
   const state = job.state === 'running' ? `is still running after ${formatElapsed(now - job.startedAt)}`
     : job.state === 'lost' ? 'ended without an exit code (its pane was probably closed)'
     : `exited with code ${job.exitCode} after ${formatElapsed((job.endedAt ?? now) - job.startedAt)}`;
-  const intro = `The user ran a command with /cl-run (job "${job.name}", in ${job.cwd}); it ${state}. This is context, not a request by itself.`;
+  const ask = !respond ? 'This is context, not a request by itself.'
+    : interrupted(job) ? 'The user interrupted it themselves: acknowledge it in a sentence, or carry on with what you were doing.'
+    : 'It has just ended. If you are in the middle of a task, take it into account and carry on; otherwise tell the user in a sentence or two how it went, and if it failed, what went wrong and what to do next. Do not run it again unless asked.';
+  const intro = `The user ran a command with /cl-run (job "${job.name}", in ${job.cwd}); it ${state}. ${ask}`;
   const { text, truncated } = tailLog(job.dir);
   const command = `<command>\n${job.command}\n</command>`;
   if (!text) return `${intro}\n\n${command}\n\nIt printed nothing${job.state === 'running' ? ' so far' : ''}.`;

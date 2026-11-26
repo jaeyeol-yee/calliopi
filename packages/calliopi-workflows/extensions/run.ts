@@ -8,7 +8,8 @@ import { detectMultiplexer, MULTIPLEXER_NAMES, type Exec, type Multiplexer } fro
 import { runWorkflow } from '@calliopi/core/workflow';
 import { preflight, openOverlaySession } from '@calliopi/ui/overlay-session';
 import { inferCommand, inferContext } from '#lib/job-infer.ts';
-import { createJob, interruptJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, closeJobPane, lingers, EXIT_FILE, JOB_LIST, type Job } from '#lib/jobs.ts';
+import { fitAnsi } from '#lib/preview-render.ts';
+import { createJob, interruptJob, jobMessage, jobName, jobsRoot, listJobs, parseRunArgs, plainLog, pruneJobs, readJob, sameRun, setJobPane, statusText, stopJob, closeJobPane, lingers, interrupted, EXIT_FILE, JOB_LIST, type Job } from '#lib/jobs.ts';
 
 const runner = fileURLToPath(new URL('../bin/job-runner.ts', import.meta.url));
 const preview = fileURLToPath(new URL('../bin/job-preview.ts', import.meta.url));
@@ -28,6 +29,9 @@ export const STOP_KEYS = ['ctrl+\\', 'alt+k'] as const;
 /** Presses this close together escalate: Ctrl+C, then SIGTERM, then SIGKILL to the process group. */
 const ESCALATE_MS = 3000;
 
+/** Shown for a job message in the transcript. */
+interface JobDetails { name: string; command: string; status: string; ok: boolean; interrupted: boolean }
+
 export default function (pi: ExtensionAPI) {
   const watched = new Set<string>(); // job directories started here and still running
   const started = new Set<string>(); // every job directory started here, for the stop key to close a pane left open
@@ -43,8 +47,29 @@ export default function (pi: ExtensionAPI) {
   let closeOverlay: (() => void) | undefined;
   const exec: Exec = (command, args, options) => pi.exec(command, args, options);
 
+  const details = (job: Job): JobDetails => ({ name: job.name, command: job.command, status: statusText(job), ok: job.state === 'exited' && job.exitCode === 0, interrupted: interrupted(job) });
+  /** Passed on from /cl-jobs: context for the user's next message. */
   const share = (job: Job, content = jobMessage(job)) =>
-    pi.sendMessage({ customType: 'calliopi-job', content, display: false, details: { name: job.name, state: job.state, exitCode: job.exitCode } }, { deliverAs: 'nextTurn' });
+    pi.sendMessage({ customType: 'calliopi-job', content, display: false, details: details(job) }, { deliverAs: 'nextTurn' });
+  /**
+   * A job started here has ended: the model answers at once when idle, and while it works the result
+   * is steered in before its next request, so it can change course. Shown as one line in the transcript.
+   */
+  const announce = (job: Job) =>
+    pi.sendMessage({ customType: 'calliopi-job', content: jobMessage(job, Date.now(), true), display: true, details: details(job) }, { deliverAs: 'steer', triggerTurn: true });
+
+  pi.registerMessageRenderer<JobDetails>('calliopi-job', (message, { expanded }, theme) => ({
+    render(width: number) {
+      const d = message.details;
+      if (!d) return [];
+      const mark = d.ok ? theme.fg('success', '✓') : d.interrupted ? theme.fg('warning', '■') : theme.fg('error', '✗');
+      const head = `${mark} ${theme.fg('accent', `/cl-run ${d.name}`)} ${theme.fg('dim', `· ${d.status} · ${d.command}`)}`;
+      const text = typeof message.content === 'string' ? message.content : message.content.flatMap(c => c.type === 'text' ? c.text : []).join('\n');
+      const body = expanded ? text.split('\n').map(line => theme.fg('dim', line)) : [];
+      return [head, ...body].map(line => fitAnsi(line, width));
+    },
+    invalidate() {},
+  }));
 
   const check = () => {
     for (const dir of watched) {
@@ -53,8 +78,8 @@ export default function (pi: ExtensionAPI) {
       watched.delete(dir);
       unwatch(dir);
       if (!job) continue; // forgotten from /cl-jobs
-      share(job);
-      lastCtx?.ui.notify(`${job.name}: ${statusText(job)}. 결과를 다음 대화에 전달합니다.`, job.state === 'exited' && job.exitCode === 0 ? 'info' : 'warning');
+      announce(job);
+      lastCtx?.ui.notify(`${job.name}: ${statusText(job)}. 결과를 모델에 전달합니다.`, job.state === 'exited' && job.exitCode === 0 ? 'info' : 'warning');
     }
     if (!watched.size) { clearInterval(poll); poll = undefined; }
   };
