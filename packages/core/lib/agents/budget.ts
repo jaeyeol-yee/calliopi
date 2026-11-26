@@ -24,16 +24,18 @@ export function remaining(budget: FullBudget, usage: BudgetUsage): FullBudget {
  * by MAX_BUDGET and by what the parent has left (`parentLeft`, undefined for the top Pi, which has
  * no budget of its own). `clamped` names the dimensions cut down to what the parent had.
  */
-export function budgetFor(requested: Budget | undefined, role: Budget | undefined, parentLeft?: FullBudget): { budget: FullBudget; clamped: BudgetDimension[] } {
+export function budgetFor(requested: Budget | undefined, role: Budget | undefined, parentLeft?: FullBudget): { budget: FullBudget; clamped: BudgetDimension[]; exhausted: BudgetDimension[] } {
   const clamped: BudgetDimension[] = [];
   const budget = {} as FullBudget;
   for (const d of DIMENSIONS) {
     const asked = positive(requested?.[d]) ?? positive(role?.[d]) ?? DEFAULT_BUDGET[d];
     let value = Math.min(asked, MAX_BUDGET[d]);
     if (parentLeft && d !== 'idleMinutes' && parentLeft[d] < value) { value = parentLeft[d]; clamped.push(d); }
-    budget[d] = d === 'turns' || d === 'tokens' ? Math.floor(value) : value;
+    budget[d] = d === 'turns' || d === 'tokens' ? Math.floor(value) : Math.round(value * 10) / 10;
   }
-  return { budget, clamped };
+  // Nothing left to give: the caller should not delegate rather than start a child that ends at once.
+  const exhausted = clamped.filter(d => budget[d] < (d === 'minutes' ? 0.5 : 1));
+  return { budget, clamped, exhausted };
 }
 
 const positive = (n: number | undefined) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : undefined);
@@ -50,14 +52,18 @@ export function exceeded(budget: FullBudget, usage: BudgetUsage): BudgetDimensio
 /** Dimensions at or past `ratio` of their limit (idle excluded): time to wrap up. */
 export function nearLimit(budget: FullBudget, usage: BudgetUsage, ratio = 0.8): BudgetDimension[] {
   const used: Record<Exclude<BudgetDimension, 'idleMinutes'>, number> = {
-    turns: usage.turns / budget.turns, minutes: usage.ms / (budget.minutes * 60_000), tokens: usage.tokens / budget.tokens,
+    turns: share(usage.turns, budget.turns), minutes: share(usage.ms, budget.minutes * 60_000), tokens: share(usage.tokens, budget.tokens),
   };
   return (Object.keys(used) as (keyof typeof used)[]).filter(d => used[d] >= ratio);
 }
 
+/** Used share of a limit; a zero limit is already reached. */
+const share = (used: number, limit: number) => (limit > 0 ? used / limit : 1);
+
 /** "턴 12/30 · 4/15분 · 41k/300k" */
 export function formatBudget(budget: FullBudget, usage?: BudgetUsage): string {
   const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-  if (!usage) return `턴 ${budget.turns} · ${budget.minutes}분 · ${k(budget.tokens)}`;
-  return `턴 ${usage.turns}/${budget.turns} · ${Math.floor(usage.ms / 60_000)}/${budget.minutes}분 · ${k(usage.tokens)}/${k(budget.tokens)}`;
+  const min = (n: number) => String(Math.floor(n * 10) / 10);
+  if (!usage) return `턴 ${budget.turns} · ${min(budget.minutes)}분 · ${k(budget.tokens)}`;
+  return `턴 ${usage.turns}/${budget.turns} · ${Math.floor(usage.ms / 60_000)}/${min(budget.minutes)}분 · ${k(usage.tokens)}/${k(budget.tokens)}`;
 }

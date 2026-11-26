@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   DEFAULT_BUDGET, budgetFor, buildTree, classifyEnd, createAgent, decodeRequests, delegates, encodeRequest, exceeded, formatBudget,
-  listAgents, markDelivered, mayDelegate, mergeCatalog, nearLimit, parseRole, postInbox, readAgent, readDelivered, readInbox, remaining,
+  listAgents, markDelivered, treeDir, mayDelegate, mergeCatalog, nearLimit, parseRole, postInbox, readAgent, readDelivered, readInbox, remaining,
   resolveModel, resolveTools, resultForParent, roleGuidelines, setPane, stateOf, treeCounts, treeRows, writeResult, writeStatus,
   type AgentMeta, type AgentRole, type FullBudget,
 } from '#lib/agents/index.ts';
@@ -34,6 +34,11 @@ test('budget: call over role over default, capped, and never more than the paren
   assert.deepEqual(child.budget, { turns: 5, minutes: 6, tokens: 10_000, idleMinutes: 9 });
   assert.deepEqual(child.clamped, ['turns', 'minutes', 'tokens']);
   assert.equal(remaining(parent, usage(40, 20, 200_000)).turns, 0); // never negative
+  // nothing left to give: reported, so the caller can refuse instead of starting a child that ends at once
+  const spent = budgetFor(undefined, undefined, remaining(parent, usage(30, 9.7, 100_000)));
+  assert.deepEqual(spent.exhausted, ['turns', 'minutes', 'tokens']);
+  assert.equal(spent.budget.minutes, 0.3); // a tenth of a minute at most
+  assert.deepEqual(budgetFor({ turns: 5 }, undefined, left).exhausted, []);
 });
 
 test('budget: exceeded names the first spent dimension; near limit warns before', () => {
@@ -44,6 +49,8 @@ test('budget: exceeded names the first spent dimension; near limit warns before'
   assert.equal(exceeded(b, usage(1, 1, 1000)), 'tokens');
   assert.equal(exceeded(b, usage(1, 1, 1, 2)), 'idleMinutes');
   assert.deepEqual(nearLimit(b, usage(8, 1, 850)), ['turns', 'tokens']);
+  assert.deepEqual(nearLimit({ ...b, turns: 0, tokens: 0 }, usage()), ['turns', 'tokens']); // a zero limit is reached, not NaN
+  assert.equal(formatBudget({ ...b, minutes: 6.4794 }), '턴 10 · 6.4분 · 1k');
   assert.equal(formatBudget(b, usage(3, 2, 1500)), '턴 3/10 · 2/5분 · 2k/1k');
 });
 
@@ -79,6 +86,7 @@ test('delegation: depth cap, allowed roles, model precedence, tools never widen'
   assert.equal(mayDelegate(1, role({ allowedSubagents: ['scout'] }), 'scout').ok, true);
   assert.equal(mayDelegate(1, role({ allowedSubagents: ['*'] }), 'worker').ok, true);
   assert.match((mayDelegate(2, role({ allowedSubagents: ['*'] }), 'scout') as { why: string }).why, /최대 깊이/);
+  assert.match((mayDelegate(1, undefined, 'scout') as { why: string }).why, /역할이 없는/); // only the top Pi delegates without a role
   assert.equal(delegates(1, role({ allowedSubagents: ['scout'] })), true);
   assert.equal(delegates(2, role({ allowedSubagents: ['scout'] })), false); // at the cap: no tool at all
 
@@ -109,7 +117,11 @@ test('registry: one private directory per agent, results written once, inbox in 
   const base = { root: 'sess/01', parent: null, depth: 1, role: 'reviewer', model: 'm', modelSource: 'inherit' as const, tools: ['read'], cwd: '/repo', createdAt: 1, call: { task: 't', budget: DEFAULT_BUDGET, context: 'summary' as const, background: false }, pane: null };
   const a = createAgent(root, base), b = createAgent(root, { ...base, createdAt: 2 });
   assert.deepEqual([a.meta.id, b.meta.id], ['reviewer-1', 'reviewer-2']);
-  assert.equal(path.basename(path.dirname(a.dir)), 'sess_01'); // the session id cannot escape the root
+  assert.match(path.basename(path.dirname(a.dir)), /^h-[0-9a-f]{24}$/); // not a plain id: hashed
+  assert.equal(treeDir('/r', 'abc-1_2'), '/r/abc-1_2');
+  for (const bad of ['..', '.', '', '../x', 'a/b']) assert.equal(path.dirname(treeDir('/r', bad)), '/r', bad); // nothing escapes the root
+  assert.notEqual(treeDir('/r', 'a/b'), treeDir('/r', 'a_b')); // and ids do not collide
+  assert.throws(() => createAgent(root, { ...base, role: '../../x' }), /역할 이름/);
   assert.equal(fs.statSync(path.dirname(a.dir)).mode & 0o777, 0o700);
   assert.equal(a.meta.session, path.join(a.dir, 'session.jsonl'));
 
@@ -144,6 +156,10 @@ test('requests: each record keeps what changed; decoding gives back every payloa
   assert.ok(JSON.stringify(r2).length < JSON.stringify(p2).length);
   const text = [r1, r2, r3, encodeRequest(p3, 'raw', 4, 40)].map(r => JSON.stringify(r)).join('\n') + '\n{"seq":5,"at"'; // torn last line
   assert.deepEqual(decodeRequests(text).map(d => d.payload), [p1, p2, p3, 'raw']);
+  // a key set to undefined is not sent: it decodes as absent, not as its old value
+  const q1 = { model: 'm', temperature: 0 }, q2 = { model: 'm', temperature: undefined };
+  const lines = [encodeRequest(undefined, q1, 1, 1), encodeRequest(q1, q2, 2, 2), encodeRequest(q2, undefined, 3, 3)].map(r => JSON.stringify(r)).join('\n');
+  assert.deepEqual(decodeRequests(lines).map(d => d.payload), [q1, { model: 'm' }, null]);
 });
 
 test('tree: parents first, siblings by start, orphans at the top, connectors and counts', () => {

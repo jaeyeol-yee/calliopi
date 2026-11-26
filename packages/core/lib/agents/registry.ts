@@ -7,9 +7,11 @@
 //   requests.jsonl every model request the child sent (lib/agents/requests.ts)
 //   session.jsonl  the child's Pi session
 // Files are replaced atomically, so a reader never sees half a file.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { ROLE_NAME } from '#lib/agents/catalog.ts';
 import type { AgentMeta, AgentRecord, AgentResult, AgentStatus, InboxMessage } from '#lib/agents/types.ts';
 
 export const FILES = { meta: 'meta.json', status: 'status.json', result: 'result.json', inbox: 'inbox', delivered: 'delivered.json', requests: 'requests.jsonl', session: 'session.jsonl' } as const;
@@ -35,11 +37,17 @@ export function readJson<T>(file: string): T | undefined {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; } catch { return undefined; }
 }
 
-/** The directory of one tree: every agent below one top Pi session. */
-export const treeDir = (root: string, topSession: string) => path.join(root, topSession.replace(/[^\w.-]/g, '_'));
+/**
+ * The directory of one tree: every agent below one top Pi session. A plain id (letters, digits, -, _)
+ * is used as is; anything else (dots, slashes, empty) becomes a hash, so no id can leave the root
+ * or share a directory with another.
+ */
+export const treeDir = (root: string, topSession: string) =>
+  path.join(root, /^[\w-]+$/.test(topSession) ? topSession : `h-${createHash('sha256').update(topSession).digest('hex').slice(0, 24)}`);
 
 /** A new agent directory named after its role ("reviewer-1", "reviewer-2", …), with its meta written. */
 export function createAgent(root: string, meta: Omit<AgentMeta, 'id' | 'session'>): AgentRecord {
+  if (!ROLE_NAME.test(meta.role)) throw new Error(`역할 이름이 올바르지 않습니다: ${meta.role}`); // it names a directory
   const base = privateDir(treeDir(privateDir(root), meta.root));
   for (let n = 1; ; n++) {
     const id = `${meta.role}-${n}`;
@@ -102,11 +110,14 @@ export function postInbox(dir: string, message: Omit<InboxMessage, 'seq'>): Inbo
 export function readInbox(dir: string, afterSeq = 0): InboxMessage[] {
   let names: string[];
   try { names = fs.readdirSync(path.join(dir, FILES.inbox)); } catch { return []; }
-  return names.filter(n => /^\d{6}\.json$/.test(n)).map(n => readJson<InboxMessage>(path.join(dir, FILES.inbox, n)))
+  return names.filter(n => /^\d{6,}\.json$/.test(n)).map(n => readJson<InboxMessage>(path.join(dir, FILES.inbox, n)))
     .filter((m): m is InboxMessage => !!m && m.seq > afterSeq).sort((a, b) => a.seq - b.seq);
 }
 
-/** What the child has taken in: the last seq, and the ids, so a message is delivered once even after a restart. */
+/**
+ * What the child has taken in: the last seq, and the ids, so a message is delivered once even after a
+ * restart. The child is the only writer, so a plain read-modify-write is enough.
+ */
 export interface Delivered { seq: number; ids: string[] }
 export const readDelivered = (dir: string): Delivered => readJson<Delivered>(path.join(dir, FILES.delivered)) ?? { seq: 0, ids: [] };
 export const markDelivered = (dir: string, message: InboxMessage) => {

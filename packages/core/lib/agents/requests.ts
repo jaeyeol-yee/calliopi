@@ -22,10 +22,11 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export function encodeRequest(prev: unknown, next: unknown, seq: number, at: number): RequestRecord {
-  if (!isObj(next)) return { seq, at, set: {}, whole: next };
+  if (!isObj(next)) return { seq, at, set: {}, whole: next ?? null }; // JSON has no undefined
   const before = isObj(prev) ? prev : {};
   const record: RequestRecord = { seq, at, set: {} };
   for (const [key, value] of Object.entries(next)) {
+    if (value === undefined) continue; // not sent: treated as absent (dropped below)
     const old = before[key];
     if (key in before && same(old, value)) continue;
     if (Array.isArray(value) && Array.isArray(old)) {
@@ -35,7 +36,7 @@ export function encodeRequest(prev: unknown, next: unknown, seq: number, at: num
       record.set[key] = value.slice(k);
     } else record.set[key] = value;
   }
-  const drop = Object.keys(before).filter(k => !(k in next));
+  const drop = Object.keys(before).filter(k => next[k] === undefined);
   if (drop.length) record.drop = drop;
   return record;
 }

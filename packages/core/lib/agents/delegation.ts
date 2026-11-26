@@ -11,7 +11,8 @@ export const DEFAULT_MAX_DEPTH = 2;
  */
 export function mayDelegate(depth: number, parent: AgentRole | undefined, child: string, maxDepth = DEFAULT_MAX_DEPTH): { ok: true } | { ok: false; why: string } {
   if (depth >= maxDepth) return { ok: false, why: `깊이 ${depth}: 최대 깊이(${maxDepth})라 더 위임할 수 없습니다.` };
-  if (depth === 0 || !parent) return { ok: true };
+  if (depth === 0) return { ok: true };
+  if (!parent) return { ok: false, why: '역할이 없는 에이전트는 위임할 수 없습니다.' };
   if (parent.allowedSubagents.includes('*') || parent.allowedSubagents.includes(child)) return { ok: true };
   return { ok: false, why: `${parent.name} 역할은 ${child}에게 위임할 수 없습니다(allowed_subagents).` };
 }
