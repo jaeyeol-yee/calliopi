@@ -6,6 +6,10 @@
 //   will wake it), it made no progress several times, or its limits are reached: then it pauses;
 // - subagents started meanwhile are linked to it (lib/parent.ts), so closing it stops those still
 //   running, frees their screens, records what they reported, and lets their records age out.
+// A request that needs subagents while no goal is open opens one by itself (implicit): its objective
+// is what the user asked, it only groups those subagents (no reminder, no carry-on, no pausing), and
+// it closes once they have all ended and the run is over. goal_create or /cl-goal makes it explicit,
+// keeping its subagents.
 import { Type } from 'typebox';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
@@ -46,6 +50,23 @@ export function continueMessage(goal: Goal): string {
   ].join('\n');
 }
 
+/** What the user last asked, on one line: the objective of a goal opened by itself. */
+export function lastRequest(entries: readonly unknown[], max = 120): string {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as { type?: string; message?: { role?: string; content?: unknown } };
+    if (e.type !== 'message' || e.message?.role !== 'user') continue;
+    const c = e.message.content;
+    const text = typeof c === 'string' ? c
+      : Array.isArray(c) ? c.map(p => ((p as { type?: string }).type === 'text' ? (p as { text?: string }).text ?? '' : '')).join(' ') : '';
+    const line = text.replace(/\s+/g, ' ').trim();
+    if (line) return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  }
+  return '';
+}
+
+/** Why a goal opened by itself closes. */
+export const IMPLICIT_CLOSED = '서브에이전트가 모두 끝나 자동으로 닫힘';
+
 /** One line per subagent of the goal, for its outcome. */
 export const agentOutcomes = (records: AgentRecord[]) =>
   records.map(r => `- ${r.meta.id} (${r.meta.role}): ${r.result ? `${STATUS_TEXT[r.result.status]} — ${(r.result.summary.split('\n')[0] ?? '').slice(0, 160)}` : '중지됨'}`).join('\n');
@@ -60,6 +81,11 @@ export interface GoalOptions {
 export interface Goals {
   /** The open goal's id, to link the subagents started now; null when there is none. */
   linkId(): string | null;
+  /**
+   * The goal the subagents started now belong to: the open one, or else one opened by itself for this
+   * request (implicit; `hint` names it when the user's request cannot be read).
+   */
+  ensure(ctx: ExtensionContext, hint: string): string | null;
 }
 
 export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
@@ -71,7 +97,7 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
 
   const records = () => (session ? listAgents(opts.root(), session) : []);
   const linked = (g: Goal) => records().filter(r => r.meta.goal === g.id);
-  const footer = () => ctxRef?.ui.setStatus(STATUS_KEY, goal ? `◆ ${goal.objective.slice(0, 48)} · ${STATE[goal.status]}` : undefined);
+  const footer = () => ctxRef?.ui.setStatus(STATUS_KEY, goal ? `${goal.implicit ? '◇' : '◆'} ${goal.objective.slice(0, 48)} · ${goal.implicit ? '자동' : STATE[goal.status]}` : undefined);
   const save = (next: Goal, note?: string) => {
     goal = next;
     saveGoal(opts.root(), next);
@@ -82,6 +108,12 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
   const create = (objective: string, done: string | undefined, budget?: Goal['budget']): Goal | { error: string } => {
     if (!session) return { error: '세션이 아직 시작되지 않았습니다.' };
     const open = openGoal(listGoals(opts.root(), session));
+    if (open?.implicit) { // opened by itself for subagents: it becomes this goal, its subagents with it
+      const next: Goal = { ...open, objective, done, budget, implicit: undefined, status: 'active', pausedBecause: undefined, updatedAt: Date.now() };
+      save(next, 'made explicit');
+      idleRuns = 0;
+      return next;
+    }
     if (open) return { error: `이미 열린 goal이 있습니다(${open.status}): ${open.objective}. 먼저 끝내거나 포기하세요.` };
     const now = Date.now();
     const next: Goal = { id: newGoalId(now), session, objective, done, status: 'active', budget, continuations: 0, usage: { turns: 0, tokens: 0 }, createdAt: now, updatedAt: now };
@@ -99,7 +131,8 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
     if (to === 'done' || to === 'abandoned') {
       const mine = linked(goal);
       for (const r of mine) if (!r.result) opts.fleet.stop(r.meta.id);
-      opts.fleet.release(mine.map(r => r.meta.id));
+      // An implicit goal closes as soon as its subagents end: their screens stay to be looked at.
+      if (!goal.implicit) opts.fleet.release(mine.map(r => r.meta.id));
       if (mine.length) next = { ...next, outcome: [next.outcome, `서브에이전트 ${mine.length}개:`, agentOutcomes(mine)].filter(Boolean).join('\n') };
       save(next, to);
       goal = undefined;
@@ -124,9 +157,9 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
     footer();
   });
 
-  // While active: the goal at the end of every request (not stored).
+  // While active: the goal at the end of every request (not stored). Not an implicit one: the request is its objective.
   pi.on('context', (event) => {
-    if (goal?.status !== 'active') return;
+    if (goal?.status !== 'active' || goal.implicit) return;
     return { messages: [...event.messages, { role: 'user', content: [{ type: 'text', text: goalReminder(goal) }], timestamp: Date.now() }] };
   });
 
@@ -144,6 +177,10 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
 
   // A run ended while the goal is active: carry on, or pause and say why.
   pi.on('agent_end', (event, ctx) => {
+    if (goal?.implicit) { // it only groups the subagents of a request: closed when they all have ended
+      if (goal.status === 'active' && !ctx.hasPendingMessages() && linked(goal).every(r => r.result)) move('done', IMPLICIT_CLOSED);
+      return;
+    }
     if (goal?.status !== 'active') return;
     const last = [...event.messages].reverse().find(m => (m as { role?: string }).role === 'assistant') as { stopReason?: string } | undefined;
     if (last?.stopReason === 'aborted') return pause('사용자가 중단했습니다');
@@ -163,7 +200,8 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
     if (!g) return 'No open goal.';
     const mine = linked(g);
     return [
-      `Goal ${g.id} (${g.status}): ${g.objective}`,
+      `Goal ${g.id} (${g.status}${g.implicit ? ', implicit' : ''}): ${g.objective}`,
+      ...(g.implicit ? ['Opened by itself for the subagents of this request; it closes once they have all ended. goal_create turns it into an explicit goal, keeping its subagents.'] : []),
       ...(g.done ? [`Done when: ${g.done}`] : []),
       ...(g.progress ? [`Progress: ${g.progress}`] : []),
       ...(g.pausedBecause ? [`Paused because: ${g.pausedBecause}`] : []),
@@ -181,7 +219,7 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
   });
   pi.registerTool({
     name: 'goal_create', label: 'Create goal',
-    description: 'Open a goal for this session: a long-running objective you keep working on until its done condition is met. Only one goal is open at a time. While it is active you are told to carry on after each run; subagents you start are linked to it.',
+    description: 'Open a goal for this session: a long-running objective you keep working on until its done condition is met. Only one goal is open at a time. While it is active you are told to carry on after each run; subagents you start are linked to it. If a goal was opened by itself for subagents (implicit), this makes it your explicit goal and keeps its subagents.',
     promptGuidelines: [
       'Use goal_create when the user hands you a multi-step objective to pursue until it is done; give it a done condition that can be checked.',
       'Use goal_update with status "done" only after checking the done condition against the actual state.',
@@ -236,10 +274,20 @@ export function installGoals(pi: ExtensionAPI, opts: GoalOptions): Goals {
       }
       const m = /^(.*?)(?:\s+--done\s+(.+))?$/s.exec(args.trim())!;
       const r = create(m[1]!.trim(), m[2]?.trim());
-      say(r, 'goal을 만들었습니다. 바로 시작합니다.');
+      say(r, 'error' in r || r.updatedAt === r.createdAt ? 'goal을 만들었습니다. 바로 시작합니다.' : '자동으로 열린 goal을 이 goal로 바꿨습니다(서브에이전트 유지). 바로 시작합니다.');
       if (!('error' in r)) pi.sendMessage({ customType: CONTINUE_MESSAGE, content: continueMessage(r), display: true }, { deliverAs: 'followUp', triggerTurn: true });
     },
   });
 
-  return { linkId: () => (goal ? goal.id : null) };
+  const ensure = (ctx: ExtensionContext, hint: string): string | null => {
+    if (goal) return goal.id;
+    ctxRef = ctx;
+    session ||= ctx.sessionManager.getSessionId();
+    const now = Date.now();
+    const objective = lastRequest(ctx.sessionManager.getBranch()) || hint.replace(/\s+/g, ' ').slice(0, 120) || '서브에이전트 작업';
+    save({ id: newGoalId(now), session, objective, implicit: true, status: 'active', continuations: 0, usage: { turns: 0, tokens: 0 }, createdAt: now, updatedAt: now }, 'opened for subagents');
+    return goal!.id;
+  };
+
+  return { linkId: () => (goal ? goal.id : null), ensure };
 }

@@ -44,6 +44,17 @@ export type Item = { kind: 'goal'; goal: Goal | null; agents: AgentRecord[] } | 
 const GOAL_MARK: Record<Goal['status'], string> = { active: '▶', paused: '⏸', done: '✓', abandoned: '✗' };
 const GOAL_STATE: Record<Goal['status'], string> = { active: '진행 중', paused: '일시 중지', done: '완료', abandoned: '포기' };
 
+/**
+ * Whether a goal starts folded: closed goals are, except the latest one opened by itself (implicit)
+ * while no goal is open, so the subagents of the request just finished stay in view.
+ */
+export function foldedByDefault(goal: Goal | null, goals: Goal[]): boolean {
+  if (!goal || OPEN.includes(goal.status)) return false;
+  if (!goal.implicit || goals.some(g => OPEN.includes(g.status))) return true;
+  const latest = goals.filter(g => !OPEN.includes(g.status)).reduce<Goal | undefined>((a, g) => (!a || (g.closedAt ?? 0) > (a.closedAt ?? 0) ? g : a), undefined);
+  return latest?.id !== goal.id;
+}
+
 /** The rows: goals as headers with their agents' trees, unless there are no goals at all (then the tree alone). */
 export function listItems(records: AgentRecord[], goals: Goal[], folded: (key: string, closed: boolean) => boolean): Item[] {
   const tree = (rs: AgentRecord[], indent: string): Item[] => treeRows(buildTree(rs)).map(r => ({ kind: 'agent', record: r.node.record, prefix: indent + r.prefix }));
@@ -55,7 +66,7 @@ export function listItems(records: AgentRecord[], goals: Goal[], folded: (key: s
   for (const goal of order) {
     const agents = records.filter(r => r.meta.goal === goal.id);
     items.push({ kind: 'goal', goal, agents });
-    if (!folded(goal.id, !OPEN.includes(goal.status))) items.push(...tree(agents, '  '));
+    if (!folded(goal.id, foldedByDefault(goal, goals))) items.push(...tree(agents, '  '));
   }
   if (loose.length) {
     items.push({ kind: 'goal', goal: null, agents: loose });
@@ -155,7 +166,7 @@ export class AgentsView implements Component, Focusable {
     else if (matchesKey(data, 'down') || data === 'j') this.select(this.selected + 1);
     else if (matchesKey(data, 'enter') && item?.kind === 'goal') {
       const key = item.goal?.id ?? '';
-      const closed = !!item.goal && !OPEN.includes(item.goal.status);
+      const closed = foldedByDefault(item.goal, this.goals());
       this.toggled.set(key, !(this.toggled.get(key) ?? closed));
     } else if (matchesKey(data, 'enter') && item) { this.mode = 'screen'; this.offset = 0; }
     else if (data === 'x' && this.agent()) this.fleet.stop(this.agent()!.meta.id);
@@ -214,7 +225,7 @@ export class AgentsView implements Component, Focusable {
       : ` ↑↓ 이동 · Enter: 화면/접기${total > h ? ` · PgUp/PgDn·J/K: 상세 ${this.position(total, h)}` : ''} · x: 중지 · e: 내보내기 · Esc: 닫기 `;
     if (!this.items.length) return box(title, [fit(this.theme.fg('dim', ' 아직 맡긴 일이 없습니다.')), ...Array(height - 1).fill(fit(''))], ' Esc: 닫기 ');
     const rows = this.items.map((item, i) => {
-      const line = item.kind === 'agent' ? `${item.prefix}${agentLine(item.record)}` : goalLine(item, this.toggled.get(item.goal?.id ?? '') ?? (!!item.goal && !OPEN.includes(item.goal.status)));
+      const line = item.kind === 'agent' ? `${item.prefix}${agentLine(item.record)}` : goalLine(item, this.toggled.get(item.goal?.id ?? '') ?? foldedByDefault(item.goal, goals));
       return i === this.selected ? this.theme.fg('accent', `▸${line}`) : ` ${line}`;
     });
     /** The list, scrolled so the selected row is in view. */
@@ -256,7 +267,8 @@ function goalLine(item: Extract<Item, { kind: 'goal' }>, folded: boolean): strin
   const running = item.agents.filter(r => !r.result).length;
   const count = `${item.agents.length}${running ? ` · 실행 ${running}` : ''}`;
   if (!item.goal) return `${folded ? '▸' : '▾'} · goal 없음 (${count})`;
-  return `${folded ? '▸' : '▾'} ${GOAL_MARK[item.goal.status]} ${item.goal.objective} · ${GOAL_STATE[item.goal.status]} (${count})`;
+  const state = item.goal.implicit ? (item.goal.status === 'done' ? '자동 · 끝남' : '자동') : GOAL_STATE[item.goal.status];
+  return `${folded ? '▸' : '▾'} ${item.goal.implicit ? '◇' : GOAL_MARK[item.goal.status]} ${item.goal.objective} · ${state} (${count})`;
 }
 
 /** The selected goal as table rows. */
@@ -266,7 +278,7 @@ function goalRows(item: Extract<Item, { kind: 'goal' }>, records: AgentRecord[])
   if (!g) return [['goal', '없음: goal이 열려 있지 않을 때 맡긴 일'], ['에이전트', `${item.agents.length}개${running ? ` · 실행 중 ${running}` : ''}`]];
   const when = (t: number) => new Date(t).toLocaleString();
   return [
-    ['상태', `${GOAL_MARK[g.status]} ${GOAL_STATE[g.status]}${g.pausedBecause ? ` (${g.pausedBecause})` : ''}`],
+    ['상태', `${GOAL_MARK[g.status]} ${GOAL_STATE[g.status]}${g.pausedBecause ? ` (${g.pausedBecause})` : ''}${g.implicit ? ' · 자동: 서브에이전트가 필요한 요청에서 열림, 모두 끝나면 닫힘' : ''}`],
     ['목표', g.objective],
     ...(g.done ? [['완료', g.done] as [string, MetadataValue]] : []),
     ...(g.progress ? [['진척', g.progress] as [string, MetadataValue]] : []),

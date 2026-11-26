@@ -67,8 +67,11 @@ export interface ParentOptions {
   onSpawned?: OnSpawned;
   /** How children are started; tests pass their own model and scenario. */
   launch?: Partial<ChildLaunch>;
-  /** The goal the children started now belong to (the open goal, or the one this child inherited). */
-  goal?: () => string | null;
+  /**
+   * The goal the children started now belong to: the open goal (opened by itself for this request when
+   * none is), or the one this child inherited. `hint` is the first task, should it need a name.
+   */
+  goal?: (ctx: ExtensionContext, hint: string) => string | null;
   /** Removes aged records; run before starting children. */
   collect?: () => void;
 }
@@ -161,7 +164,7 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
 
       // 2. Start them together (old records age out first).
       opts.collect?.();
-      const goal = opts.goal?.() ?? null;
+      const goal = opts.goal?.(ctx, params.tasks[0]!.task) ?? null;
       const root = place.root ?? ctx.sessionManager.getSessionId();
       const launch: ChildLaunch = { pi: piInvocation(), extensions: [AGENTS_EXTENSION, ...extensionArgs()], ...opts.launch };
       const records = plans.map(({ t, role, model, budget }) => {

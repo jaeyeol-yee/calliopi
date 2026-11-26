@@ -38,7 +38,7 @@ export default function (pi: ExtensionAPI) {
 
   if (!dir) {
     let goals: Goals | undefined;
-    const fleet = installParent(pi, { depth: 0, parentId: null }, { root, cwd, onSpawned, collect: gc, goal: () => goals?.linkId() ?? null });
+    const fleet = installParent(pi, { depth: 0, parentId: null }, { root, cwd, onSpawned, collect: gc, goal: (ctx, hint) => goals?.ensure(ctx, hint) ?? null });
     goals = installGoals(pi, { root, fleet, collect: gc });
     viewer(fleet, id => id);
     return;

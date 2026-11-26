@@ -17,6 +17,11 @@ export interface Goal {
   /** When it is done, as something that can be checked. */
   done?: string;
   status: GoalStatus;
+  /**
+   * Opened by itself for a request that needed subagents (no goal was open): it groups them, does not
+   * carry on or remind, and closes once they have all ended. goal_create or /cl-goal makes it explicit.
+   */
+  implicit?: boolean;
   /** Optional limits for the goal as a whole (the session's own turns and tokens, plus its subagents'). */
   budget?: { turns?: number; tokens?: number };
   /** The latest progress note, and why it was paused when it was. */

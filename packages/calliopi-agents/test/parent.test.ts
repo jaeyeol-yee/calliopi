@@ -117,12 +117,19 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   assert.match(topSession(), /Started scout-3 \(scout\)\. You will be told as each one ends/);
   assert.match(topSession(), /"customType":"calliopi-agent"/);
 
-  // /cl-agents: the list in a floating window, an agent's last screen, back, closed
+  // no goal was open: each request that delegated opened one by itself, which closed when its subagents ended
+  const implicit = listGoals(registry, first.meta.root);
+  assert.deepEqual(implicit.map(g => [g.objective, g.implicit, g.status]), [['Where is login?', true, 'done'], ['Look in the background', true, 'done']]);
+  assert.deepEqual(['scout-1', 'scout-2', 'scout-3'].map(id => agents().find(r => r.meta.id === id)!.meta.goal), [implicit[0]!.id, implicit[0]!.id, implicit[1]!.id]);
+
+  // /cl-agents: the list in a floating window (the latest request unfolded), an agent's last screen, back, closed
   await type('/cl-agents');
   await until('list', () => /서브에이전트 · 실행 중 0 · 끝남 3/.test(screen()));
-  assert.match(screen(), /▸├─ ✓ scout-1 · 완료/);
-  top.write('\r');
-  await until('its screen', () => /✓ scout-1 · scout · 완료/.test(screen()) && /ctrl\+\]: 목록 · 끝난 화면/.test(screen()));
+  assert.match(screen(), /▸▾ ◇ Look in the background · 자동 · 끝남 \(1\)/);
+  assert.match(screen(), / {3}└─ ✓ scout-3 · 완료/);
+  assert.match(screen(), / ▸ ◇ Where is login\? · 자동 · 끝남 \(2\)/); // an earlier one, folded
+  top.write('\x1b[B'); top.write('\r');
+  await until('its screen', () => /✓ scout-3 · scout · 완료/.test(screen()) && /ctrl\+\]: 목록 · 끝난 화면/.test(screen()));
   top.write('\x1d'); // ctrl+]
   await until('back to the list', () => /Enter: 화면/.test(screen()));
   top.write('\x1b');
@@ -148,7 +155,7 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   await type('/cl-goal Find login --done the file is named');
   await until('goal reached', () => /Goal reached\./.test(screen()));
   const fifth = agents().find(r => r.meta.id === 'scout-5')!;
-  const [goal] = listGoals(registry, first.meta.root);
+  const goal = listGoals(registry, first.meta.root).find(g => !g.implicit);
   assert.equal(fifth.meta.goal, goal!.id); // linked to the open goal
   assert.deepEqual([goal!.status, goal!.objective, goal!.done], ['done', 'Find login', 'the file is named']);
   assert.match(goal!.outcome!, /^login is in login\.ts\n서브에이전트 1개:\n- scout-5 \(scout\): 완료/);

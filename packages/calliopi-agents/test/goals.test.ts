@@ -7,7 +7,7 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import { DEFAULT_BUDGET, FILES, createAgent, listGoals, saveGoal, writeResult, type AgentMeta, type AgentRecord, type Goal } from '@calliopi/core/agents';
 import { Fleet } from '#lib/fleet.ts';
 import { collect, retention, CONFIG_FILE } from '#lib/gc.ts';
-import { CONTINUE_MESSAGE, MAX_CONTINUATIONS, NO_PROGRESS_LIMIT, goalReminder, installGoals } from '#lib/goals.ts';
+import { CONTINUE_MESSAGE, IMPLICIT_CLOSED, MAX_CONTINUATIONS, NO_PROGRESS_LIMIT, goalReminder, installGoals, lastRequest } from '#lib/goals.ts';
 import { goalExport } from '#lib/export.ts';
 import { AgentsView, listItems } from '#lib/viewer.ts';
 
@@ -32,8 +32,9 @@ function fakePi() {
   const statuses: (string | undefined)[] = [];
   const notices: string[] = [];
   let pending = false;
+  const branch: unknown[] = [];
   const ctx = {
-    sessionManager: { getSessionId: () => 'sess-1' }, hasPendingMessages: () => pending,
+    sessionManager: { getSessionId: () => 'sess-1', getBranch: () => branch }, hasPendingMessages: () => pending,
     ui: { setStatus: (_k: string, v: string | undefined) => statuses.push(v), notify: (m: string) => notices.push(m) },
   };
   const pi = {
@@ -50,7 +51,7 @@ function fakePi() {
     handlers.get('turn_end')!({});
     handlers.get('agent_end')!({ messages: [{ role: 'assistant', stopReason: opts.stop ?? 'stop' }] }, ctx);
   };
-  return { pi, ctx, handlers, tools, commands, sent, entries, statuses, notices, run, setPending: (v: boolean) => { pending = v; } };
+  return { pi, ctx, branch, handlers, tools, commands, sent, entries, statuses, notices, run, setPending: (v: boolean) => { pending = v; } };
 }
 
 test('goal: one open at a time, a reminder on every request, carry-on after each run with its safeguards', async t => {
@@ -146,6 +147,65 @@ test('closing a goal stops its running subagents and frees their screens', async
   const closed = listGoals(root, 'sess-1')[0]!;
   assert.equal(closed.status, 'abandoned');
   assert.match(closed.outcome!, /^not needed\n서브에이전트 2개:/);
+});
+
+test('implicit goal: a request that needs subagents opens one; it only groups them, closes when they end, and goal_create adopts it', async t => {
+  const root = tmp(t);
+  const released: string[][] = [];
+  const fleet = { stop: () => {}, release: (ids: string[]) => released.push(ids) } as unknown as Fleet;
+  const f = fakePi();
+  const goals = installGoals(f.pi as never, { root: () => root, fleet, collect: () => {} });
+  f.handlers.get('session_start')!({}, f.ctx);
+  f.branch.push({ type: 'message', message: { role: 'user', content: [{ type: 'text', text: '패키지별로\n  audit 해주세요' }] } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } });
+
+  // no goal open: the first delegation opens one, named after the request; the next one joins it
+  const id = goals.ensure(f.ctx as never, 'Audit core')!;
+  assert.equal(goals.ensure(f.ctx as never, 'Audit ui'), id);
+  const g = listGoals(root, 'sess-1')[0]!;
+  assert.deepEqual([g.objective, g.implicit, g.status], ['패키지별로 audit 해주세요', true, 'active']);
+  assert.match(f.statuses.at(-1)!, /^◇ 패키지별로 audit 해주세요 · 자동$/);
+  const get = await f.tools.get('goal_get')!.execute('id', {}, undefined, undefined, f.ctx);
+  assert.match(get.content[0]!.text, /\(active, implicit\)[\s\S]*goal_create turns it into an explicit goal/);
+
+  // it does not remind, carry on or pause; while its subagents work it stays open
+  assert.equal(f.handlers.get('context')!({ messages: [] }), undefined);
+  const a = createAgent(root, agentMeta(root, id));
+  const b = createAgent(root, agentMeta(root, id));
+  writeResult(a.dir, { status: 'done', summary: 'a', usage: { turns: 1, tokens: 1, ms: 1 }, endedAt: 0 });
+  f.run({ tools: 0 }); f.run({ tools: 0 }); f.run({ tools: 0 }); f.run({ stop: 'aborted' });
+  assert.equal(f.sent.length, 0);
+  assert.equal(listGoals(root, 'sess-1')[0]!.status, 'active');
+  // all ended and the run is over: closed by itself, their screens kept to look at
+  writeResult(b.dir, { status: 'done', summary: 'b', usage: { turns: 1, tokens: 1, ms: 1 }, endedAt: 0 });
+  f.setPending(true); f.run(); f.setPending(false);
+  assert.equal(listGoals(root, 'sess-1')[0]!.status, 'active', 'not while a message waits');
+  f.run();
+  const closed = listGoals(root, 'sess-1')[0]!;
+  assert.equal(closed.status, 'done');
+  assert.match(closed.outcome!, new RegExp(`^${IMPLICIT_CLOSED}\n서브에이전트 2개:`));
+  assert.deepEqual(released, []);
+  assert.equal(goals.linkId(), null);
+
+  // the next request that needs subagents opens a new one; goal_create makes it explicit and keeps them
+  f.branch.push({ type: 'message', message: { role: 'user', content: 'reviewer 다시 돌려줘' } });
+  const next = goals.ensure(f.ctx as never, 'x')!;
+  assert.notEqual(next, id);
+  const c = createAgent(root, agentMeta(root, next));
+  const made = await f.tools.get('goal_create')!.execute('id', { objective: 'Finish the audit', done: 'report written' }, undefined, undefined, f.ctx);
+  assert.ok(!made.isError, made.content[0]!.text);
+  assert.equal(goals.linkId(), next);
+  const explicit = listGoals(root, 'sess-1').find(x => x.id === next)!;
+  assert.deepEqual([explicit.objective, explicit.done, explicit.implicit, explicit.status], ['Finish the audit', 'report written', undefined, 'active']);
+  assert.match(made.content[0]!.text, new RegExp(`Subagents \\(1\\):[\\s\\S]*${c.meta.id}`));
+  assert.ok(f.handlers.get('context')!({ messages: [] }), 'an explicit goal reminds again');
+  assert.match(f.statuses.at(-1)!, /^◆ Finish the audit · 진행 중$/);
+});
+
+test('lastRequest: the last user message, text parts only, on one line and cut', () => {
+  assert.equal(lastRequest([]), '');
+  assert.equal(lastRequest([{ type: 'message', message: { role: 'user', content: 'a\n b' } }, { type: 'custom', customType: 'x' }]), 'a b');
+  assert.equal(lastRequest([{ type: 'message', message: { role: 'user', content: [{ type: 'image' }, { type: 'text', text: 'x'.repeat(200) }] } }], 10), `${'x'.repeat(9)}…`);
 });
 
 test('gc: request logs, then records, then empty goals and trees go; exports and open work stay', t => {
