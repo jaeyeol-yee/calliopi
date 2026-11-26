@@ -54,3 +54,33 @@ test('viewer: the tree on the left, the selected agent as a table on the right; 
   view.handleInput('\x1b');
   assert.ok(closed && renders > 0);
 });
+
+test('viewer: long details scroll with J/K and PgUp/PgDn (and the wheel over them); a new selection starts at the top', () => {
+  const tui = { terminal: { columns: 100, rows: 14 }, requestRender: () => {} };
+  const theme = { fg: (_c: string, s: string) => s };
+  const long = Array.from({ length: 30 }, (_, i) => `para ${i}`).join('\n');
+  const records = [
+    rec('reviewer-1', null, 1, { result: { status: 'done', summary: long, usage: { turns: 1, tokens: 1, ms: 1000 }, endedAt: 0 } }),
+    rec('scout-1', null, 2),
+  ];
+  const view = new AgentsView(tui, theme, new Fleet(), () => records, () => {});
+  const body = () => view.render(100).map(plain);
+  let lines = body();
+  assert.match(lines.at(-1)!, /PgUp\/PgDn·J\/K: 상세 1–\d+\/\d+/);
+  assert.ok(lines.some(l => /│ 상태 /.test(l)));
+  view.handleInput('J'); view.handleInput('J');
+  lines = body();
+  assert.match(lines.at(-1)!, /상세 3–/);
+  assert.ok(!lines.some(l => /│ 상태 /.test(l)), 'the first rows scrolled out');
+  for (let i = 0; i < 20; i++) view.handleInput('\x1b[6~'); // PgDn, past the end
+  lines = body();
+  assert.ok(lines.some(l => /│ 세션 /.test(l)), 'scrolled to the end, clamped');
+  view.handleInput('K');
+  view.handleMouse({ type: 'wheel', button: 'none', x: 80, y: 3, screenX: 80, screenY: 3, width: 100, height: 14, shift: false, alt: false, ctrl: false, wheelDelta: -100 });
+  assert.match(body().at(-1)!, /상세 1–/);
+  view.handleInput('J');
+  view.handleMouse({ type: 'wheel', button: 'none', x: 5, y: 3, screenX: 5, screenY: 3, width: 100, height: 14, shift: false, alt: false, ctrl: false, wheelDelta: 1 });
+  lines = body();
+  assert.match(lines[0]!, /┬ scout-1 /, 'the wheel over the list moves the selection');
+  assert.match(lines.at(-1)!, /상세 1–|접기 · x:/, 'a new selection starts at the top of its details');
+});

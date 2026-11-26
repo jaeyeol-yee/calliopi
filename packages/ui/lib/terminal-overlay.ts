@@ -50,7 +50,8 @@ export function screenLines(terminal: XTerminal, { focused, cursorVisible, curso
       const style = cellStyle(cell);
       if (style !== previousStyle) { output += style; previousStyle = style; }
       const text = (cell?.getChars() || ' ').replace(/[\x00-\x1f\x7f-\x9f]/g, '');
-      const cursor = focused && cursorVisible && y === buffer.cursorY && x === Math.min(buffer.cursorX, terminal.cols - 1);
+      // No cursor while scrolled back: cursorY counts from the bottom page, not the viewport.
+      const cursor = focused && cursorVisible && buffer.viewportY === buffer.baseY && y === buffer.cursorY && x === Math.min(buffer.cursorX, terminal.cols - 1);
       output += cursor ? cursorMarker + fakeCursor(text) : text;
     }
     lines.push(`${output}\x1b[0m`);
@@ -77,6 +78,8 @@ export interface OverlayTheme {
 interface PaneOptions {
   getCwd: () => string;
   requestRender: () => void;
+  /** Lines kept above the screen, so a viewer can scroll back. */
+  scrollback?: number;
 }
 
 // One PTY + one headless screen. A pane runs one program at a time; run() replaces a running one.
@@ -91,10 +94,10 @@ export class TerminalPane {
   requestRender: () => void;
   terminal: XTerminal;
 
-  constructor({ getCwd, requestRender }: PaneOptions) {
+  constructor({ getCwd, requestRender, scrollback = 1000 }: PaneOptions) {
     this.getCwd = getCwd;
     this.requestRender = requestRender;
-    this.terminal = new xterm.Terminal({ cols: 80, rows: 20, scrollback: 0, allowProposedApi: true, logLevel: 'off' });
+    this.terminal = new xterm.Terminal({ cols: 80, rows: 20, scrollback, allowProposedApi: true, logLevel: 'off' });
     this.terminal.onData(data => this.child?.write(data)); // Device-status replies, e.g. fzf cursor queries.
     for (const [final, visible] of [['h', true], ['l', false]] as const) {
       this.terminal.parser.registerCsiHandler({ prefix: '?', final }, params => {
@@ -151,8 +154,28 @@ export class TerminalPane {
 
   clearListeners(): void { for (const listener of this.listeners) listener.dispose(); this.listeners = []; }
 
+  /** Lines the view is scrolled back from the bottom (0: following the output). */
+  get scrolledBack(): number {
+    const buffer = this.terminal.buffer.active;
+    return buffer.baseY - buffer.viewportY;
+  }
+
+  /** Scroll the view; negative goes back. New output keeps a scrolled-back view where it is. */
+  scrollBy(lines: number): void {
+    if (this.disposed || !lines) return;
+    this.terminal.scrollLines(lines);
+    this.requestRender();
+  }
+
+  scrollToBottom(): void {
+    if (this.disposed || !this.scrolledBack) return;
+    this.terminal.scrollToBottom();
+    this.requestRender();
+  }
+
   write(data: string): string {
     if (!this.child || this.disposed) return '';
+    this.scrollToBottom(); // typing goes back to the live screen
     const input = terminalInput(data, this.terminal.modes satisfies TerminalInputModes);
     if (input) this.child.write(input);
     return input;
