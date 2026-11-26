@@ -2,7 +2,7 @@
 // the child side — the finish tool, its contract, inbox and result — and, when its role may
 // delegate and it is above the depth cap, the subagent tool one level down, within its own budget.
 import { getAgentDir, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { delegates, readAgent, remaining } from '@calliopi/core/agents';
+import { delegates, descendantTokens, listAgents, readAgent, remaining } from '@calliopi/core/agents';
 import { loadCatalog } from '#lib/catalog.ts';
 import { installChild } from '#lib/child.ts';
 import { AGENT_DIR_ENV } from '#lib/launch.ts';
@@ -26,7 +26,8 @@ export default function (pi: ExtensionAPI) {
     budgetLeft: () => {
       const s = readAgent(dir)?.status;
       const now = Date.now();
-      return remaining(meta.call.budget, { turns: s?.turns ?? 0, ms: now - (s?.startedAt ?? now), tokens: s?.tokens ?? 0, idleMs: 0 });
+      const below = descendantTokens(listAgents(root(), meta.root), meta.id); // what it already delegated is spent
+      return remaining(meta.call.budget, { turns: s?.turns ?? 0, ms: now - (s?.startedAt ?? now), tokens: (s?.tokens ?? 0) + below, idleMs: 0 });
     },
   }, { root, cwd, onSpawned });
 }

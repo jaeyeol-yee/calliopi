@@ -40,6 +40,27 @@ export function treeRows(top: TreeNode[], collapsed: ReadonlySet<string> = new S
   return rows;
 }
 
+/**
+ * Tokens spent below `id`: its children, theirs, and so on. A parent pays for what it delegates, so
+ * these count against its own budget (finished agents by their result, running ones by their status).
+ */
+export function descendantTokens(records: AgentRecord[], id: string): number {
+  const children = new Map<string, AgentRecord[]>();
+  for (const r of records) if (r.meta.parent) children.set(r.meta.parent, [...(children.get(r.meta.parent) ?? []), r]);
+  let total = 0;
+  const seen = new Set<string>([id]);
+  const walk = (parent: string) => {
+    for (const r of children.get(parent) ?? []) {
+      if (seen.has(r.meta.id)) continue;
+      seen.add(r.meta.id);
+      total += r.result?.usage.tokens ?? r.status?.tokens ?? 0;
+      walk(r.meta.id);
+    }
+  };
+  walk(id);
+  return total;
+}
+
 export const stateOf = (r: AgentRecord): AgentState => r.result?.status ?? r.status?.state ?? 'starting';
 
 /** Counts by state over the whole tree, for a one-line summary. */

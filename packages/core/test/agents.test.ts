@@ -6,7 +6,7 @@ import path from 'node:path';
 import {
   DEFAULT_BUDGET, budgetFor, buildTree, classifyEnd, createAgent, decodeRequests, delegates, encodeRequest, exceeded, formatBudget,
   listAgents, markDelivered, treeDir, mayDelegate, mergeCatalog, nearLimit, parseRole, postInbox, readAgent, readDelivered, readInbox, remaining,
-  resolveModel, resolveTools, resultForParent, roleGuidelines, setPane, stateOf, treeCounts, treeRows, writeResult, writeStatus,
+  resolveModel, resolveTools, descendantTokens, resultForParent, roleGuidelines, setPane, stateOf, treeCounts, treeRows, writeResult, writeStatus,
   type AgentMeta, type AgentRole, type FullBudget,
 } from '#lib/agents/index.ts';
 
@@ -175,4 +175,9 @@ test('tree: parents first, siblings by start, orphans at the top, connectors and
   assert.deepEqual(treeRows(top).map(r => `${r.prefix}${r.node.record.meta.id}`), ['├─ scout-1', '├─ research-1', '│  └─ verify-1', '└─ lost-1']);
   assert.deepEqual(treeRows(top, new Set(['research-1'])).map(r => r.node.record.meta.id), ['scout-1', 'research-1', 'lost-1']);
   assert.deepEqual(treeCounts(records), { running: 2, ended: 2, problems: 1 });
+  const spend = (id: string, parent: string | null, tokens: number, done: boolean) => ({ dir: id, meta: { id, parent, createdAt: 0 } as AgentMeta,
+    status: { state: 'running' as const, turns: 0, tokens, startedAt: 0, updatedAt: 0 }, result: done ? { status: 'done' as const, summary: '', usage: { turns: 0, tokens: tokens * 10, ms: 0 }, endedAt: 0 } : undefined });
+  const family = [spend('a', null, 1, false), spend('b', 'a', 2, true), spend('c', 'b', 3, false), spend('d', null, 4, false)];
+  assert.equal(descendantTokens(family, 'a'), 20 + 3); // b by its result, c by its status; not a itself, not d
+  assert.equal(descendantTokens(family, 'd'), 0);
 });

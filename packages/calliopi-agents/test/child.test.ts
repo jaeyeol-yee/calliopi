@@ -88,6 +88,39 @@ test('contract reminder: added at the end of every request once the task is sent
   handlers.get('session_shutdown')!({ type: 'session_shutdown' });
 });
 
+test('idle only when nothing runs; a steer that comes before the task waits for it', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_000_000 });
+  const root = tmp(t);
+  const handlers = new Map<string, (event: unknown, ctx?: unknown) => unknown>();
+  const sent: string[] = [];
+  const fake = {
+    on: (name: string, fn: (event: unknown) => unknown) => handlers.set(name, fn), registerTool: () => {}, setSessionName: () => {},
+    sendMessage: (m: { content: string }) => sent.push(`briefing:${/<background>\n([^\n]*)/.exec(m.content)?.[1]}`), sendUserMessage: (text: string) => sent.push(text.split('\n')[0]!),
+  };
+  const ctx = { ui: { setStatus: () => {}, notify: () => {} }, isIdle: () => true, abort: () => {} };
+  const { dir } = createAgent(root, { ...baseMeta(root, { context: 'summary' }), call: { ...baseMeta(root).call, context: 'summary', budget: { ...DEFAULT_BUDGET, idleMinutes: 1 } } });
+  postInbox(dir, { id: 'steer-1', kind: 'steer', text: 'Also check logout', at: 1 });
+  installChild(fake as never, dir);
+  await handlers.get('session_start')!({ type: 'session_start' }, ctx);
+  t.mock.timers.tick(1000);
+  assert.deepEqual(sent, []); // the steer waits: the task has not gone yet
+  postInbox(dir, { id: 'brief-1', kind: 'briefing', text: '## Goal\nShip', at: 2 });
+  t.mock.timers.tick(1000);
+  t.mock.timers.tick(200);
+  assert.equal(sent[0], 'briefing:## Goal'); // the briefing came after the steer, yet goes first
+  assert.equal(sent[1], 'Task: Find where login is defined');
+  t.mock.timers.tick(1000);
+  assert.equal(sent[2], 'Message from the agent that delegated this task:'); // then the steer, in order
+
+  // a long tool call is not idleness; once it ends, the idle clock runs again
+  handlers.get('tool_execution_start')!({ type: 'tool_execution_start', toolName: 'bash' });
+  t.mock.timers.tick(3 * 60_000);
+  assert.equal(readAgent(dir)!.result, undefined);
+  handlers.get('tool_execution_end')!({ type: 'tool_execution_end' });
+  t.mock.timers.tick(61_000);
+  assert.equal(readAgent(dir)!.result!.status, 'idle');
+});
+
 // A real child Pi in a private tmux server, answering with the faux model of the demo harness.
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
 test('child Pi: background before task, finish ends it, inbox stop, reminder then unanswered', { skip: !hasTmux, timeout: 120_000 }, async t => {

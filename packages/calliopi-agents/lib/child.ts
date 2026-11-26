@@ -8,7 +8,7 @@ import path from 'node:path';
 import { Type } from 'typebox';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
-  FILES, classifyEnd, encodeRequest, exceeded, markDelivered, nearLimit, readAgent, readDelivered, readInbox, writeResult, writeStatus,
+  FILES, classifyEnd, descendantTokens, encodeRequest, exceeded, listAgents, markDelivered, nearLimit, readAgent, readDelivered, readInbox, writeResult, writeStatus,
   type AgentMeta, type AgentStatus, type EndFacts, type InboxMessage,
 } from '@calliopi/core/agents';
 import { FINISH_REMINDER, FINISH_TOOL, briefingMessage, contractReminder, steerMessage, taskMessage, wrapUpReminder } from '#lib/contract.ts';
@@ -43,16 +43,23 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
   let ctxRef: ExtensionContext | undefined;
   let poll: NodeJS.Timeout | undefined, watcher: fs.FSWatcher | undefined;
   let lastAnswer = '';
+  let runningTools = 0; // a tool at work (a long command, a delegation waiting on its children) is not idleness
+  const registry = path.dirname(path.dirname(dir));
 
   const save = (patch: Partial<AgentStatus>) => {
     status = { ...status, ...patch, updatedAt: Date.now() };
     if (!ended) writeStatus(dir, status);
   };
   const touch = (activity?: string) => { lastEventAt = Date.now(); if (activity !== undefined && activity !== status.activity) save({ activity }); };
-  const usage = () => ({ turns: status.turns, ms: Date.now() - startedAt, tokens: status.tokens, idleMs: Date.now() - lastEventAt });
+  /** Its own use, plus the tokens its own subagents spent: what it delegates counts against its budget. */
+  const usage = () => ({
+    turns: status.turns, ms: Date.now() - startedAt, tokens: status.tokens + descendantTokens(listAgents(registry, meta.root), meta.id),
+    idleMs: runningTools > 0 ? 0 : Date.now() - lastEventAt,
+  });
 
   const end = (facts: EndFacts) => {
     if (ended) return;
+    ended = true; // before writing: a failed write must not end it again on every tick
     const { status: end, reason } = classifyEnd(facts);
     const u = usage();
     const written = writeResult(dir, {
@@ -60,7 +67,6 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
       evidence: facts.finish?.evidence, artifacts: facts.finish?.artifacts,
       usage: { turns: u.turns, tokens: u.tokens, ms: u.ms }, endedAt: Date.now(),
     });
-    ended = true;
     clearInterval(poll); watcher?.close();
     if (written) ctxRef?.ui.notify(`부모에게 결과를 보냈습니다: ${end}${reason ? ` (${reason})` : ''}`, end === 'done' ? 'info' : 'warning');
   };
@@ -83,8 +89,14 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
   /** New inbox messages in seq order, each once; a briefing waits for the task unless it is late. */
   const drain = () => {
     if (ended) return;
-    const delivered = readDelivered(dir);
-    for (const m of readInbox(dir, delivered.seq)) if (!delivered.ids.includes(m.id)) deliver(m);
+    // By id, not by the last seq: a steer that came before the task is passed over until the task has
+    // gone (a briefing behind it still goes first), and is then delivered in its turn.
+    const delivered = readDelivered(dir).ids;
+    for (const m of readInbox(dir)) {
+      if (delivered.includes(m.id) || (m.kind === 'steer' && !taskSent)) continue;
+      deliver(m);
+      if (ended) return;
+    }
   };
 
   const sendTask = () => {
@@ -142,7 +154,9 @@ export function installChild(pi: ExtensionAPI, dir: string): void {
     const type = (event as { assistantMessageEvent?: { type?: string } }).assistantMessageEvent?.type ?? '';
     touch(type.startsWith('thinking') ? 'thinking' : type.startsWith('text') ? 'writing' : undefined);
   });
-  pi.on('tool_execution_start', (event) => touch(event.toolName));
+  pi.on('tool_execution_start', (event) => { runningTools++; touch(event.toolName); });
+  pi.on('tool_execution_update', () => touch());
+  pi.on('tool_execution_end', () => { runningTools = Math.max(0, runningTools - 1); touch(); });
   pi.on('message_end', (event) => {
     const m = event.message as { role?: string; usage?: Usage };
     if (m.role === 'assistant') { touch(); save({ tokens: status.tokens + spent(m.usage) }); }
