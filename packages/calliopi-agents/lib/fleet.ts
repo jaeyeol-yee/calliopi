@@ -2,7 +2,7 @@
 // draws its real screen into a headless terminal; /cl-agents shows it in a floating window and
 // passes keys to it. A child lives as long as this Pi: when this Pi ends, the children still running
 // are stopped and recorded as such. After a child ends, its last screen stays to be looked at.
-import type { TerminalPane } from '@calliopi/ui/terminal-overlay';
+import type { TerminalPane as Pane } from '@calliopi/ui/terminal-overlay';
 import { postInbox, readAgent, writeResult, type AgentRecord } from '@calliopi/core/agents';
 import type { ChildSpawn } from '#lib/launch.ts';
 
@@ -14,9 +14,23 @@ export const STOP_GRACE_MS = 5000;
 export interface Child {
   id: string;
   dir: string;
-  pane: TerminalPane;
+  pane: Pane;
   /** Set once its Pi has exited. */
   exited?: { exitCode: number; signal?: number };
+}
+
+type PaneClass = typeof import('@calliopi/ui/terminal-overlay').TerminalPane;
+let loaded: PaneClass | undefined;
+/**
+ * The pane class, loaded on first use (it brings the native PTY). Pi's extension loader may hand a
+ * dynamic import back as a CommonJS namespace, with the exports under `default`: accept both.
+ */
+async function paneClass(): Promise<PaneClass> {
+  if (loaded) return loaded;
+  const mod = (await import('@calliopi/ui/terminal-overlay')) as { TerminalPane?: PaneClass; default?: { TerminalPane?: PaneClass } };
+  const found = mod.TerminalPane ?? mod.default?.TerminalPane;
+  if (typeof found !== 'function') throw new Error('@calliopi/ui/terminal-overlay에서 TerminalPane을 찾지 못했습니다');
+  return (loaded = found);
 }
 
 export class Fleet {
@@ -27,8 +41,7 @@ export class Fleet {
 
   async start(record: AgentRecord, spawn: ChildSpawn): Promise<Child> {
     if (this.closed) throw new Error('이 Pi가 종료되는 중입니다.');
-    const { TerminalPane } = await import('@calliopi/ui/terminal-overlay'); // native PTY: loaded on first use
-    const pane = new TerminalPane({ getCwd: () => record.meta.cwd, requestRender: () => this.onRender() });
+    const pane = new (await paneClass())({ getCwd: () => record.meta.cwd, requestRender: () => this.onRender() });
     pane.resize(SCREEN.cols, SCREEN.rows);
     const child: Child = { id: record.meta.id, dir: record.dir, pane };
     this.children.set(child.id, child);

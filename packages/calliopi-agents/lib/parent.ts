@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
-  FILES, MARK, STATUS_TEXT, budgetFor, createAgent, mayDelegate, readAgent, resolveModel, resolveTools, resultForParent, roleGuidelines,
+  FILES, MARK, STATUS_TEXT, budgetFor, createAgent, mayDelegate, readAgent, resolveModel, resolveTools, resultForParent, roleGuidelines, writeResult,
   type AgentRecord, type AgentRole, type ContextMode, type FullBudget,
 } from '@calliopi/core/agents';
 import { Fleet } from '#lib/fleet.ts';
@@ -169,7 +169,11 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       const started = await Promise.allSettled(records.map(r => fleet.start(r, childSpawn(r.dir, r.meta, launch))));
       const failed = started.flatMap((s, i) => (s.status === 'rejected' ? [`${records[i]!.meta.id}: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`] : []));
       if (failed.length) {
-        for (const r of records) fleet.stop(r.meta.id); // all or none: a half-started call leaves nothing running
+        for (const r of records) {
+          fleet.stop(r.meta.id); // all or none: a half-started call leaves nothing running
+          // and nothing that looks as if it were still starting
+          writeResult(r.dir, { status: 'error', summary: '', reason: `시작하지 못함: ${failed.join('; ')}`, usage: { turns: 0, tokens: 0, ms: 0 }, endedAt: Date.now() });
+        }
         return fail(`Could not start the subagents (${failed.join('; ')}); none is running.`);
       }
       delegations += records.length;

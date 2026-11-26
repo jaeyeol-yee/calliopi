@@ -57,7 +57,8 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   const top = new TerminalPane({ getCwd: () => project, requestRender: () => {} });
   t.after(() => top.dispose());
   top.resize(150, 45);
-  void top.run(process.execPath, [path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
+  // CALLIOPI_TEST_PI: another Pi's cli.js (e.g. the installed release), whose extension loader may differ.
+  void top.run(process.execPath, [process.env.CALLIOPI_TEST_PI ?? path.join(repo, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),
     '-e', path.join(repo, 'demo/faux-extension.ts'), '-e', path.join(repo, 'packages/calliopi-agents/extensions/agents.ts'), '--model', 'faux/demo'],
   { ...process.env, PI_CODING_AGENT_DIR: agentHome, DEMO_SCENARIO: parent, DEMO_CHILD_SCENARIO: child });
   const screen = () => {
