@@ -34,6 +34,7 @@ calliopi/
     │   ├── lib/              # floating terminal·표·키 입력 부품
     │   ├── extensions/       # 대화 기록 헤더
     │   └── themes/           # Pi 테마 JSON
+    ├── calliopi-agents/      # 서브에이전트: subagent 도구, 자식 Pi (pane)
     ├── calliopi-fanout/      # Cursor Cloud Agents 팬아웃·추적 (Pi 확장·rex 레이어 포함)
     └── calliopi-workflows/   # fzf 워크플로우: /cl-edit, /cl-log
 ```
@@ -41,6 +42,8 @@ calliopi/
 `calliopi-fanout`은 Pi manifest에 등록된 확장으로 `/cl-fanout` 명령과 도구를 제공합니다. 독립 CLI와 rex pane에서도 사용할 수 있습니다. 사용법은 [packages/calliopi-fanout/README.md](packages/calliopi-fanout/README.md)를 보세요.
 
 `calliopi-workflows`의 `/cl-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/cl-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. `/cl-run`은 명령을 옆 pane(또는 tmux 백그라운드 창)에서 실행해 Pi를 붙잡지 않고, `/cl-jobs`로 상태와 출력을 봅니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
+
+`calliopi-agents`는 모델이 쓰는 `subagent` 도구를 제공합니다. 맡긴 일마다 자식 Pi가 멀티플렉서 pane에서 계약(과제, 완료 조건, 예산)대로 일하고 `finish`로 결과를 보고합니다. foreground면 결과가 도구 결과로, background면 끝날 때 모델을 깨워 전달됩니다. 사용법은 [packages/calliopi-agents/README.md](packages/calliopi-agents/README.md)를 보세요.
 
 `ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙이고(`/cl-headers`), 현재 브랜치가 PR에 들어 있으면 footer에 `onto owner/repo#N open|merged…`를 표시합니다(`/cl-branch`). `/cl-usage`는 Claude·Codex·Cursor 구독 사용량을 gauge로 보여 줍니다. 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
 
@@ -59,7 +62,8 @@ calliopi/package.json 의 pi manifest
           ├── packages/context/{extensions,skills,prompts}
           ├── packages/ui/{extensions,themes}
           ├── packages/calliopi-fanout/extensions
-          └── packages/calliopi-workflows/extensions
+          ├── packages/calliopi-workflows/extensions
+          └── packages/calliopi-agents/extensions
 ```
 
 - Pi는 루트 manifest에 명시된 리소스 경로를 읽습니다. 하위 `package.json`의 `pi` 선언을 재귀 탐색하는 구조가 아닙니다.
@@ -70,7 +74,7 @@ calliopi/package.json 의 pi manifest
 ### 계층
 
 ```text
-app       calliopi-fanout    calliopi-workflows     명령·도구 등록, 무엇을 할지 결정
+app       calliopi-fanout    calliopi-workflows    calliopi-agents     명령·도구 등록, 무엇을 할지 결정
               │                 │        │
 ui, context   ui ◄──────────────┘        │           화면과 입력 / 모델이 읽을 자료
               │                          │

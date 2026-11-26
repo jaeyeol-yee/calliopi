@@ -9,8 +9,13 @@ import { FINISH_TOOL } from '#lib/contract.ts';
 
 /** Set in a child Pi: its agent directory. Its presence is what makes a Pi a child. */
 export const AGENT_DIR_ENV = 'CALLIOPI_AGENT_DIR';
-/** Variables a child inherits from its parent when set, besides the agent directory. */
+/**
+ * Variables a child inherits from its parent when set, besides the agent directory. An explicit
+ * list: the command line of a pane is visible to other processes, so secrets never go on it.
+ */
 export const PASSED_ENV = ['PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR', 'PI_OFFLINE'] as const;
+/** Demo and tests: the child's scripted replies (the faux model reads DEMO_SCENARIO). */
+export const CHILD_SCENARIO_ENV = 'DEMO_CHILD_SCENARIO';
 
 export const PROMPT_FILE = 'system-prompt.md';
 
@@ -39,6 +44,7 @@ export function prepareSession(dir: string, meta: AgentMeta, parentSession: stri
 export function childCommand(dir: string, meta: AgentMeta, launch: ChildLaunch, env: NodeJS.ProcessEnv = process.env): string[] {
   const vars: Record<string, string> = { [AGENT_DIR_ENV]: dir };
   for (const name of PASSED_ENV) if (env[name]) vars[name] = env[name]!;
+  if (env[CHILD_SCENARIO_ENV]) Object.assign(vars, { DEMO_SCENARIO: env[CHILD_SCENARIO_ENV], [CHILD_SCENARIO_ENV]: env[CHILD_SCENARIO_ENV] });
   Object.assign(vars, launch.env);
   return [
     'env', ...Object.entries(vars).map(([k, v]) => `${k}=${v}`),
@@ -50,6 +56,17 @@ export function childCommand(dir: string, meta: AgentMeta, launch: ChildLaunch, 
     '--tools', [...meta.tools, FINISH_TOOL].join(','),
     '--append-system-prompt', path.join(dir, PROMPT_FILE),
   ];
+}
+
+/** The extensions this Pi was started with (-e, --extension), so a child loads them too. */
+export function extensionArgs(argv = process.argv): string[] {
+  const out: string[] = [];
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i]!;
+    if ((a === '-e' || a === '--extension') && argv[i + 1]) out.push(argv[++i]!);
+    else if (a.startsWith('--extension=')) out.push(a.slice('--extension='.length));
+  }
+  return out.map(e => (fs.existsSync(e) ? path.resolve(e) : e)); // a package source (npm:, git:) stays as given
 }
 
 /** How this Pi was started, to start a child the same way (Pi's own subagent example does the same). */
