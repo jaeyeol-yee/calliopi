@@ -21,9 +21,10 @@ const SHARE = '출력 끝부분을 대화에 전달', SCREEN = '지금 화면을
 // end of the output for the next turn.
 // /cl-run ? <words>: the current model writes the command; it runs only after the user confirms it.
 // /cl-jobs: every job with its state; pick one to pass its output on, go to its pane, stop or forget it.
-// alt+k: Ctrl+C to the newest job started here; pressed again soon after, stop it, then kill it.
-export const STOP_KEY = 'alt+k';
-/** Presses of STOP_KEY this close together escalate: Ctrl+C, then SIGTERM, then SIGKILL to the process group. */
+// ctrl+\ or alt+k: Ctrl+C to the newest job started here; pressed again soon after, stop it, then kill it.
+// ctrl+\ reaches Pi in any terminal; alt+k only where Option (macOS) is sent as Alt, not as a character (˚).
+export const STOP_KEYS = ['ctrl+\\', 'alt+k'] as const;
+/** Presses this close together escalate: Ctrl+C, then SIGTERM, then SIGKILL to the process group. */
 const ESCALATE_MS = 3000;
 
 export default function (pi: ExtensionAPI) {
@@ -61,23 +62,26 @@ export default function (pi: ExtensionAPI) {
     for (const dir of [...watchers.keys()]) unwatch(dir);
   });
 
-  pi.registerShortcut(STOP_KEY, {
-    description: '/cl-run 작업 끊기: 이 세션에서 시작한 가장 최근 작업에 Ctrl+C. 3초 안에 다시 누르면 종료(SIGTERM), 한 번 더 누르면 강제 종료(SIGKILL)',
-    handler: async ctx => {
-      const running = [...watched].flatMap(dir => readJob(dir) ?? []).filter(j => j.state === 'running').sort((a, b) => b.startedAt - a.startedAt);
-      const job = running[0];
-      if (!job) return ctx.ui.notify('끊을 작업이 없습니다. 이 세션에서 /cl-run으로 시작해 실행 중인 작업에만 보냅니다.', 'info');
-      const now = Date.now();
-      const count = presses?.dir === job.dir && now - presses.at < ESCALATE_MS ? presses.count + 1 : 1;
-      presses = { dir: job.dir, at: now, count };
-      const sent = count === 1 ? interruptJob(job) : stopJob(job);
-      if (!sent) return ctx.ui.notify(`${job.name}: 실행 중인 프로세스를 찾지 못했습니다.`, 'warning');
-      const others = running.length > 1 ? ` (실행 중 ${running.length}개 중 가장 최근)` : '';
-      ctx.ui.notify(count === 1 ? `${job.name}에 Ctrl+C를 보냈습니다${others}. 3초 안에 ${STOP_KEY}를 다시 누르면 종료합니다.`
-        : count === 2 ? `${job.name}에 종료 신호를 보냈습니다. 다시 누르면 강제 종료합니다.`
-        : `${job.name}을(를) 강제 종료합니다.`, 'info');
-    },
-  });
+  const stop = async (key: string, ctx: ExtensionContext) => {
+    const running = [...watched].flatMap(dir => readJob(dir) ?? []).filter(j => j.state === 'running').sort((a, b) => b.startedAt - a.startedAt);
+    const job = running[0];
+    if (!job) return ctx.ui.notify('끊을 작업이 없습니다. 이 세션에서 /cl-run으로 시작해 실행 중인 작업에만 보냅니다.', 'info');
+    const now = Date.now();
+    const count = presses?.dir === job.dir && now - presses.at < ESCALATE_MS ? presses.count + 1 : 1;
+    presses = { dir: job.dir, at: now, count };
+    const sent = count === 1 ? interruptJob(job) : stopJob(job);
+    if (!sent) return ctx.ui.notify(`${job.name}: 실행 중인 프로세스를 찾지 못했습니다.`, 'warning');
+    const others = running.length > 1 ? ` (실행 중 ${running.length}개 중 가장 최근)` : '';
+    ctx.ui.notify(count === 1 ? `${job.name}에 Ctrl+C를 보냈습니다${others}. 3초 안에 ${key}를 다시 누르면 종료합니다.`
+      : count === 2 ? `${job.name}에 종료 신호를 보냈습니다. 다시 누르면 강제 종료합니다.`
+      : `${job.name}을(를) 강제 종료합니다.`, 'info');
+  };
+  for (const key of STOP_KEYS) {
+    pi.registerShortcut(key, {
+      description: '/cl-run 작업 끊기: 이 세션에서 시작한 가장 최근 작업에 Ctrl+C. 3초 안에 다시 누르면 종료(SIGTERM), 한 번 더 누르면 강제 종료(SIGKILL)',
+      handler: ctx => stop(key, ctx),
+    });
+  }
 
   pi.registerCommand('cl-run', {
     description: '명령을 옆 pane에서 실행하고 바로 돌아옵니다(! 와 달리 Pi를 붙잡지 않습니다). 끝나면 알리고 종료 코드와 출력 끝부분을 다음 대화에 전달합니다. -s(--silent): 백그라운드 창에서 실행(tmux). -n <이름>: 작업 이름. ? <하고 싶은 일>: 모델이 명령을 추론하고 확인을 받은 뒤 실행. /cl-jobs로 조회합니다.',
