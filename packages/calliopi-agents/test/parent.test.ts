@@ -48,10 +48,11 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   };
   completions = [{ match: 'checkpoint summary|previous-summary', text: '## Goal\nFind login fast\n\n## Progress\n### Done\n- [x] asked twice\n\n## Key Decisions\n- **Scouts first**: cheap\n' }];
   const parent = scenario('parent', [
-    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Look in the background', context: 'none' }, { role: 'scout', task: 'Look elsewhere', context: 'none' }] } }, { text: 'Started; carrying on.' }],
+    // the first delegation of the session starts two at once: one shared import of the terminal module
+    // (two imports at the same moment gave the second an unfinished module); the wait gives one reply
+    [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Find where login is defined', done: 'The file is named', context: 'none' }, { role: 'scout', task: 'Find it again', context: 'none' }] } }, { text: 'The scout found it.' }],
+    [{ tool: 'subagent', args: { tasks: [{ role: 'scout', task: 'Look in the background', context: 'none' }] } }, { text: 'Started; carrying on.' }],
     [{ text: 'Background scout reported back.' }],
-    [{ text: 'The other one too.' }],
-    [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Find where login is defined', done: 'The file is named', context: 'none' }] } }, { text: 'The scout found it.' }],
     [{ tool: 'subagent', args: { background: false, tasks: [{ role: 'scout', task: 'Check login with background' }] } }, { text: 'Briefed scout done.' }],
   ]);
   completions = [];
@@ -83,23 +84,30 @@ test('top Pi delegates: background by default wakes the model when a child ends;
     return fs.readFileSync(path.join(r.dir, file), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   };
 
+  // foreground: the tool waits, then hands the result to the model
+  await type('Where is login?');
+  await until('foreground reply', () => /The scout found it\./.test(screen()));
+  const second = agents().find(r => r.meta.id === 'scout-1')!;
+  assert.equal(second.result!.status, 'done');
+  assert.equal(agents().find(r => r.meta.id === 'scout-2')!.result!.status, 'done'); // started together with scout-1
+  assert.deepEqual(second.meta.tools.sort(), ['bash', 'find', 'grep', 'ls', 'read']);
+  const header = sessionOf(second)[0];
+  assert.match(header.parentSession, new RegExp(`${second.meta.root}\\.jsonl$`)); // the child's session names the top Pi's
+  const topSession = () => fs.readFileSync(header.parentSession, 'utf8');
+  assert.match(topSession(), /Subagent \\"scout-1\\" \(role scout, model faux\/demo\) ended: done\./);
+
   // background (the default): the tool returns at once; when the child ends, the model is woken
   await type('Look in the background');
-  // two results may come in one turn or two: wait for both to be announced, not for a number of replies
-  await until('background reply', () => /Background scout reported back\./.test(screen()) && (fs.readFileSync(fs.readdirSync(path.join(agentHome, 'sessions'), { recursive: true }).map(String).filter(f => f.endsWith('.jsonl')).map(f => path.join(agentHome, 'sessions', f))[0]!, 'utf8').match(/"customType":"calliopi-agent"/g) ?? []).length >= 2);
-  const first = agents().find(r => r.meta.id === 'scout-1')!;
-  assert.equal(readAgent(agents().find(r => r.meta.id === 'scout-2')!.dir)!.result!.status, 'done'); // two started together
+  await until('background reply', () => /Background scout reported back\./.test(screen()));
+  const first = agents().find(r => r.meta.id === 'scout-3')!;
   assert.deepEqual([first.meta.parent, first.meta.depth, first.meta.call.background, first.meta.pane], [null, 1, true, null]); // no pane opened
   assert.equal(readAgent(first.dir)!.result!.status, 'done');
-  const header = sessionOf(first)[0];
-  assert.match(header.parentSession, new RegExp(`${first.meta.root}\\.jsonl$`)); // the child's session names the top Pi's
-  const topSession = () => fs.readFileSync(header.parentSession, 'utf8');
-  assert.match(topSession(), /Started scout-1 \(scout\), scout-2 \(scout\)\. You will be told as each one ends/);
+  assert.match(topSession(), /Started scout-3 \(scout\)\. You will be told as each one ends/);
   assert.match(topSession(), /"customType":"calliopi-agent"/);
 
   // /cl-agents: the list in a floating window, an agent's last screen, back, closed
   await type('/cl-agents');
-  await until('list', () => /서브에이전트 · 실행 중 0 · 끝남 2/.test(screen()));
+  await until('list', () => /서브에이전트 · 실행 중 0 · 끝남 3/.test(screen()));
   assert.match(screen(), /▸├─ ✓ scout-1 · 완료/);
   top.write('\r');
   await until('its screen', () => /✓ scout-1 · scout · 완료/.test(screen()) && /ctrl\+\]: 목록 · 끝난 화면/.test(screen()));
@@ -107,14 +115,6 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   await until('back to the list', () => /Enter: 화면/.test(screen()));
   top.write('\x1b');
   await until('closed', () => !/서브에이전트 · 실행 중/.test(screen()));
-
-  // foreground: the tool waits, then hands the result to the model
-  await type('Where is login?');
-  await until('foreground reply', () => /The scout found it\./.test(screen()));
-  const second = agents().find(r => r.meta.id === 'scout-3')!;
-  assert.equal(second.result!.status, 'done');
-  assert.deepEqual(second.meta.tools.sort(), ['bash', 'find', 'grep', 'ls', 'read']);
-  assert.match(topSession(), /Subagent \\"scout-3\\" \(role scout, model faux\/demo\) ended: done\./);
 
   // context summary (the role default): the delegation summarizes the conversation, and the child
   // gets its slice of that summary before its task
