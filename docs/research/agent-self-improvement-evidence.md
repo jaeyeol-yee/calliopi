@@ -38,7 +38,7 @@
 - 자동으로 측정하는 것은 결정적 지표다. `requests.jsonl`의 system·tools 해시에서 prefix 재작성을 세고, 캐시 적중, 토큰·턴, `classifyEnd` 실패 유형을 본다.
 - 모델별 특성과 부정 결과를 `docs/model-guidance-history.md`에 남긴다.
 - reviewer 같은 판정 역할은 문구를 다듬지 않는다. 이 저장소에서 채택되거나 기각된 판정 예시를 few-shot으로 쌓는다.
-- PR은 유형을 표시하고 유형에 맞는 근거를 낸다(`.github/pull_request_template.md`). eval이 필요한 것은 모델이 보는 것이나 하는 일을 바꾸는 "모델 동작" 유형뿐이다. 기존 PR #1–#16에서 이 유형은 기능 PR 안에 섞여 들어왔고(#11, #12, #13, #15) 근거가 남지 않았다. 그래서 섞이면 나누거나 해당 커밋을 표시한다.
+- PR은 유형별 템플릿(`.github/PULL_REQUEST_TEMPLATE/`의 prompt, model, tool, feat, fix, refactor, chore)으로 유형에 맞는 근거를 낸다. eval이 필요한 것은 prompt 유형뿐이다. 기존 PR #1–#16에서 이 유형은 기능 PR 안에 섞여 들어왔고(#11, #12, #13, #15) 근거가 남지 않았다. 그래서 prompt·model·tool은 다른 변경과 섞지 않고 PR을 나눈다.
 
 ## 4. 범용 하네스임을 입증하려면
 
