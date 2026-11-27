@@ -1,18 +1,22 @@
-// Subagents and the active goal. The top Pi gets the subagent tool and the goal (tools, /cl-goal,
-// carry-on); its subagents are linked to the open goal. A child Pi (started with CALLIOPI_AGENT_DIR)
+// Subagents and the active goal. The top Pi gets the subagent tool, the goal (tools, /cl-goal,
+// carry-on) and /cl-note; its subagents are linked to the open goal. A child Pi (started with CALLIOPI_AGENT_DIR)
 // gets the child side — the finish tool, its contract, inbox and result — and, when its role may
 // delegate and it is above the depth cap, the subagent tool one level down, within its own budget
 // and for the goal it inherited.
 import { getAgentDir, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { closeOrphans, type Fleet } from '#lib/fleet.ts';
 import { delegates, descendantTokens, listAgents, listGoals, readAgent, remaining } from '@calliopi/core/agents';
+import { notesFile } from '@calliopi/core/notes';
 import { loadCatalog } from '#lib/catalog.ts';
 import { installChild } from '#lib/child.ts';
 import { AGENT_DIR_ENV } from '#lib/launch.ts';
 import { brief } from '#lib/briefing.ts';
 import { writeGoalExport } from '#lib/export.ts';
 import { collect, retention } from '#lib/gc.ts';
+import { DEBRIEF_ENV, installDebrief } from '#lib/debrief.ts';
 import { installGoals, type Goals } from '#lib/goals.ts';
+import { installHarnessStamp } from '#lib/harness.ts';
+import { installNotes } from '#lib/notes.ts';
 import { installParent, registryRoot, type OnSpawned } from '#lib/parent.ts';
 import { openAgentsView } from '#lib/viewer.ts';
 
@@ -24,6 +28,9 @@ export function isChildOf(dir: string, argv = process.argv): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
+  // A Pi started to review a finished session (lib/debrief.ts) is no agent of ours: no tools, no goal,
+  // no records, and above all no review of its own.
+  if (process.env[DEBRIEF_ENV]) return;
   const cwd = process.cwd();
   const root = () => registryRoot(getAgentDir());
   /** Aged records go: request logs, then whole records, after their goal closes (lib/gc.ts). */
@@ -53,6 +60,9 @@ export default function (pi: ExtensionAPI) {
     const fleet = installParent(pi, { depth: 0, parentId: null }, { root, cwd, onSpawned, collect: gc, goal: (ctx, hint) => goals?.ensure(ctx, hint) ?? null });
     goals = installGoals(pi, { root, fleet, collect: gc, closeOrphans: records => { closeOrphans(records, fleet); } });
     viewer(fleet, id => id);
+    installNotes(pi, { file: () => notesFile(getAgentDir()) }); // the person's notes: the top Pi only
+    installHarnessStamp(pi); // which Calliopi commit a top-level session ran under, for npm run signals
+    installDebrief(pi, { agentDir: getAgentDir }); // off unless turned on: a background review of a session that ended with a smell
     return;
   }
 

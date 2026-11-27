@@ -37,3 +37,15 @@ Append a new entry at the end for every `prompt` or `model` PR (see `.github/PUL
 - Measured: role lint has no findings. Every request after the first is a prefix rewrite (428 of 428), and the cache hit rate is 14% (reviewer) and 19% (scout). In one scout run, cache reads stay at 5,392 tokens (system and tools) on every turn while cache writes grow from 2,589 to 33,862. The cause is the contract reminder that `context` appends to every request: Pi marks the last user message for caching, which is the reminder, and the next request moves it, so the conversation is written to the cache again each turn and never read. The comment in `child.ts` ("only the tail changes, so the cache holds") does not hold. Reviewer runs ended 5 of 32 times without `finish` (stopped 3, error 3, idle 1 among the ends).
 - Not adopted: nothing yet. Candidate fix: keep the reminder but move the cache mark to the message before it, so the model sees the same text; that is a `perf` change measured by cache hit and prefix rewrites, not a prompt change.
 - Open risk / revisit when: after that fix, rerun `npm run signals` on new runs; all runs here are one model, so per-model differences are unknown.
+
+## 2026-11-27: all models — instructions for the session debrief
+
+- Scope: prompt
+- Applies to: all models (the reviewing model is the session's own unless `debrief.model` names another)
+- Changed: `packages/core/lib/debrief.ts` (`DEBRIEF_INSTRUCTIONS`), `packages/calliopi-agents/lib/debrief.ts` (`SYSTEM_PROMPT`). New text, read only by the Pi that reviews a finished session; no existing model-facing text changes, and the reviewed session's own prompt and cache are untouched.
+- Basis: user-decision (the owner asked for a background review at session end, in the same PR as the detectors). The wording is a guess: a fixed verdict and cause list so results can be counted, "a flag is not proof" and "cannot tell" against a reviewer agreeing with the detector, and no rewrites of prompts because proposals belong to the `improver` role and a person.
+- Sources read in full: none for the wording. Related reading is in `docs/research/session-smell-triggers.md` (Devin Session Insights and Factory Signals run a model over finished sessions; neither publishes its prompt).
+- Measured: nothing about the text. No real model has run it: the tests use the demo's faux model, which returns a fixed answer. Not known: whether verdicts are right, whether the model follows the format, how often it answers "cannot tell" on excerpts this short, and what a run costs.
+- Not adopted: giving the reviewer read tools and the whole session file (more context, but a larger and unbounded send, and a tool-using process left running unattended); starting it for every session (a model call for sessions with nothing flagged); on by default.
+- Open risk / revisit when: the first real debriefs exist. Read 20 of them against their sessions and record how many verdicts hold; if the session's own model reviews itself, compare with a model of another family on the same sessions. Until then a debrief is an opinion, and nothing should be changed on its word alone.
+
