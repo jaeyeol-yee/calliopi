@@ -7,3 +7,4 @@ export { FILES, createAgent, listAgents, markDelivered, postInbox, privateDir, r
 export { decodeRequest, decodeRequests, encodeRequest, type RequestRecord } from '#lib/agents/requests.ts';
 export { DEFAULT_RETENTION, OPEN, goalAgentTokens, goalOverBudget, goalsDir, listGoals, moveGoal, newGoalId, openGoal, planPrune, saveGoal, staleGoals, type Goal, type GoalStatus, type PruneAction, type Retention } from '#lib/agents/goals.ts';
 export { buildTree, descendantTokens, stateOf, treeCounts, treeRows, type TreeNode, type TreeRow } from '#lib/agents/tree.ts';
+export { KNOWN_TOOLS, LIMITS, formatSignals, lintRole, parseRequests, runSignals, summarizeSignals, type LintFinding, type RunSignals, type SignalRow } from '#lib/agents/signals.ts';
