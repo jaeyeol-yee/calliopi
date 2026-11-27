@@ -29,15 +29,21 @@ test('appendNote and readNotes: appended as private lines, read back oldest firs
   assert.equal(second!.text, 'second line');
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.equal(fs.readFileSync(file, 'utf8').trimEnd().split('\n').length, 2);
+  fs.chmodSync(file, 0o644); // a file left readable by others is made private again on the next note
+  appendNote(file, note({ at: 3000, text: 'third' }));
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(readNotes(file).length, 3);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split('\n').slice(0, 2).join('\n') + '\n');
   assert.deepEqual(readNotes(file).map(n => [n.at, n.text, n.session, n.sessionFile, n.model]), [
     [1000, 'first', 's-0', '/s/0.jsonl', undefined], [2000, 'second line', 's-1', undefined, 'p/m'],
   ]);
 });
 
-test('readNotes: a torn or foreign line is skipped, the rest is kept', t => {
+test('readNotes: a torn or foreign line, or a time that is not a date, is skipped; the rest is kept', t => {
   const file = path.join(tmp(t), 'notes.jsonl');
-  fs.writeFileSync(file, [JSON.stringify(note({ at: 1 })), '{"at":2,"text":"no session"}', 'not json', JSON.stringify(note({ at: 3 })), '{"at":4,"te'].join('\n'));
+  fs.writeFileSync(file, [JSON.stringify(note({ at: 1 })), '{"at":2,"text":"no session"}', 'not json', JSON.stringify(note({ at: 3 })), JSON.stringify(note({ at: 1e20 })), '{"at":4,"te'].join('\n'));
   assert.deepEqual(readNotes(file).map(n => n.at), [1, 3]);
+  assert.match(formatNotes(readNotes(file)), /^## Notes\n\n2 notes from 1 session, newest first\./); // a time that is not a date would throw here
 });
 
 test('noteLine and formatNotes: newest first, counted by session, capped', () => {

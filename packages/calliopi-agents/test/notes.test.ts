@@ -95,6 +95,6 @@ test('signalsReport: the notes section follows the run counts, and is left out w
   assert.doesNotMatch(without, /## Notes/);
   const report = signalsReport([], [], [{ at: 0, text: 'looped', session: 's-1', cwd: '/work/app' }]);
   assert.ok(report.startsWith(`${without}\n\n## Notes\n`));
-  assert.match(report, /1 notes from 1 sessions, newest first\.\n\n- 1970-01-01 00:00Z · app · unknown model · looped \(session s-1\)$/);
+  assert.match(report, /1 note from 1 session, newest first\.\n\n- 1970-01-01 00:00Z · app · unknown model · looped \(session s-1\)$/);
   assert.match(signalsReport([], [], []), /## Notes\n\nNo notes\./);
 });

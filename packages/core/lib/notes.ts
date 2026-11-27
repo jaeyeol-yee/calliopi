@@ -30,17 +30,18 @@ export function appendNote(file: string, note: Note): Note | undefined {
   const full: Note = { ...note, text };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, `${JSON.stringify(full)}\n`, { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch { /* not ours to change: the note is written */ } // the mode above applies only when the file is created
   return full;
 }
 
-/** Every note in the file, oldest first; a missing file is no notes and a broken line is skipped. */
+/** Every note in the file, oldest first; a missing file is no notes, and a broken line or one whose time is not a date is skipped. */
 export function readNotes(file: string): Note[] {
   let raw: string;
   try { raw = fs.readFileSync(file, 'utf8'); } catch { return []; }
   return raw.split('\n').filter(Boolean).flatMap(line => {
     try {
       const n = JSON.parse(line) as Partial<Note>;
-      return typeof n.at === 'number' && typeof n.text === 'string' && typeof n.session === 'string' && typeof n.cwd === 'string' ? [n as Note] : [];
+      return typeof n.at === 'number' && !Number.isNaN(new Date(n.at).getTime()) && typeof n.text === 'string' && typeof n.session === 'string' && typeof n.cwd === 'string' ? [n as Note] : [];
     } catch { return []; }
   }).sort((a, b) => a.at - b.at);
 }
@@ -50,12 +51,14 @@ const stamp = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace
 /** One note as a line: when (UTC), the project directory's name, the model, the text. */
 export const noteLine = (n: Note) => `${stamp(n.at)} · ${path.basename(n.cwd) || n.cwd} · ${n.model ?? 'unknown model'} · ${n.text}`;
 
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 /** The notes section of the signals report: newest first, at most `limit` lines. */
 export function formatNotes(notes: Note[], limit = 50): string {
   const lines = ['## Notes', ''];
   if (!notes.length) return [...lines, 'No notes. Write one with /cl-note <text> when a session goes wrong.'].join('\n');
   const sessions = new Set(notes.map(n => n.session)).size;
-  lines.push(`${notes.length} notes from ${sessions} sessions, newest first.`, '');
+  lines.push(`${count(notes.length, 'note')} from ${count(sessions, 'session')}, newest first.`, '');
   const newest = [...notes].reverse();
   for (const n of newest.slice(0, limit)) lines.push(`- ${noteLine(n)} (session ${n.session})`);
   if (newest.length > limit) lines.push(`- … and ${newest.length - limit} older`);
