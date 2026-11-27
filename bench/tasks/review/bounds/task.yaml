@@ -1,0 +1,14 @@
+version: 1
+tier: hard
+prompt: |
+  Review src/sorted.js against its comments. Do not change any file.
+  List every bug you find. End your answer with one line of the form `lines N, M` naming the line of
+  each bug in ascending order (`line N` for a single bug), or `no bugs` if you find none.
+scope: []   # a read-only task: any changed or added file fails the scope dimension
+oracle:
+  # The file has no bug (bench/test checks it against a brute force). Any cited line is an extra finding.
+  - answer: "^[Nn]o bugs\\.?$"
+    dimension: outcome
+  - citation: []
+  - unchanged: [src/sorted.js]
+    dimension: outcome

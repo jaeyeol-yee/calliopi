@@ -1,0 +1,16 @@
+version: 1
+tier: hard
+prompt: |
+  src/flags.js defines feature flags. Which of them does no code in src/ ever read?
+  A flag is read when code looks up its value, under any name and through any helper or data file in src/.
+  Setting a flag is not reading it, and neither is naming it in a comment or in a message. test/ does not count.
+  Do not change any file. End your answer with one line listing the unread flags in alphabetical order,
+  separated by commas (or `none`).
+scope: []   # a read-only task: any changed or added file fails the scope dimension
+oracle:
+  # errorLog: the area list has no "error". fastExport: a comment and a message. legacyAuth: test/ only.
+  # pushAlerts: only set. strictMode: the CLI option of that name is not the flag.
+  - answer: "^`?errorLog`?, ?`?fastExport`?, ?`?legacyAuth`?, ?`?pushAlerts`?, ?`?strictMode`?\\.?$"
+    dimension: outcome
+  - unchanged: [src/flags.js, src/logging/areas.js, src/notify/keys.js, src/routes.json]
+    dimension: outcome

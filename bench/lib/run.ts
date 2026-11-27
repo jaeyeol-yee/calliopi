@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { listAgents, sessionFile, treeDir } from '@calliopi/core/agents';
 import { isFaux, type PlannedRun } from './spec.ts';
-import { runOracle, snapshot, type CheckResult, type Dimension } from './task.ts';
+import { runOracle, snapshot, taskGroup, type CheckResult, type Dimension } from './task.ts';
 
 export const ROOT = path.resolve(import.meta.dirname, '..', '..');
 const FAUX = path.join(ROOT, 'bench', 'faux-extension.ts');
@@ -43,6 +43,7 @@ export interface RunRecord {
   /** The Calliopi commit the run loaded (the working tree's, or its arm's harnessRef). */
   harnessCommit?: string;
   task: string;
+  /** The task's class, or <class>-hard for a hard task. */
   taskClass: string;
   taskVersion: number;
   rep: number;
@@ -198,7 +199,7 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   return {
     spec: ctx.spec, arm: arm.id, model: arm.model, effort: arm.effort, harness: arm.harness,
     ...(arm.harness === 'on' ? { harnessCommit: at?.commit ?? ctx.harnessSha } : {}),
-    task: task.id, taskClass: task.class, taskVersion: task.version, rep,
+    task: task.id, taskClass: taskGroup(task), taskVersion: task.version, rep,
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
     exit: r.status, timedOut, pass: !timedOut && grade.pass, dimensions: grade.dimensions, ...(grade.extraFindings !== undefined ? { extraFindings: grade.extraFindings } : {}),
     ...(providerError(signals) ? { error: providerError(signals) } : {}), checks: grade.checks, changed: grade.changed, outOfScope: grade.outOfScope,

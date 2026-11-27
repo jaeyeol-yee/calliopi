@@ -1,0 +1,22 @@
+version: 1
+tier: hard
+prompt: |
+  Amounts in src/ are euros as floats, and totals drift. Change every amount to integer cents:
+  - Items carry `cents` instead of `price`.
+  - lineTotal, applyDiscount, addTax and cartTotal take and return integer cents.
+  - A discount is `percent` of the amount, rounded to the nearest cent with halves rounded up, and then
+    subtracted. Tax is `percent` of the amount, rounded the same way, and then added. cartTotal applies the
+    discount to the subtotal first, then tax to what is left.
+  - formatEuro takes cents. The invoice text keeps its format.
+  The tests in test/ describe the new API; do not change them.
+scope: [src/price.js, src/tax.js, src/cart.js, src/format.js, src/invoice.js]
+oracle:
+  # The provided amounts never land on half a cent; the hidden tests use ones that do, where rounding the
+  # result instead of the discount (or converting to euros and back) gives another cent.
+  - command: node --test
+    dimension: outcome
+  - unchanged: [test/billing.test.js]
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden

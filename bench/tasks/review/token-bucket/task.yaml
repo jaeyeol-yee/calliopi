@@ -1,0 +1,29 @@
+version: 1
+tier: hard
+prompt: |
+  Review src/limiter.js against its comments. Do not change any file.
+  List every bug you find. End your answer with one line of the form `lines N, M` naming the line of
+  each bug in ascending order (`line N` for a single bug), or `no bugs` if you find none.
+scope: []   # a read-only task: any changed or added file fails the scope dimension
+oracle:
+  # Three bugs: the refill multiplies milliseconds by a per-second rate (25-26); `>` refuses a bucket
+  # holding exactly `cost` (28); retryAfter counts whole tokens only, so it overstates the wait (44-46).
+  # Not bugs: deleting from the Map while iterating it, `>` in sweep, the refill on a failed take.
+  # The regexes below have not met a model's answer yet: read the first runs by hand.
+  - diagnosis:
+      milliseconds-as-seconds:
+        - "/ ?1[_,]?000"
+        - "(\\bms\\b|milliseconds?)[^\\n]{0,160}(seconds?|ratePerSec|per[- ]second)"
+        - "(seconds?|ratePerSec|per[- ]second)[^\\n]{0,160}(\\bms\\b|milliseconds?)"
+        - "1[_,]?000 ?(x|×|times)|(factor|multiple) of 1[_,]?000"
+      strict-comparison:
+        - ">="
+        - "≥"
+        - "exactly[^.\\n]{0,40}(cost|enough|as many|the tokens)"
+        - "strict(ly)? (greater|comparison|inequality)"
+      retry-ignores-fractions:
+        - "retryAfter[^\\n]{0,300}(floor|whole|fraction|truncat|round(s|ed|ing)? down|integer|overstat|overestimat|too long|longer than)"
+        - "(floor|whole tokens?|fraction|truncat|round(s|ed|ing)? down)[^\\n]{0,300}retryAfter"
+  - citation: [[25, 26], [28], [44, 45, 46]]
+  - unchanged: [src/limiter.js]
+    dimension: outcome

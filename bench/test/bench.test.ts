@@ -9,7 +9,8 @@ import { formatRescore, rescore } from '../rescore.ts';
 import { collectChildren, type RunRecord } from '../lib/run.ts';
 import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
 import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
-import { citedLines, loadTasks, parseTask, runOracle, snapshot, type Task } from '../lib/task.ts';
+import { createRequire } from 'node:module';
+import { citedLines, loadTasks, parseTask, runOracle, snapshot, taskGroup, type Task } from '../lib/task.ts';
 
 test('every catalog model exists in the installed Pi, with its lineage orders distinct', async () => {
   const pi = await loadPi();
@@ -34,7 +35,7 @@ test('spec: effort lists expand, replicates need labels, harness and efforts are
   const problems = checkSpec(spec, await loadPi(), tasks);
   assert.deepEqual(problems, ['claude-fable-5-2@off-bare: anthropic/claude-fable-5-2 does not accept effort off (minimal, low, medium, high, xhigh, max)']);
   const runs = plan(spec, tasks);
-  assert.equal(runs.length, 2 * 12 * 4); // runs × non-smoke tasks × arms
+  assert.equal(runs.length, 2 * 20 * 4); // runs × non-smoke tasks × arms
   assert.equal(runs[0]!.rep, 1); assert.equal(runs.at(-1)!.rep, 2);
 });
 
@@ -85,6 +86,37 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
     answer: 'Done.',
   },
   'review/duration': { answer: 'TOKEN is a shared /g regex: after a throw its lastIndex is left set. `<` lets a unit repeat.\nlines 5, 12' },
+  'search/unused-flags': { answer: 'Five flags are only defined, set, or named in comments and tests.\nerrorLog, fastExport, legacyAuth, pushAlerts, strictMode' },
+  'search/purge-routes': { answer: 'retention.apply calls it as dropAuditTrail; the nightly job trims the trail; sessions.clear with ?forget=trail.\n`POST /users/:id/anonymize`, `POST /jobs/:name/run`, `DELETE /sessions`' },
+  'small-fix/event-order': { edits: [['src/events.js', 'return { seq, type', 'return { seq: Number(seq), type']], answer: 'Sequence numbers were compared as strings.' },
+  'small-fix/task-queue': {
+    edits: [['src/queue.js', '      fn().then(value => {\n        this.running--;\n        resolve(value);\n        this.next();\n      }, reject);', '      new Promise(done => done(fn())).then(resolve, reject).finally(() => {\n        this.running--;\n        this.next();\n      });']],
+    answer: 'A failed task now gives its slot back.',
+  },
+  'multi-file/soft-delete': {
+    edits: [
+      ['src/notes.js', '*', "const store = require('./store');\nconst create = (title, tag) => store.insert({ title, tag });\nconst get = id => store.find(id);\nconst list = ({ includeArchived = false } = {}) => store.all().filter(note => includeArchived || !note.archived);\nconst count = () => list().length;\nfunction remove(id) {\n  const note = store.find(id);\n  if (!note || note.archived) return false;\n  note.archived = true;\n  return true;\n}\nfunction restore(id) {\n  const note = store.find(id);\n  if (!note || !note.archived) return false;\n  note.archived = false;\n  return true;\n}\nmodule.exports = { create, get, list, count, remove, restore };\n"],
+      ['src/stats.js', "const store = require('./store');", "const notes = require('./notes');"],
+      ['src/stats.js', 'for (const note of store.all()) byTag', 'for (const note of notes.list()) byTag'],
+      ['src/stats.js', 'total: store.all().length', 'total: notes.count()'],
+      ['src/export.js', "['id,title,tag', ...store.all().map(note => `${note.id},${note.title},${note.tag}`)]", "['id,title,tag,archived', ...store.all().map(note => `${note.id},${note.title},${note.tag},${note.archived ? 'yes' : 'no'}`)]"],
+      ['src/api.js', 'body: notes.list().filter(', "body: notes.list({ includeArchived: params.get('archived') === '1' }).filter("],
+      ['src/api.js', "  if (method === 'GET' && path === '/stats')", "  if (method === 'POST' && /^\\/notes\\/\\d+\\/restore$/.test(path)) return notes.restore(id) ? { status: 200, body: notes.get(id) } : { status: 404 };\n  if (method === 'GET' && path === '/stats')"],
+    ],
+    answer: 'Done.',
+  },
+  'multi-file/cents': {
+    edits: [
+      ['src/price.js', '*', "const lineTotal = (cents, qty) => cents * qty;\nconst applyDiscount = (cents, percent) => cents - Math.floor((cents * percent) / 100 + 0.5);\nmodule.exports = { lineTotal, applyDiscount };\n"],
+      ['src/tax.js', '*', "const addTax = (cents, percent) => cents + Math.floor((cents * percent) / 100 + 0.5);\nmodule.exports = { addTax };\n"],
+      ['src/cart.js', 'lineTotal(item.price, item.qty)', 'lineTotal(item.cents, item.qty)'],
+      ['src/format.js', 'return `€${amount.toFixed(2)}`;', 'return `€${(amount / 100).toFixed(2)}`;'],
+      ['src/invoice.js', 'lineTotal(item.price, item.qty)', 'lineTotal(item.cents, item.qty)'],
+    ],
+    answer: 'Done.',
+  },
+  'review/bounds': { answer: 'The four helpers match their comments; `hi = mid` and the exclusive upper end are right for a first-index search.\nno bugs' },
+  'review/token-bucket': { answer: '1. Line 26: `elapsed` is in milliseconds but is multiplied by `ratePerSec`, so the bucket refills 1000 times too fast.\n2. Line 28: `>` refuses a bucket that holds exactly `cost` tokens; it should be `>=`.\n3. Line 44: retryAfter uses remaining(), which rounds down to whole tokens, so a fraction already in the bucket is ignored and the wait is too long.\n\nlines 26, 28, 44' },
   'smoke/faux-fix': { edits: [['src/greet.js', "return 'Hello, ';", 'return `Hello, ${name}`;']], answer: 'ok' },
 };
 
@@ -125,9 +157,12 @@ test('each task grades the dimensions of its class, and every check names its di
     'small-fix': ['outcome', 'scope', 'hidden'], 'multi-file': ['outcome', 'scope', 'hidden'], smoke: ['outcome', 'scope', 'hidden'],
   };
   const tasks = loadTasks();
-  assert.equal(tasks.filter(t => t.class !== 'smoke').length, 12);
+  assert.equal(tasks.filter(t => t.class !== 'smoke').length, 20);
+  // every class has two hard tasks, reported as <class>-hard
+  assert.deepEqual(tasks.filter(t => t.tier === 'hard').map(t => taskGroup(t)).sort(), ['multi-file-hard', 'multi-file-hard', 'review-hard', 'review-hard', 'search-hard', 'search-hard', 'small-fix-hard', 'small-fix-hard']);
   for (const t of tasks) {
-    assert.deepEqual(Object.keys(graded(t, [], '').dimensions), expected[t.class], t.id);
+    // review/bounds has no bug, so nothing to diagnose
+    assert.deepEqual(Object.keys(graded(t, [], '').dimensions), expected[t.class]!.filter(d => t.id !== 'review/bounds' || d !== 'diagnosis'), t.id);
     const oracle = fs.readFileSync(path.join(t.fixture, '..', 'task.yaml'), 'utf8').split(/^oracle:$/m)[1]!.split(/^\w+:/m)[0]!;
     const listed = (oracle.match(/^ {2}- /gm) ?? []).length;
     const named = (oracle.match(/^ {2}- (diagnosis|citation):|^ {4}dimension: /gm) ?? []).length;
@@ -165,6 +200,22 @@ const SPECIAL_CASED: Record<string, Edit[]> = {
     ['src/cart.js', 'formatPrice(cents)', 'formatPrice(cents, locale)'],
     ['src/invoice.js', 'function invoiceLine(item) {', "function invoiceLine(item, locale = 'en') {"],
     ['src/invoice.js', 'formatPrice(item.cents * item.qty)', 'formatPrice(item.cents * item.qty, locale)'],
+  ],
+  // Sorts one- and two-digit sequence numbers, which is all the provided test has.
+  'small-fix/event-order': [['src/events.js', '(a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0)', "a.seq.padStart(2, '0').localeCompare(b.seq.padStart(2, '0'))"]],
+  // Gives the slot back when a task rejects, not when it throws.
+  'small-fix/task-queue': [['src/queue.js', '      }, reject);', '      }, error => {\n        this.running--;\n        reject(error);\n        this.next();\n      });']],
+  // Only the points the provided tests reach: archive on remove, restore, a filtered list.
+  'multi-file/soft-delete': [
+    ['src/notes.js', 'function list() {\n  return store.all();', 'function list() {\n  return store.all().filter(note => !note.archived);'],
+    ['src/notes.js', 'function remove(id) {\n  return store.erase(id);\n}', 'function remove(id) {\n  const note = store.find(id);\n  if (!note) return false;\n  note.archived = true;\n  return true;\n}\n\nfunction restore(id) {\n  const note = store.find(id);\n  if (!note) return false;\n  note.archived = false;\n  return true;\n}'],
+    ['src/notes.js', 'module.exports = { create, get, list, count, remove };', 'module.exports = { create, get, list, count, remove, restore };'],
+  ],
+  // Rounds the result, not the discount or the tax: the same cent unless the percentage lands on half a cent.
+  'multi-file/cents': [
+    ...SOLUTIONS['multi-file/cents']!.edits!.filter(e => e[0] !== 'src/price.js' && e[0] !== 'src/tax.js'),
+    ['src/price.js', '*', "const lineTotal = (cents, qty) => cents * qty;\nconst applyDiscount = (cents, percent) => Math.round(cents * (1 - percent / 100));\nmodule.exports = { lineTotal, applyDiscount };\n"],
+    ['src/tax.js', '*', "const addTax = (cents, percent) => Math.round(cents * (1 + percent / 100));\nmodule.exports = { addTax };\n"],
   ],
   // The attempt limits the provided tests use (3 and 2) instead of the one passed in.
   'multi-file/promisify': [
@@ -215,6 +266,45 @@ test('review: diagnosis and citation are graded apart, and extra findings are co
   assert.deepEqual(dims('review/duration', '- **Line 12:** The order check allows the same unit twice because it only rejects `order < last`. For example, `1h1h` returns `7200` instead of throwing, contrary to the “at most once” rule.\n- **Line 14:** Converting digit strings to JavaScript numbers can lose integer precision or overflow to `Infinity`.\n\nlines 12, 14'), [false, false, 1, false]);
   // claude-sonnet-5-5@low, s2-effort: both bugs, the second cited a line early
   assert.deepEqual(dims('review/duration', '1. Line 11: the check is `order < last`, so a repeated unit such as "1h2h" passes. It should be `order <= last`.\n2. Line 5: `TOKEN` is a global regex that is shared between calls, so `lastIndex` persists.\n\nlines 5, 11'), [true, false, 1, false]);
+});
+
+test('hard review tasks: the clean file has no bug, the limiter has its three, and both grade as meant', () => {
+  const load = createRequire(import.meta.url);
+  const { lowerBound, upperBound, countInRange, insertSorted } = load(path.join(task('review/bounds').fixture, 'src', 'sorted.js'));
+  let seed = 7;
+  const random = (n: number) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  for (let round = 0; round < 500; round++) {
+    const xs = Array.from({ length: random(9) }, () => random(7)).sort((a, b) => a - b);
+    const x = random(9) - 1, y = random(9) - 1;
+    const first = (ok: (v: number) => boolean) => { const i = xs.findIndex(ok); return i < 0 ? xs.length : i; };
+    assert.equal(lowerBound(xs, x), first(v => v >= x));
+    assert.equal(upperBound(xs, x), first(v => v > x));
+    assert.equal(countInRange(xs, x, y), xs.filter(v => x <= v && v <= y).length);
+    const copy = [...xs], at = insertSorted(copy, x);
+    assert.deepEqual([copy, at], [[...xs, x].sort((a, b) => a - b), first(v => v > x)]);
+  }
+  const { RateLimiter } = load(path.join(task('review/token-bucket').fixture, 'src', 'limiter.js'));
+  const limiter = (capacity: number, ratePerSec: number) => new RateLimiter({ capacity, ratePerSec });
+  // milliseconds as seconds: 10 ms at 1 token per second refills an empty bucket of 5
+  const fast = limiter(5, 1);
+  fast.take('k', 0, 4);
+  fast.take('k', 10, 0);
+  assert.equal(fast.remaining('k', 10), 5);
+  // strict comparison: a full bucket of 2 does not give 2
+  assert.equal(limiter(2, 1).take('k', 0, 2), false);
+  // whole tokens in retryAfter: half a token short is half a second at 1 per second, not a whole one
+  const slow = limiter(2, 1);
+  slow.buckets.set('k', { tokens: 0.5, at: 0 });
+  assert.equal(slow.retryAfter('k', 0), 1000);
+
+  const dims = (id: string, answer: string) => { const g = graded(task(id), [], answer); return [g.dimensions, g.extraFindings, g.pass]; };
+  assert.deepEqual(dims('review/bounds', 'All four match.\n\nno bugs'), [{ outcome: true, citation: true, scope: true }, 0, true]);
+  assert.deepEqual(dims('review/bounds', '`(lo + hi) >>> 1` breaks for arrays longer than 2^31, and NaN is never found.\n\nlines 9, 20'), [{ outcome: false, citation: false, scope: true }, 2, false]);
+  assert.deepEqual(dims('review/bounds', 'Looks fine to me.'), [{ outcome: false, citation: true, scope: true }, 0, false]);
+  // two of the three bugs, and the Map deletion that is none
+  assert.deepEqual(dims('review/token-bucket', '- Line 26: the elapsed milliseconds are multiplied by a per-second rate.\n- Line 28: should be `>=`.\n- Line 51: deleting from a Map while iterating it skips entries.\n\nlines 26, 28, 51'),
+    [{ outcome: true, diagnosis: false, citation: false, scope: true }, 1, false]);
+  assert.deepEqual(dims('review/token-bucket', 'I found nothing wrong.\n\nno bugs'), [{ outcome: true, diagnosis: false, citation: false, scope: true }, undefined, false]);
 });
 
 const rec = (arm: string, model: string, effort: string, taskClass: string, rep: number, pass: boolean, cost: number, harness: 'on' | 'off' = 'on'): RunRecord => ({

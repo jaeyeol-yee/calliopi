@@ -1,0 +1,25 @@
+version: 1
+tier: hard
+prompt: |
+  Notes are deleted for good today. Make deletion soft, in src/:
+  1. notes.remove(id) keeps the note and marks it `archived: true`. It returns true, or false when the id
+     is unknown or the note is already archived.
+  2. notes.restore(id) is new: it un-archives the note. It returns true, or false when the id is unknown
+     or the note is not archived.
+  3. notes.list() and notes.count() leave archived notes out. notes.list({ includeArchived: true }) returns all.
+  4. notes.get(id) still returns an archived note.
+  5. stats.summary() counts only notes that are not archived, in `total` and in `byTag`.
+  6. toCsv() still exports every note, with a new last column `archived` holding `yes` or `no`.
+  7. The API: DELETE /notes/:id answers 204, or 404 when remove returns false. POST /notes/:id/restore is new:
+     200 with the note, or 404 when restore returns false. GET /notes?archived=1 includes archived notes.
+  The tests in test/ cover part of this; do not change them.
+scope: [src/store.js, src/notes.js, src/stats.js, src/export.js, src/api.js]
+oracle:
+  # The provided tests cover points 1, 2 and 4 in part; the hidden tests check all seven.
+  - command: node --test
+    dimension: outcome
+  - unchanged: [test/notes.test.js]
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden

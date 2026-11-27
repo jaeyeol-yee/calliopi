@@ -2,6 +2,7 @@
 // a fresh copy of. The oracle is deterministic (commands, files, the final answer); no model grades.
 //
 //   version: 1                 # bump when the prompt, fixture or oracle changes: results do not mix
+//   tier: hard                 # optional: reported apart from the class's other tasks, as <class>-hard
 //   prompt: |
 //     npm test fails. Fix the bug.
 //   scope: [src/range.js]      # files the task may change ([]: none); any other change fails the scope dimension
@@ -14,7 +15,8 @@
 //     - diagnosis:             # dimension diagnosis: per bug, one of its regexes (case-insensitive) matches the answer
 //         shared-regex: ["lastIndex", "global regex"]
 //     - citation: [[5, 10], [12]]   # dimension citation: the last line (`line N` / `lines N, M`) names a line of
-//                                   # every bug; cited lines of no bug are counted as extra findings (precision)
+//                                   # every bug; cited lines of no bug are counted as extra findings (precision).
+//                                   # []: the file has no bug, and citing any line fails
 //     - hidden: node --test test/hidden.test.js   # dimension hidden: run with the task's hidden/ copied over the work
 //   faux: [...]                # replies for faux/* models (smoke tasks)
 //
@@ -49,6 +51,8 @@ export interface Task {
   /** class/name */
   id: string;
   class: TaskClass;
+  /** hard: made to separate the stronger models; reported as its own group. */
+  tier: 'base' | 'hard';
   version: number;
   prompt: string;
   /** Files the task may change; empty: none. Undefined: changes are not graded. */
@@ -59,6 +63,9 @@ export interface Task {
   /** Tests the model never sees (tasks/<class>/<name>/hidden), for `hidden` checks. */
   hidden?: string;
 }
+
+/** The group a task's runs are reported under: its class, or <class>-hard. */
+export const taskGroup = (task: Pick<Task, 'class' | 'tier'>) => (task.tier === 'hard' ? `${task.class}-hard` : task.class);
 
 export const TASKS_DIR = path.resolve(import.meta.dirname, '..', 'tasks');
 
@@ -87,7 +94,7 @@ export function parseTask(id: string, text: string, fixture: string, hidden?: st
     }
     if (Array.isArray(c.citation)) {
       const bugs = c.citation.map(lines => (Array.isArray(lines) ? lines : [lines]).map(Number));
-      if (!bugs.length || bugs.some(lines => !lines.length || lines.some(n => !Number.isInteger(n) || n < 1))) throw bad('citation needs a list of line numbers per bug');
+      if (bugs.some(lines => !lines.length || lines.some(n => !Number.isInteger(n) || n < 1))) throw bad('citation needs a list of line numbers per bug');
       return { citation: bugs, ...dim('citation') };
     }
     if (typeof c.hidden === 'string') {
@@ -97,8 +104,9 @@ export function parseTask(id: string, text: string, fixture: string, hidden?: st
     throw bad('is not a known check');
   });
   if (raw.scope !== undefined && !Array.isArray(raw.scope)) throw new Error(`${id}: scope must be a list`);
+  if (raw.tier !== undefined && raw.tier !== 'hard' && raw.tier !== 'base') throw new Error(`${id}: tier must be base or hard`);
   return {
-    id, class: cls, version: raw.version as number, prompt: raw.prompt, oracle, fixture,
+    id, class: cls, tier: raw.tier === 'hard' ? 'hard' : 'base', version: raw.version as number, prompt: raw.prompt, oracle, fixture,
     ...(Array.isArray(raw.scope) ? { scope: raw.scope.map(String) } : {}),
     ...(Array.isArray(raw.faux) ? { faux: raw.faux } : {}),
     ...(hidden ? { hidden } : {}),
@@ -194,6 +202,8 @@ export function runOracle(task: Task, dir: string, answer: string, before: Map<s
     if ('citation' in c) {
       const check = `citation: ${c.citation.map(lines => lines.join('|')).join(', ')}`;
       const cited = citedLines(answer);
+      // A file without bugs: nothing may be cited.
+      if (!c.citation.length) return { check: 'citation: none', dimension, pass: !cited, extra: cited?.length ?? 0, ...(cited ? { detail: `cited ${cited.join(', ')}; the file has no bug` } : {}) };
       if (!cited) return { check, dimension, pass: false, detail: `no line citation: ${lastLine(answer).slice(0, 160)}` };
       const missed = c.citation.filter(lines => !lines.some(n => cited.includes(n)));
       const extra = cited.filter(n => !c.citation.flat().includes(n));
