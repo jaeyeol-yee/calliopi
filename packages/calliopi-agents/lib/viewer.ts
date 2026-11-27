@@ -6,7 +6,7 @@
 // run it (an earlier session).
 import { CURSOR_MARKER, isKeyRelease, matchesKey, renderFakeCursor, truncateToWidth, visibleWidth, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { MARK, OPEN, STATUS_TEXT, buildTree, formatBudget, goalAgentTokens, stateOf, treeCounts, treeRows, type AgentRecord, type Goal } from '@calliopi/core/agents';
+import { MARK, OPEN, STATUS_TEXT, buildTree, formatBudget, goalAgentTokens, sessionFile, stateOf, treeCounts, treeRows, type AgentRecord, type Goal } from '@calliopi/core/agents';
 import { metadataTable, type MetadataValue } from '@calliopi/ui/table';
 import type { Fleet } from '#lib/fleet.ts';
 import { agentLine } from '#lib/parent.ts';
@@ -239,7 +239,7 @@ export class AgentsView implements Component, Focusable {
       // Not run by this Pi (an earlier session, or its goal closed): its record is all there is.
       const text = [`과제: ${a.meta.call.task}`, ...(a.meta.call.done ? [`완료: ${a.meta.call.done}`] : []), '',
         ...(a.result ? [a.result.summary || '(요약 없음)', ...(a.result.evidence ? ['', `근거: ${a.result.evidence}`] : [])] : ['(화면이 없습니다)']),
-        '', `세션: ${a.meta.session}`];
+        '', `세션: ${sessionFile(a)}`];
       const all = wrap(text, inner);
       const body = this.window(all, height);
       return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), ` Esc·${DETACH_KEY}: 목록${all.length > height ? ` · PgUp/PgDn·J/K: 스크롤 ${this.position(all.length, height)}` : ''} `);
@@ -336,7 +336,7 @@ function detailRows(r: AgentRecord): [string, MetadataValue][] {
     ['예산', formatBudget(r.meta.call.budget, usage)],
     ...(r.result ? [['결과', r.result.summary || '(요약 없음)'] as [string, MetadataValue]] : []),
     ...(r.result?.evidence ? [['근거', r.result.evidence] as [string, MetadataValue]] : []),
-    ['세션', r.meta.session],
+    ['세션', sessionFile(r)],
   ];
 }
 

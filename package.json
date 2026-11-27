@@ -42,6 +42,7 @@
     "check": "npm run check:imports && npm run typecheck && npm test && npm run demo:test",
     "demo": "node demo/build.ts",
     "demo:check": "node demo/build.ts --check",
-    "demo:test": "tsc -p demo && node --test demo/test/*.test.ts"
+    "demo:test": "tsc -p demo && node --test demo/test/*.test.ts",
+    "signals": "node packages/calliopi-agents/scripts/signals.ts"
   }
 }
