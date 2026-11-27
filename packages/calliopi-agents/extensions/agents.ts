@@ -14,6 +14,7 @@ import { brief } from '#lib/briefing.ts';
 import { writeGoalExport } from '#lib/export.ts';
 import { collect, retention } from '#lib/gc.ts';
 import { installGoals, type Goals } from '#lib/goals.ts';
+import { installHarnessStamp } from '#lib/harness.ts';
 import { installNotes } from '#lib/notes.ts';
 import { installParent, registryRoot, type OnSpawned } from '#lib/parent.ts';
 import { openAgentsView } from '#lib/viewer.ts';
@@ -56,6 +57,7 @@ export default function (pi: ExtensionAPI) {
     goals = installGoals(pi, { root, fleet, collect: gc, closeOrphans: records => { closeOrphans(records, fleet); } });
     viewer(fleet, id => id);
     installNotes(pi, { file: () => notesFile(getAgentDir()) }); // the person's notes: the top Pi only
+    installHarnessStamp(pi); // which Calliopi commit a top-level session ran under, for npm run signals
     return;
   }
 

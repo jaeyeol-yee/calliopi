@@ -1,15 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ERROR_STREAK_MIN, JUMP_TOKENS, REPEAT_MIN, SMELL_KINDS, formatSmells, sessionInfo, sessionSmells, summarizeSmells, type SessionEntry, type SessionSmells } from '#lib/smells.ts';
+import { ERROR_STREAK_MIN, HARNESS_ENTRY, JUMP_TOKENS, REPEAT_MIN, RESTATE_MIN_CHARS, SMELL_KINDS, formatSmells, harnessLabel, sessionInfo, sessionSmells, similarity, summarizeSmells, undoCommand, type SessionEntry, type SessionSmells } from '#lib/smells.ts';
 
 let seq = 0;
 const id = () => `e${++seq}`;
-const user = (): SessionEntry => ({ type: 'message', id: id(), message: { role: 'user', content: 'do it' } });
-const call = (name: string, args: unknown) => ({ type: 'toolCall', id: 'c', name, arguments: args });
+const user = (text = 'do it'): SessionEntry => ({ type: 'message', id: id(), message: { role: 'user', content: [{ type: 'text', text }] } });
+const call = (name: string, args: unknown, callId = 'c') => ({ type: 'toolCall', id: callId, name, arguments: args });
 /** An assistant message: its tool calls, the size of the prompt it was sent, and how it stopped. */
 const assistant = (calls: unknown[] = [], prompt = 0, stopReason = calls.length ? 'toolUse' : 'stop', model = 'm1'): SessionEntry =>
   ({ type: 'message', id: id(), message: { role: 'assistant', provider: 'p', model, content: calls, stopReason, usage: prompt ? { input: 10, cacheRead: prompt - 10, cacheWrite: 0 } : undefined } });
-const result = (toolName: string, isError = false): SessionEntry => ({ type: 'message', id: id(), message: { role: 'toolResult', toolName, isError } });
+const result = (toolName: string, isError = false, toolCallId = 'c'): SessionEntry => ({ type: 'message', id: id(), message: { role: 'toolResult', toolName, isError, toolCallId } });
+const bash = (command: string, callId = 'c') => assistant([call('bash', { command, timeout: 10 }, callId)]);
+const stamp = (sha: string, dirty = false): SessionEntry => ({ type: 'custom', id: id(), customType: HARNESS_ENTRY, data: { sha, dirty } });
 const kinds = (entries: SessionEntry[]) => sessionSmells(entries).map(s => s.kind);
 
 test('repeat: the same call REPEAT_MIN times in one run, counted once; other arguments or another run do not add up', () => {
@@ -77,22 +79,24 @@ test('sessionSmells: other entries are ignored, and no detail carries what was w
 
 test('sessionInfo: the header, the model that answered most, runs and requests', () => {
   const entries = [{ type: 'session', id: 's-1', cwd: '/work/app', timestamp: '2026-11-20T05:42:59.590Z' }, user(), assistant([], 0, 'stop', 'a'), user(), assistant([], 0, 'stop', 'b'), assistant([], 0, 'stop', 'b')];
-  assert.deepEqual(sessionInfo(entries), { id: 's-1', cwd: '/work/app', startedAt: Date.parse('2026-11-20T05:42:59.590Z'), model: 'p/b', runs: 2, requests: 3 });
-  assert.deepEqual(sessionInfo([{ type: 'session', id: 's-2', timestamp: 'not a date' }]), { id: 's-2', cwd: '', startedAt: 0, model: 'unknown', runs: 0, requests: 0 });
+  assert.deepEqual(sessionInfo(entries), { id: 's-1', cwd: '/work/app', startedAt: Date.parse('2026-11-20T05:42:59.590Z'), model: 'p/b', runs: 2, requests: 3, outcome: 'other', harness: 'unrecorded' });
+  assert.deepEqual(sessionInfo([{ type: 'session', id: 's-2', timestamp: 'not a date' }]), { id: 's-2', cwd: '', startedAt: 0, model: 'unknown', runs: 0, requests: 0, outcome: 'other', harness: 'unrecorded' });
   assert.equal(sessionInfo([]).id, 'unknown');
 });
 
-const session = (sid: string, model: string, startedAt: number, smells: SessionSmells['smells']): SessionSmells => ({ info: { id: sid, cwd: '/w', startedAt, model, runs: 1, requests: 1 }, smells });
+const session = (sid: string, model: string, startedAt: number, smells: SessionSmells['smells'], over: Partial<SessionSmells['info']> = {}): SessionSmells =>
+  ({ info: { id: sid, cwd: '/w', startedAt, model, runs: 1, requests: 1, outcome: 'other', harness: 'unrecorded', ...over }, smells });
 
 test('summarizeSmells and formatSmells: sessions with a hit, hits, the common tool, by model, latest hits first', () => {
   const sessions = [
     session('s-1', 'p/a', Date.UTC(2026, 10, 1), [{ kind: 'repeat', tool: 'grep', entry: 'e1', detail: 'grep called 3 times with the same arguments' }, { kind: 'repeat', tool: 'grep', detail: 'd' }, { kind: 'interrupted', entry: 'e2', detail: 'the user aborted the reply' }]),
-    session('s-2', 'p/b', Date.UTC(2026, 10, 2), [{ kind: 'repeat', tool: 'read', entry: 'e3', detail: 'read called 4 times with the same arguments' }]),
-    session('s-3', 'p/a', 0, []),
+    session('s-2', 'p/b', Date.UTC(2026, 10, 2), [{ kind: 'repeat', tool: 'read', entry: 'e3', detail: 'read called 4 times with the same arguments' }], { outcome: 'shipped', harness: 'abc' }),
+    session('s-3', 'p/a', 0, [], { outcome: 'aborted', harness: 'abc-dirty' }),
   ];
   assert.deepEqual(summarizeSmells(sessions), [
     { kind: 'repeat', sessions: 2, hits: 3, tool: 'grep' }, { kind: 'error-streak', sessions: 0, hits: 0, tool: undefined },
     { kind: 'interrupted', sessions: 1, hits: 1, tool: undefined }, { kind: 'context-jump', sessions: 0, hits: 0, tool: undefined },
+    { kind: 'restate', sessions: 0, hits: 0, tool: undefined }, { kind: 'backtrack', sessions: 0, hits: 0, tool: undefined },
   ]);
   assert.deepEqual(summarizeSmells([]).map(r => r.kind), [...SMELL_KINDS]);
 
@@ -100,10 +104,78 @@ test('summarizeSmells and formatSmells: sessions with a hit, hits, the common to
   assert.match(text, /^## Session smells\n\n3 top-level sessions\. Provisional thresholds: /);
   assert.ok(text.includes('| repeat | 2 | 67% | 3 | grep |'));
   assert.ok(text.includes('| error-streak | 0 | 0% | 0 |  |'));
-  assert.ok(text.includes('| p/a | 2 | 1 | 0 | 1 | 0 |'));
-  assert.ok(text.includes('| p/b | 1 | 1 | 0 | 0 | 0 |'));
+  assert.ok(text.includes('| p/a | 2 | 1 | 0 | 1 | 0 | 0 | 0 |'));
+  assert.ok(text.includes('| p/b | 1 | 1 | 0 | 0 | 0 | 0 | 0 |'));
+  // by outcome in the fixed order (only those present), then by harness version, then by model
+  const tables = text.split('Sessions with at least one hit, by ').slice(1).map(t => t.split('\n').filter(l => l.startsWith('| ')).slice(1).map(l => l.split(' | ').slice(0, 3).join(' | ')));
+  assert.deepEqual(tables, [
+    ['| shipped | 1 | 1', '| aborted | 1 | 0', '| other | 1 | 1'],
+    ['| abc | 1 | 1', '| abc-dirty | 1 | 0', '| unrecorded | 1 | 1'],
+    ['| p/a | 2 | 1', '| p/b | 1 | 1'],
+  ]);
   assert.ok(text.endsWith(['Latest hits (2 of 4):', '', '- repeat · 2026-11-02 · session s-2 · entry e3 · read called 4 times with the same arguments', '- repeat · 2026-11-01 · session s-1 · entry e1 · grep called 3 times with the same arguments'].join('\n')));
   assert.equal(formatSmells([]), '## Session smells\n\nNo top-level sessions to read.');
   assert.doesNotMatch(formatSmells([session('s-3', 'p/a', 0, [])]), /Latest hits/);
   assert.match(formatSmells([session('s-3', 'p/a', 0, [])]), /^## Session smells\n\n1 top-level session\. /);
+});
+
+test('restate: a user message that says nearly the same as the one before it; short messages never count', () => {
+  const long = 'please rename the verbose option to debug everywhere in src';
+  assert.ok(long.length >= RESTATE_MIN_CHARS);
+  const again = user(`${long}!!`);
+  const smells = sessionSmells([user(long), assistant([], 100), again, assistant([], 100), user('now add a test for the cli flag as well')]);
+  assert.deepEqual(smells.map(s => [s.kind, s.entry]), [['restate', again.id]]);
+  assert.match(smells[0]!.detail, /^user message \d+% similar to the previous one$/);
+  assert.doesNotMatch(JSON.stringify(smells), /rename|verbose/); // never what was written
+  assert.deepEqual(kinds([user('yes'), assistant(), user('yes'), assistant(), user('yes')]), []); // too short to judge
+  assert.deepEqual(kinds([user('로그인 실패하면 재시도하게 해줄 수 있어요?'), assistant(), user('로그인이 실패하면 재시도하게 해 줄 수 있어요')]), ['restate']); // no word list: any language
+  // compared with the previous user message only, not with every earlier one
+  assert.deepEqual(kinds([user(long), assistant(), user('something entirely unrelated to that request'), assistant(), user(long)]), []);
+  // a plain string body is read too
+  assert.deepEqual(kinds([{ type: 'message', message: { role: 'user', content: long } }, { type: 'message', message: { role: 'user', content: long } }]), ['restate']);
+});
+
+test('similarity: 1 for the same text, 0 for nothing shared or nothing to compare', () => {
+  assert.equal(similarity('abcdef', 'abcdef'), 1);
+  assert.equal(similarity('abcdef', 'uvwxyz'), 0);
+  assert.equal(similarity('', ''), 0);
+  assert.equal(similarity('a', 'a'), 0); // no pair of characters
+  assert.ok(similarity('abcdef', 'abcxyz') > 0 && similarity('abcdef', 'abcxyz') < 1);
+});
+
+test('backtrack: a git command that throws work away, by the agent or by the user; the detail names the subcommand only', () => {
+  assert.deepEqual(['git restore src/a.ts', 'cd x && git -C /r reset --hard HEAD~1', 'git checkout -- a.ts', 'git checkout .', 'echo hi; git revert abc', '(git restore .)', 'true\ngit restore a'].map(undoCommand),
+    ['restore', 'reset --hard', 'checkout --', 'checkout --', 'revert', 'restore', 'restore']);
+  // switching branches, a soft reset, stashing, or the words inside another command are not undoing
+  assert.deepEqual(['git checkout main', 'git checkout -b x', 'git checkout ./a', 'git reset HEAD a', 'git stash', 'git commit -m "note: git restore was used"', 'echo git revert', undefined, 7].map(undoCommand), Array(9).fill(undefined));
+
+  const agent = bash('git restore secret/path.ts');
+  const mine: SessionEntry = { type: 'message', id: id(), message: { role: 'bashExecution', command: 'git reset --hard HEAD~1' } };
+  const smells = sessionSmells([user(), agent, result('bash'), mine, assistant([call('read', { path: 'git restore' })]), { type: 'message', id: id(), message: { role: 'bashExecution', command: 'ls' } }]);
+  assert.deepEqual(smells.map(s => [s.kind, s.tool, s.detail, s.entry]), [['backtrack', 'bash', 'git restore run by the agent', agent.id], ['backtrack', undefined, 'git reset --hard run by the user', mine.id]]);
+  assert.doesNotMatch(JSON.stringify(smells), /secret|HEAD~1/);
+});
+
+test('sessionInfo outcome: shipped when a commit or PR the agent ran succeeded; else how the last reply stopped', () => {
+  const outcome = (entries: SessionEntry[]) => sessionInfo(entries).outcome;
+  assert.equal(outcome([user(), bash('git add -A && git commit -q -m x', 'c1'), result('bash', false, 'c1'), assistant([], 0, 'aborted')]), 'shipped'); // shipped wins over a later abort
+  assert.equal(outcome([user(), bash('gh pr create --fill', 'c2'), result('bash', false, 'c2')]), 'shipped');
+  assert.equal(outcome([user(), bash('git commit -m x', 'c3'), result('bash', true, 'c3'), assistant()]), 'other'); // the commit failed
+  assert.equal(outcome([user(), bash('git commit -m x', 'c4'), result('bash', false, 'other-call'), assistant()]), 'other'); // no result for that call
+  assert.equal(outcome([user(), bash('echo "then run git commit"', 'c5'), result('bash', false, 'c5'), assistant()]), 'other'); // only mentioned
+  assert.equal(outcome([user(), assistant([call('write', { command: 'git commit' }, 'c6')]), result('write', false, 'c6'), assistant()]), 'other'); // not bash
+  assert.equal(outcome([user(), assistant(), user(), assistant([], 0, 'aborted')]), 'aborted');
+  assert.equal(outcome([user(), assistant([], 0, 'aborted'), user(), assistant()]), 'other'); // an abort earlier on is not how it ended
+  assert.equal(outcome([user(), assistant([], 0, 'error')]), 'error');
+  assert.equal(outcome([user()]), 'other');
+});
+
+test('sessionInfo harness: the version most requests ran under; a version with no request after it still counts when it is the only one', () => {
+  assert.equal(harnessLabel({ sha: 'abc', dirty: false }), 'abc');
+  assert.equal(harnessLabel({ sha: 'abc', dirty: true }), 'abc-dirty');
+  const harness = (entries: SessionEntry[]) => sessionInfo(entries).harness;
+  assert.equal(harness([stamp('aaa'), user(), assistant(), stamp('bbb', true), user(), assistant(), assistant()]), 'bbb-dirty');
+  assert.equal(harness([user(), assistant(), assistant(), stamp('aaa'), user(), assistant()]), 'aaa'); // requests before any version are not counted for one
+  assert.equal(harness([stamp('aaa')]), 'aaa');
+  assert.equal(harness([{ type: 'custom', customType: HARNESS_ENTRY, data: null }, { type: 'custom', customType: HARNESS_ENTRY, data: { sha: 7 } }, { type: 'custom', customType: 'other', data: { sha: 'zzz' } }, user(), assistant()]), 'unrecorded');
 });

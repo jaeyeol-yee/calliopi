@@ -13,7 +13,7 @@ Calliopi의 가장 아래 계층입니다. 다른 패키지를 참조하지 않�
 | `@calliopi/core/multiplexer` | 터미널 멀티플렉서 strategy(`rex`, `herdr`, `tmux`), `detectMultiplexer`, `openSidePane` |
 | `@calliopi/core/agents` | 서브에이전트 기록: 레지스트리(`createAgent`, `postInbox`, `writeResult`), 예산과 상속(`budgetFor`, `remaining`, `exceeded`), goal(`moveGoal`, `listGoals`, `planPrune`), 역할 카탈로그(`parseRole`, `mergeCatalog`, `roleGuidelines`), 위임 규칙(`mayDelegate`, `resolveModel`, `resolveTools`), 종료 분류(`classifyEnd`), 요청 델타 기록(`encodeRequest`, `decodeRequests`), tree(`buildTree`, `treeRows`) |
 | `@calliopi/core/notes` | 세션 메모: `appendNote`, `readNotes`, `formatNotes`. `<Pi agent dir>/calliopi-notes.jsonl`에 한 줄에 하나씩(0600) |
-| `@calliopi/core/smells` | 세션 smell: Pi 세션 entry에서 읽는 결정적 감지기 `sessionSmells`(`repeat`, `error-streak`, `interrupted`, `context-jump`), `sessionInfo`, `summarizeSmells`, `formatSmells`. 세기만 하고 모델에게 아무것도 보내지 않음 |
+| `@calliopi/core/smells` | 세션 smell: Pi 세션 entry에서 읽는 결정적 감지기 `sessionSmells`(`repeat`, `error-streak`, `interrupted`, `context-jump`, `restate`, `backtrack`), 세션의 결과와 하네스 버전을 읽는 `sessionInfo`, `summarizeSmells`, `formatSmells`. 세기만 하고 모델에게 아무것도 보내지 않음 |
 | `@calliopi/core/web` | `web_fetch` 엔진: 주소 정책(`isPublicAddress`), URL 검사(`checkUrl`), 호스트 규칙(`decide`), `fetchPage`, HTML→텍스트(`htmlToText`), 페이징·캐시·비신뢰 포장(`readPage`) |
 
 ## PR 조회

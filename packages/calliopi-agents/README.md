@@ -80,7 +80,7 @@ goal을 만들 때, 닫을 때, 서브에이전트를 띄울 때 오래된 기�
 
 ## 세션 smell (`npm run signals`)
 
-최상위 Pi 세션이 잘못 흘러간 흔적을 세션 파일에서 결정적 규칙으로 셉니다. 세기만 합니다: 세션 중에는 아무것도 하지 않고, 모델에게 알리지 않으며, 알림도 없습니다. 감지기는 세션 entry를 받는 순수 함수(`@calliopi/core/smells`)라서 감지기가 생기기 전에 기록된 세션도 읽습니다.
+최상위 Pi 세션이 잘못 흘러간 흔적을 세션 파일에서 결정적 규칙으로 셉니다. 세기만 합니다: 모델에게 알리지 않고, 알림도 없습니다. 감지기는 세션 entry를 받는 순수 함수(`@calliopi/core/smells`)이고 리포트를 실행할 때 계산하므로, 감지기가 생기기 전에 기록된 세션도 읽습니다. 배경과 선례는 [docs/research/session-smell-triggers.md](../../docs/research/session-smell-triggers.md)에 있습니다.
 
 | smell | 규칙 (run = 사용자 메시지 사이에 에이전트가 한 일) | 잠정 임계치 |
 |---|---|---|
@@ -88,6 +88,8 @@ goal을 만들 때, 닫을 때, 서브에이전트를 띄울 때 오래된 기�
 | `error-streak` | 한 run에서 도구 결과가 연속으로 오류 | 3회 이상 |
 | `interrupted` | 사용자가 답변을 중단(`stopReason: aborted`) | 1회 |
 | `context-jump` | 한 run의 두 요청 사이에 프롬프트(input + cache read + cache write)가 증가 | 30,000 토큰 이상 |
+| `restate` | 사용자 메시지가 바로 앞 사용자 메시지와 거의 같음(문자 쌍의 Dice 유사도, 둘 다 20자 이상) | 60% 이상 |
+| `backtrack` | 작업을 버리는 git 명령: `restore`, `revert`, `reset --hard`, `checkout --`·`checkout .` (에이전트의 `bash`, 사용자의 `!`) | 1회 |
 
 ```bash
 npm run signals                    # 모든 최상위 세션
@@ -96,13 +98,18 @@ npm run signals -- --session <id>  # 한 세션
 ```
 
 - **읽는 곳**: `<Pi agent dir>/sessions/<프로젝트>/*.jsonl`. 서브에이전트의 세션은 레지스트리에 있어 여기 들어오지 않습니다(위의 실행 집계가 봅니다).
-- **보고**: smell별로 한 번이라도 나온 세션 수와 비율, 전체 건수, 가장 자주 걸린 도구. 같은 수를 모델별로 한 번 더. 그리고 최근 10건을 세션 id, entry id와 함께 보여 줍니다(그 지점을 열어 실제 문제인지 판단하기 위한 것).
-- **세부 내용에는 개수와 도구 이름만** 들어갑니다. 사용자나 모델이 쓴 글, 도구 인자는 넣지 않습니다.
+- **보고**: smell별로 한 번이라도 나온 세션 수와 비율, 전체 건수, 가장 자주 걸린 도구. 같은 수를 결과별, 하네스 버전별, 모델별로 한 번씩 더. 그리고 최근 10건을 세션 id, entry id와 함께 보여 줍니다(그 지점을 열어 실제 문제인지 판단하기 위한 것).
+- **결과**(세션이 어떻게 끝났는지의 대리 지표): 에이전트가 `bash`로 실행한 `git commit`이나 `gh pr create`가 성공했으면 `shipped`, 아니면 마지막 답변이 중단됐으면 `aborted`, 오류였으면 `error`, 그 밖은 `other`.
+- **하네스 버전**: run이 시작될 때 이 Calliopi 체크아웃의 커밋(12자)과 추적 파일의 미커밋 변경 여부를 세션에 custom entry(`calliopi-harness`)로 남깁니다(`lib/harness.ts`). 세션에 마지막으로 남긴 값과 같으면 다시 쓰지 않습니다. 리포트는 요청이 가장 많이 돈 버전으로 세션을 묶고(`abc123def456`, `abc123def456-dirty`), 기록이 없는 세션은 `unrecorded`입니다. Pi의 custom entry는 모델 컨텍스트에 들어가지 않습니다. 최상위 Pi에만 있고, git 체크아웃이 아니면 아무것도 남기지 않습니다. 버전을 읽는 `git` 호출은 확장을 불러온 뒤 첫 run에서 한 번입니다(3초 제한).
+- **세부 내용에는 개수, 도구 이름, git 하위 명령만** 들어갑니다. 사용자나 모델이 쓴 글, 도구 인자, 경로는 넣지 않습니다.
 - **임계치는 잠정값**입니다. 발생률과 정밀도(걸린 것이 실제 문제인 비율)를 재기 위한 출발점이고, 근거는 아직 없습니다.
 - **알려진 한계**:
   - 폴링처럼 정당한 반복도 `repeat`로 잡힙니다.
   - `interrupted`는 중단한 이유를 모릅니다(방향 수정, 오타, 단순 취소가 섞임).
-  - `context-jump`는 큰 파일을 일부러 읽은 경우도 잡습니다.
+  - `context-jump`는 큰 파일을 일부러 읽은 경우도 잡고, 함께 보고하는 도구는 직전에 실행된 도구일 뿐 원인이 아닐 수 있습니다.
+  - `restate`는 같은 메시지를 실수로 두 번 보낸 것과 답을 못 받아 다시 말한 것을 구분하지 못합니다. 바로 앞 메시지와만 비교합니다.
+  - `backtrack`은 의도한 정리(실험을 버림)도 잡습니다. 명령은 줄의 처음이나 `;`, `&&`, `|`, `(` 뒤에 올 때만 봅니다.
+  - `shipped`는 코드 작업이 아닌 세션(조사, 질문)에는 맞지 않습니다. 커밋 뒤에 잘못된 세션도 `shipped`입니다.
   - `/tree`·`/fork`로 가지가 있는 세션은 파일 순서대로 한 줄로 읽습니다.
   - 모델 요청 자체는 최상위 세션에 기록되지 않으므로 prefix 재작성은 여기서 세지 않습니다.
 
@@ -168,10 +175,11 @@ lib/viewer.ts          /cl-agents: goal별 목록(tree), 오른쪽 표, 실제 �
 lib/goals.ts           Active Goal: 도구, /cl-goal, 목적 고정, 자동 계속과 안전장치, 닫을 때 정리
 lib/gc.ts              보존 기간에 따른 기록 정리
 lib/notes.ts           /cl-note: 세션 메모 쓰기와 최근 메모 보기
+lib/harness.ts         하네스 버전(커밋, dirty)을 세션에 남기기
 lib/signals.ts         npm run signals: 역할 lint, 실행 집계, 최상위 세션 smell, 메모
 lib/export.ts          goal 내보내기(JSON)
 ```
 
 ## 테스트
 
-`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다. `/cl-note`는 Pi 대역(stand-in)으로 handler를 호출해 파일, 세션 entry, 알림을 확인하고 모델로 보낸 것이 없는지 봅니다.
+`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다. `/cl-note`는 Pi 대역(stand-in)으로 handler를 호출해 파일, 세션 entry, 알림을 확인하고 모델로 보낸 것이 없는지 봅니다. 하네스 버전 기록도 같은 방식으로 확인하고, 버전 읽기는 임시 git 저장소에서 확인합니다.
