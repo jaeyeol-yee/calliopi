@@ -21,6 +21,8 @@ export interface RunSignals {
   /** Dollars, as Pi priced each response. */
   cost: number;
   stopReason?: string;
+  /** The provider's message when the last response ended in an error. */
+  errorMessage?: string;
 }
 
 /** Subagents a run started: their work and cost belong to the run. */
@@ -51,6 +53,8 @@ export interface RunRecord {
   exit: number | null;
   timedOut: boolean;
   pass: boolean;
+  /** The run ended on a provider error (limit, outage): it says nothing about the model or the task. */
+  error?: string;
   checks: CheckResult[];
   changed: string[];
   outOfScope: string[];
@@ -84,6 +88,12 @@ export function collectChildren(session: string | undefined, into: string, env: 
   return out;
 }
 
+/** The provider error a run ended on, if it did. */
+export const providerError = (s: RunSignals) => (s.stopReason === 'error' ? s.errorMessage ?? 'error' : undefined);
+
+/** Errors that will repeat for the rest of the spec: a spent subscription or quota. */
+export const EXHAUSTED = /usage limit|quota|insufficient_quota|billing|credit balance/i;
+
 export function sessionSignals(file: string | undefined): RunSignals {
   const s: RunSignals = { turns: 0, toolCalls: {}, toolErrors: 0, parallelCalls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   if (!file) return s;
@@ -100,6 +110,7 @@ export function sessionSignals(file: string | undefined): RunSignals {
     s.input += u.input ?? 0; s.output += u.output ?? 0; s.cacheRead += u.cacheRead ?? 0; s.cacheWrite += u.cacheWrite ?? 0;
     s.cost += u.cost?.total ?? 0;
     s.stopReason = m.stopReason;
+    s.errorMessage = m.stopReason === 'error' ? String(m.errorMessage ?? 'error') : undefined;
     const calls = (Array.isArray(m.content) ? m.content : []).filter((b: any) => b?.type === 'toolCall');
     if (calls.length > 1) s.parallelCalls++;
     for (const c of calls) s.toolCalls[c.name] = (s.toolCalls[c.name] ?? 0) + 1;
@@ -174,6 +185,7 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   fs.writeFileSync(path.join(dir, 'stderr.txt'), r.stderr ?? '');
   const session = fs.readdirSync(sessions).filter(n => n.endsWith('.jsonl')).map(n => path.join(sessions, n)).at(0);
   const checks = runOracle(task, work, answer, before);
+  const signals = sessionSignals(session);
   const changed = changedFiles(before, snapshot(work));
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
   // Keep what the run left for reading later, then drop the temporary copy.
@@ -184,8 +196,8 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
     ...(arm.harness === 'on' ? { harnessCommit: at?.commit ?? ctx.harnessSha } : {}),
     task: task.id, taskClass: task.class, taskVersion: task.version, rep,
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
-    exit: r.status, timedOut, pass: !timedOut && checks.every(c => c.pass), checks, changed,
+    exit: r.status, timedOut, pass: !timedOut && checks.every(c => c.pass), ...(providerError(signals) ? { error: providerError(signals) } : {}), checks, changed,
     outOfScope: task.scope.length ? changed.filter(f => !task.scope.includes(f)) : [],
-    signals: sessionSignals(session), children: collectChildren(session, dir, env), answer: answer.slice(-2000),
+    signals, children: collectChildren(session, dir, env), answer: answer.slice(-2000),
   };
 }
