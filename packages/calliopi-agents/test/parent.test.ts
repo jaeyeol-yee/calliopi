@@ -7,7 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { listAgents, listGoals, readAgent, type AgentRecord } from '@calliopi/core/agents';
 import { TerminalPane } from '@calliopi/ui/terminal-overlay';
 import { AGENT_DIR_ENV, extensionArgs } from '#lib/launch.ts';
-import { agentLine, registryRoot } from '#lib/parent.ts';
+import { agentLine, endsWithAnswer, registryRoot } from '#lib/parent.ts';
+
+test('a run that ends with its answer waits for its subagents', () => {
+  assert.deepEqual(['print', 'json', 'tui', 'rpc', undefined].map(endsWithAnswer), [true, true, false, false, false]);
+});
 
 /**
  * The test's top Pi must be a top Pi: run from inside a subagent, the inherited agent dir would make

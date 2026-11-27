@@ -1,0 +1,17 @@
+# Evidence for fix/delegation-print-and-review: Calliopi before (c710e0d) and after (HEAD) in the same
+# time window, on the tasks where OpenAI models delegated to a reviewer in S1, with opus as control.
+name: pr-delegation
+runs: 2
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 10
+tasks: [multi-file/locale, multi-file/promisify, multi-file/rename-option, review/duration, review/pagination, review/spot-bug]
+arms:
+  - { model: openai/gpt-6.1-terra, effort: medium, harnessRef: c710e0d, label: terra@before }
+  - { model: openai/gpt-6.1-terra, effort: medium, label: terra@after }
+  - { model: openai/gpt-6.2-sol, effort: medium, harnessRef: c710e0d, label: sol@before }
+  - { model: openai/gpt-6.2-sol, effort: medium, label: sol@after }
+  - { model: openai/gpt-6.2-astra, effort: medium, harnessRef: c710e0d, label: astra@before }
+  - { model: openai/gpt-6.2-astra, effort: medium, label: astra@after }
+  - { model: anthropic/claude-opus-5-5, effort: medium, harnessRef: c710e0d, label: opus@before }
+  - { model: anthropic/claude-opus-5-5, effort: medium, label: opus@after }

@@ -50,6 +50,9 @@ const Task = Type.Object({
   }, { description: 'Limits; omit for the role default. Never more than you have left.' })),
 });
 
+/** Modes in which Pi exits once the model has answered. */
+export const endsWithAnswer = (mode: string | undefined) => mode === 'print' || mode === 'json';
+
 export const registryRoot = (agentDir: string) => path.join(agentDir, 'calliopi-agents');
 
 const elapsed = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)}초` : `${Math.floor(ms / 60_000)}분 ${Math.round((ms % 60_000) / 1000)}초`);
@@ -139,7 +142,9 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       let reserved = 0;
       // Every refusal gives back the slots this call reserved.
       const fail = (text: string) => { delegations -= reserved; reserved = 0; return { content: [{ type: 'text' as const, text }], details: undefined, isError: true }; };
-      const background = params.background !== false;
+      // A run that ends when the model answers (pi -p, --mode json) has nobody to hear a background
+      // result: its children would be cut off unfinished. It waits for them instead.
+      const background = params.background !== false && !endsWithAnswer(ctx.mode);
 
       // 1. Check everything before anything starts: no child is left behind by a refusal.
       if (delegations + params.tasks.length > MAX_PER_SESSION) return fail(`This Pi may delegate at most ${MAX_PER_SESSION} tasks per run (until /reload or a new session); ${delegations} already were.`);
