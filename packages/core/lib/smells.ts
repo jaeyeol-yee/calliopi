@@ -48,9 +48,12 @@ export interface SessionInfo {
 
 const most = (counts: Map<string, number>): string | undefined => [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
 const bump = (counts: Map<string, number>, key: string) => counts.set(key, (counts.get(key) ?? 0) + 1);
-const promptSize = (u: Usage | undefined) => (u ? (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) : 0);
+/** A session file may hold anything on a line (null, a number): only objects are entries. */
+const objects = (entries: SessionEntry[]) => entries.filter(e => !!e && typeof e === 'object');
+const promptSize = (u: Usage | null | undefined) => (u ? (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) : 0);
 
 export function sessionInfo(entries: SessionEntry[]): SessionInfo {
+  entries = objects(entries);
   const header = entries.find(e => e.type === 'session');
   const models = new Map<string, number>();
   let runs = 0, requests = 0;
@@ -80,7 +83,7 @@ export function sessionSmells(entries: SessionEntry[]): Smell[] {
     calls = new Map(); lastPrompt = 0; since = new Map();
   };
 
-  for (const e of entries) {
+  for (const e of objects(entries)) {
     const m = e.message;
     if (e.type !== 'message' || !m) continue;
     if (m.role === 'user') { endRun(); continue; }

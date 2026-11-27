@@ -68,6 +68,11 @@ test('sessionSmells: other entries are ignored, and no detail carries what was w
   assert.deepEqual(smells.map(s => s.kind), ['repeat']);
   assert.doesNotMatch(JSON.stringify(smells), /SECRET|do it/);
   assert.deepEqual(sessionSmells([]), []);
+  // whatever a line of the file parsed to: not an object, no message, content that is not blocks
+  const odd = [null, 3, 'x', [], { type: 'message', message: null }, { type: 'message', message: { role: 'assistant', content: 'text', usage: null } },
+    { type: 'message', message: { role: 'assistant', content: [null, 1, { type: 'toolCall' }, { type: 'toolCall', name: 'a' }] } }, { type: 'message', message: { role: 'toolResult' } }] as unknown as SessionEntry[];
+  assert.deepEqual(sessionSmells(odd), []);
+  assert.equal(sessionInfo(odd).requests, 2);
 });
 
 test('sessionInfo: the header, the model that answered most, runs and requests', () => {

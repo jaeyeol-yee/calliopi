@@ -23,7 +23,7 @@ const user = { type: 'message', id: 'u1', message: { role: 'user', content: 'go'
 test('collectSessions: every project, oldest first; filtered by start time or by session id; unreadable files are skipped', t => {
   const sessions = path.join(tmp(t), 'sessions');
   assert.deepEqual(collectSessions(sessions), []); // no directory
-  writeSession(sessions, 'app', 'new', '2026-11-20T00:00:00.000Z', [user, aborted, '{"type":"mess']); // a torn last line
+  writeSession(sessions, 'app', 'new', '2026-11-20T00:00:00.000Z', ['null', '7', user, aborted, '{"type":"mess']); // lines that are not entries, and a torn last line
   writeSession(sessions, 'lib', 'old', '2026-11-10T00:00:00.000Z', [user]);
   fs.writeFileSync(path.join(sessions, 'app', 'no-header.jsonl'), JSON.stringify(user));
   fs.writeFileSync(path.join(sessions, 'app', 'notes.txt'), 'not a session');
