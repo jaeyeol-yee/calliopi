@@ -1,0 +1,7 @@
+version: 1
+prompt: |
+  `node --test` fails: the report total is wrong for large amounts. Fix the cause. Do not change the tests.
+scope: [src/parse.js]
+oracle:
+  - command: node --test
+  - unchanged: [test/report.test.js, src/report.js]
