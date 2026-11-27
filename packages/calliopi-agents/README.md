@@ -73,10 +73,38 @@ goal을 만들 때, 닫을 때, 서브에이전트를 띄울 때 오래된 기�
 
 - **저장**: `<Pi agent dir>/calliopi-notes.jsonl`에 한 줄에 하나씩 덧붙입니다(0600). 시각, 메모, 세션 id와 세션 파일, 작업 디렉터리, 그때의 모델을 함께 남깁니다. 여러 줄을 붙여 넣어도 한 줄로 합칩니다.
 - **세션 표시**: 같은 메모를 세션에 custom entry(`calliopi-note`)로도 남겨, 세션 파일에서 메모한 지점을 찾을 수 있습니다. Pi의 custom entry는 모델 컨텍스트에 들어가지 않습니다.
-- **모아 보기**: `npm run signals`가 실행 집계 뒤에 `## Notes`로 최근 50개를 보여 줍니다(`--session <id>`면 그 세션의 메모만).
+- **모아 보기**: `npm run signals`가 실행 집계와 세션 smell 뒤에 `## Notes`로 최근 50개를 보여 줍니다(`--session <id>`면 그 세션의 메모만).
 - 최상위 Pi에만 있습니다. 서브에이전트(자식 Pi)에는 등록하지 않습니다.
 - 메모는 자동으로 지우지 않습니다(GC 대상이 아님). 지우려면 파일을 직접 편집합니다.
 - 메모를 고르고 묶고 처리 표시하는 기능은 없습니다. 사람이 읽고 정합니다.
+
+## 세션 smell (`npm run signals`)
+
+최상위 Pi 세션이 잘못 흘러간 흔적을 세션 파일에서 결정적 규칙으로 셉니다. 세기만 합니다: 세션 중에는 아무것도 하지 않고, 모델에게 알리지 않으며, 알림도 없습니다. 감지기는 세션 entry를 받는 순수 함수(`@calliopi/core/smells`)라서 감지기가 생기기 전에 기록된 세션도 읽습니다.
+
+| smell | 규칙 (run = 사용자 메시지 사이에 에이전트가 한 일) | 잠정 임계치 |
+|---|---|---|
+| `repeat` | 한 run에서 같은 도구를 같은 인자로 호출 | 3회 이상 |
+| `error-streak` | 한 run에서 도구 결과가 연속으로 오류 | 3회 이상 |
+| `interrupted` | 사용자가 답변을 중단(`stopReason: aborted`) | 1회 |
+| `context-jump` | 한 run의 두 요청 사이에 프롬프트(input + cache read + cache write)가 증가 | 30,000 토큰 이상 |
+
+```bash
+npm run signals                    # 모든 최상위 세션
+npm run signals -- --days 14       # 최근 14일에 시작한 세션(메모도 같은 기간)
+npm run signals -- --session <id>  # 한 세션
+```
+
+- **읽는 곳**: `<Pi agent dir>/sessions/<프로젝트>/*.jsonl`. 서브에이전트의 세션은 레지스트리에 있어 여기 들어오지 않습니다(위의 실행 집계가 봅니다).
+- **보고**: smell별로 한 번이라도 나온 세션 수와 비율, 전체 건수, 가장 자주 걸린 도구. 같은 수를 모델별로 한 번 더. 그리고 최근 10건을 세션 id, entry id와 함께 보여 줍니다(그 지점을 열어 실제 문제인지 판단하기 위한 것).
+- **세부 내용에는 개수와 도구 이름만** 들어갑니다. 사용자나 모델이 쓴 글, 도구 인자는 넣지 않습니다.
+- **임계치는 잠정값**입니다. 발생률과 정밀도(걸린 것이 실제 문제인 비율)를 재기 위한 출발점이고, 근거는 아직 없습니다.
+- **알려진 한계**:
+  - 폴링처럼 정당한 반복도 `repeat`로 잡힙니다.
+  - `interrupted`는 중단한 이유를 모릅니다(방향 수정, 오타, 단순 취소가 섞임).
+  - `context-jump`는 큰 파일을 일부러 읽은 경우도 잡습니다.
+  - `/tree`·`/fork`로 가지가 있는 세션은 파일 순서대로 한 줄로 읽습니다.
+  - 모델 요청 자체는 최상위 세션에 기록되지 않으므로 prefix 재작성은 여기서 세지 않습니다.
 
 ## `/cl-agents`: 목록과 화면
 
@@ -140,7 +168,7 @@ lib/viewer.ts          /cl-agents: goal별 목록(tree), 오른쪽 표, 실제 �
 lib/goals.ts           Active Goal: 도구, /cl-goal, 목적 고정, 자동 계속과 안전장치, 닫을 때 정리
 lib/gc.ts              보존 기간에 따른 기록 정리
 lib/notes.ts           /cl-note: 세션 메모 쓰기와 최근 메모 보기
-lib/signals.ts         npm run signals: 역할 lint, 실행 집계, 메모
+lib/signals.ts         npm run signals: 역할 lint, 실행 집계, 최상위 세션 smell, 메모
 lib/export.ts          goal 내보내기(JSON)
 ```
 

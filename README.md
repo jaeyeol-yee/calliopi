@@ -43,7 +43,7 @@ calliopi/
 
 `calliopi-workflows`의 `/cl-edit`는 Pi floating terminal에서 fzf로 파일 하나를 골라 Vim으로 편집하고, 변경분을 다음 대화에 전달합니다. `/cl-log`는 같은 창에서 커밋 → 변경 파일 → diff를 탐색합니다. `/cl-run`은 명령을 옆 pane(또는 tmux 백그라운드 창)에서 실행해 Pi를 붙잡지 않고, `/cl-jobs`로 상태와 출력을 봅니다. 사용법은 [packages/calliopi-workflows/README.md](packages/calliopi-workflows/README.md)를 보세요.
 
-`calliopi-agents`는 모델이 쓰는 `subagent` 도구를 제공합니다. 맡긴 일마다 자식 Pi가 부모 Pi의 pseudo-terminal에서(pane을 열지 않음) 계약(과제, 완료 조건, 예산)대로 일하고 `finish`로 결과를 보고합니다. 기본은 바로 돌아오고 끝날 때 모델을 깨워 전달하며, `/cl-agents`로 목록과 각 자식의 화면을 floating window에서 봅니다. `/cl-goal`(모델 도구 `goal_*`)로 세션에 goal 하나를 열면 끝날 때까지 스스로 이어서 일하고, 그동안 맡긴 서브에이전트는 goal에 링크되어 goal과 함께 정리됩니다. `/cl-note`는 세션이 잘못 흘러갔을 때 사람이 남기는 한 줄 메모이고(모델에게는 보내지 않음), `npm run signals`가 모아 보여 줍니다. 사용법은 [packages/calliopi-agents/README.md](packages/calliopi-agents/README.md)를 보세요.
+`calliopi-agents`는 모델이 쓰는 `subagent` 도구를 제공합니다. 맡긴 일마다 자식 Pi가 부모 Pi의 pseudo-terminal에서(pane을 열지 않음) 계약(과제, 완료 조건, 예산)대로 일하고 `finish`로 결과를 보고합니다. 기본은 바로 돌아오고 끝날 때 모델을 깨워 전달하며, `/cl-agents`로 목록과 각 자식의 화면을 floating window에서 봅니다. `/cl-goal`(모델 도구 `goal_*`)로 세션에 goal 하나를 열면 끝날 때까지 스스로 이어서 일하고, 그동안 맡긴 서브에이전트는 goal에 링크되어 goal과 함께 정리됩니다. `/cl-note`는 세션이 잘못 흘러갔을 때 사람이 남기는 한 줄 메모이고(모델에게는 보내지 않음), `npm run signals`가 모아 보여 줍니다. 같은 명령이 최상위 세션 파일에서 결정적 규칙으로 smell(같은 호출 반복, 연속 오류, 사용자 중단, 프롬프트 급증)을 세어 함께 보고합니다(세기만 하고 모델에게는 알리지 않음). 사용법은 [packages/calliopi-agents/README.md](packages/calliopi-agents/README.md)를 보세요.
 
 `ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙이고(`/cl-headers`), 현재 브랜치가 PR에 들어 있으면 footer에 `onto owner/repo#N open|merged…`를 표시합니다(`/cl-branch`). `/cl-usage`는 Claude·Codex·Cursor 구독 사용량을 gauge로 보여 줍니다. 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
 
