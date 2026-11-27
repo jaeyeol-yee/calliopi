@@ -26,3 +26,14 @@ Append a new entry at the end for every `prompt` or `model` PR (see `.github/PUL
 - Measured: nothing. No eval exists yet; P0 in `docs/research/agent-self-improvement-evidence.md` adds a prefix-rewrite report from `requests.jsonl`.
 - Not adopted: nothing.
 - Open risk / revisit when: a model ignores the contract or the goal reminder, over-delegates, or fails to call `finish`; or the first per-model rule is needed. At that point, move the rules the model reads into a separate guidance file and keep this file as history.
+
+## 2026-11-27: all models — first run signals, and an `improver` role
+
+- Scope: prompt
+- Applies to: all models
+- Changed: `.pi/agents/improver.md` (project role, proposes only); `npm run signals` (role lint and per-run counts)
+- Basis: observed (61 recorded subagent runs, all `anthropic/claude-opus-5-5`, scout 29 and reviewer 32)
+- Sources read in full: none
+- Measured: role lint has no findings. Every request after the first is a prefix rewrite (428 of 428), and the cache hit rate is 14% (reviewer) and 19% (scout). In one scout run, cache reads stay at 5,392 tokens (system and tools) on every turn while cache writes grow from 2,589 to 33,862. The cause is the contract reminder that `context` appends to every request: Pi marks the last user message for caching, which is the reminder, and the next request moves it, so the conversation is written to the cache again each turn and never read. The comment in `child.ts` ("only the tail changes, so the cache holds") does not hold. Reviewer runs ended 5 of 32 times without `finish` (stopped 3, error 3, idle 1 among the ends).
+- Not adopted: nothing yet. Candidate fix: keep the reminder but move the cache mark to the message before it, so the model sees the same text; that is a `perf` change measured by cache hit and prefix rewrites, not a prompt change.
+- Open risk / revisit when: after that fix, rerun `npm run signals` on new runs; all runs here are one model, so per-model differences are unknown.
