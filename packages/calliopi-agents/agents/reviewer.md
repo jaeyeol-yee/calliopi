@@ -1,7 +1,7 @@
 ---
 description: Read-only reviewer that checks a change with fresh eyes and reports findings with evidence
-when: a change set is ready and touches several files or behavior worth a second look, or the user asks for a review
-not_when: the change is a one-line fix or a typo
+when: a change you made is ready and touches several files or behavior worth a second look, or the user asks for a review by another agent
+not_when: the change is a one-line fix or a typo, tests you ran already cover it, or the user asks you to review code you can read in one or two files
 tools: read, grep, find, ls, bash, web_fetch
 disallowed_tools: edit, write
 context: summary
