@@ -100,7 +100,7 @@ pi --session-dir <dir> --session-id <id> -e … --model <model> [--thinking …]
 - **과제는 자식이 직접 제출합니다.** 명령줄에 과제를 넣으면 Pi가 바로 제출해 버려, 부모의 배경을 그 앞에 둘 수 없기 때문입니다. `context: summary`면 inbox에 배경이 오기를 최대 10초 기다렸다가(`배경 대기 중…`) 세션에 [배경][과제] 순으로 넣고, 늦으면 과제를 먼저 보내고 배경은 도착할 때 steer로 넣습니다(늦게 왔다고 표시).
 - **세션 파일**은 부모가 미리 만들어 두고(`<시각>_<id>.jsonl`), 헤더의 `parentSession`이 부모 세션을 가리킵니다. Pi는 이 파일을 열어 이어 씁니다.
 - **system prompt**: 서브에이전트 규칙(혼자 일함, 범위를 지킴, 끝나면 `finish`) + 역할 파일 본문.
-- **계약 알림(목적 고정)**: 과제를 보낸 뒤 매 모델 요청의 맨 끝에 `[Subagent contract] Task … Done when … Budget used …`를 붙입니다. 세션에는 저장하지 않으므로 맥락이 길어지거나 compaction이 일어나도 목적이 항상 최근 위치에 보이고, 요청의 꼬리만 바뀌어 prompt cache는 유지됩니다. 목적은 추론된 요약이 아니라 호출할 때 선언한 계약입니다.
+- **계약 알림(목적 고정)**: 과제를 보낸 뒤 매 모델 요청의 맨 끝에 `[Subagent contract] Task … Done when … Budget used …`를 붙입니다. 세션에는 저장하지 않으므로 맥락이 길어지거나 compaction이 일어나도 목적이 항상 최근 위치에 보입니다. 알림은 매 요청 끝으로 옮겨 가므로, Anthropic 요청에서는 캐시 표시(`cache_control`)를 알림이 아니라 그 앞 메시지에 둡니다(`lib/cache.ts`). 알림에 표시가 있으면 매 요청이 대화 전체를 캐시에 다시 쓰고 한 번도 읽지 못합니다. 목적은 추론된 요약이 아니라 호출할 때 선언한 계약입니다.
 - **`finish` 도구**: `status`(`done` | `partial` | `blocked`), `summary`, `evidence`, `artifacts`. 결과를 쓰고 실행을 끝냅니다(`terminate`).
 - **finish 없이 멈추면** 한 번 상기시키고, 그래도 없으면 마지막 답을 요약 삼아 `unanswered`로 보고합니다. 자기가 background로 위임한 서브에이전트가 아직 돌고 있으면 기다립니다(상기도, 종료도, 무응답 판정도 하지 않음): 결과가 도착하면 깨어납니다.
 - **inbox**(`inbox/NNNNNN.json`): `briefing`, `steer`, `stop`을 순번대로 한 번씩 받습니다(`delivered.json`의 id로 판별). 과제 전에 온 `steer`는 과제를 보낸 뒤에 전달합니다. 파일 변경 감지 + 1초 확인.

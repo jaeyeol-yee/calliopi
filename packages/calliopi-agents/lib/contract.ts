@@ -35,10 +35,13 @@ export function briefingMessage(text: string, late: boolean): string {
   return `${head}\n\n<background>\n${text.trim()}\n</background>`;
 }
 
+/** How the contract reminder starts, so the request it is added to can be found again. */
+export const CONTRACT_MARK = '[Subagent contract]';
+
 /** Added at the end of each request (not stored): the declared purpose and what is left of the budget. */
 export function contractReminder(meta: AgentMeta, usage: BudgetUsage): string {
   return [
-    `[Subagent contract] Task: ${meta.call.task}`,
+    `${CONTRACT_MARK} Task: ${meta.call.task}`,
     ...(meta.call.done ? [`Done when: ${meta.call.done}`] : []),
     `Budget used: ${formatBudget(meta.call.budget, usage)}.`,
     `Stay within the task; when it is done or blocked, call ${FINISH_TOOL}.`,

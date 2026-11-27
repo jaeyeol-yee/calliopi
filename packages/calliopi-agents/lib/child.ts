@@ -11,6 +11,7 @@ import {
   FILES, classifyEnd, descendantTokens, encodeRequest, exceeded, listAgents, markDelivered, nearLimit, readAgent, readDelivered, readInbox, writeResult, writeStatus,
   type AgentMeta, type AgentStatus, type EndFacts, type InboxMessage,
 } from '@calliopi/core/agents';
+import { cacheBeforeReminder } from '#lib/cache.ts';
 import { FINISH_REMINDER, FINISH_TOOL, briefingMessage, contractReminder, steerMessage, taskMessage, wrapUpReminder } from '#lib/contract.ts';
 
 /** How long the task waits for the parent's background before it starts without it. */
@@ -191,15 +192,19 @@ export function installChild(pi: ExtensionAPI, dir: string, busy: () => boolean 
     watchdog();
   });
   // The contract at the end of every request, not stored: the purpose stays in view however long the
-  // context grows and whatever compaction makes of the start; only the tail changes, so the cache holds.
+  // context grows and whatever compaction makes of the start. It moves with the end, so the cache mark
+  // is kept off it (lib/cache.ts) or no request could read what the one before cached.
   pi.on('context', (event) => {
     if (!taskSent || ended) return;
     return { messages: [...event.messages, { role: 'user', content: [{ type: 'text', text: contractReminder(meta, usage()) }], timestamp: Date.now() }] };
   });
   pi.on('before_provider_request', (event) => {
-    const record = encodeRequest(lastPayload, event.payload, ++requestSeq, Date.now());
-    lastPayload = event.payload;
+    const moved = cacheBeforeReminder(event.payload); // see lib/cache.ts
+    const payload = moved ?? event.payload;
+    const record = encodeRequest(lastPayload, payload, ++requestSeq, Date.now());
+    lastPayload = payload;
     fs.appendFileSync(path.join(dir, FILES.requests), `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    return moved;
   });
   pi.on('agent_end', (event) => {
     touch('');
