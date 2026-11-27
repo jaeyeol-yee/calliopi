@@ -1,11 +1,11 @@
-<!-- tool: 모델이 부를 도구를 추가하거나 스키마를 바꾼다. 설명 문구가 바뀌면 prompt 근거도 붙인다. -->
+<!-- tool: adds a tool the model calls or changes its schema. If the description text changes, add prompt evidence too. -->
 ## Why / What
 
 ## Test Plan
-- 계약 테스트 (입력 검증, 오류, 한도):
-- 실제 세션에서 제때 호출된 trace 1건:
-- 권한·네트워크·파일 접근 범위:
+- Contract tests (input validation, errors, limits):
+- One trace of the model calling it at the right time in a real session:
+- Permission, network and file access scope:
 
 ## AI
-- 사용한 에이전트·모델:
-- [ ] 사람이 diff를 읽고 설명할 수 있다
+- Agent and model used:
+- [ ] A human has read the diff and can explain it

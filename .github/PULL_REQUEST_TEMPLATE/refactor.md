@@ -1,11 +1,11 @@
-<!-- refactor: 동작은 그대로 -->
+<!-- refactor: no change in behavior -->
 ## Why / What
 
 ## Test Plan
-- [ ] 기존 테스트를 고치지 않고 통과
-- [ ] 모델에게 가는 프롬프트·도구 목록이 그대로
-- [ ] 공개 API·출력 변화 없음
+- [ ] Existing tests pass without being edited
+- [ ] The prompt and tool list sent to the model are unchanged
+- [ ] No change to public API or output
 
 ## AI
-- 사용한 에이전트·모델:
-- [ ] 사람이 diff를 읽고 설명할 수 있다
+- Agent and model used:
+- [ ] A human has read the diff and can explain it

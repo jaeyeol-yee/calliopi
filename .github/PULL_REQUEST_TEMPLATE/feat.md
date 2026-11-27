@@ -1,11 +1,11 @@
-<!-- feat: 사람이 쓰는 명령, 화면, 패널 -->
+<!-- feat: commands, screens and panes people use -->
 ## Why / What
 
 ## Test Plan
-- 실행한 명령과 결과:
-- 터미널 폭·멀티플렉서(Rex, herdr, tmux)별 확인:
-- 스크린샷 또는 데모 녹화:
+- Commands you ran and what they showed:
+- Checked at narrow terminal widths and in each multiplexer (Rex, herdr, tmux):
+- Screenshot or demo recording:
 
 ## AI
-- 사용한 에이전트·모델:
-- [ ] 사람이 diff를 읽고 설명할 수 있다
+- Agent and model used:
+- [ ] A human has read the diff and can explain it

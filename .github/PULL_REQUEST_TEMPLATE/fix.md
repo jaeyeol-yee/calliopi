@@ -1,10 +1,10 @@
-<!-- fix / perf: 버그, 리뷰 지적, 경계 조건, 성능 -->
+<!-- fix / perf: bugs, review findings, edge cases, performance -->
 ## Why / What
 
 ## Test Plan
-- 고치기 전에 실패하는 재현 테스트:
-- perf면 전후 수치:
+- Repro test that fails before the fix:
+- For perf, numbers before and after:
 
 ## AI
-- 사용한 에이전트·모델:
-- [ ] 사람이 diff를 읽고 설명할 수 있다
+- Agent and model used:
+- [ ] A human has read the diff and can explain it

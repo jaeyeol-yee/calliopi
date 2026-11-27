@@ -1,9 +1,9 @@
-<!-- chore / docs: 데모, CI, 설정, 의존성, 문서 -->
+<!-- chore / docs: demo, CI, setup, dependencies, docs -->
 ## Why / What
 
 ## Test Plan
-<!-- 실행 확인, 링크 확인. 의존성이면 버전 diff와 lock 파일 -->
+<!-- Ran it, or checked the links. For dependencies, the version diff and the lockfile -->
 
 ## AI
-- 사용한 에이전트·모델:
-- [ ] 사람이 diff를 읽고 설명할 수 있다
+- Agent and model used:
+- [ ] A human has read the diff and can explain it
