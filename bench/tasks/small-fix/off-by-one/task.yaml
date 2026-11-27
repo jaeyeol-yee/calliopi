@@ -1,0 +1,7 @@
+version: 1
+prompt: |
+  `node --test` fails in this project. Fix the bug in the source. Do not change the tests.
+scope: [src/range.js]
+oracle:
+  - command: node --test
+  - unchanged: [test/range.test.js]

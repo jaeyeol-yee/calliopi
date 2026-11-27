@@ -1,0 +1,7 @@
+version: 1
+prompt: |
+  Review src/discount.js against the comment at its top. Do not change any file.
+  If you find a bug, end your answer with one line of the form `line N` naming the line of the bug.
+oracle:
+  - answer: "^line 6$"
+  - unchanged: [src/discount.js]

@@ -1,0 +1,8 @@
+version: 1
+prompt: |
+  When this project is started with `npm start`, which TCP port does the server listen on?
+  The server cannot be run from this checkout. Do not change any file.
+  End your answer with the port number alone on the last line.
+oracle:
+  - answer: "^8102$"
+  - unchanged: [src/config/load.js, src/main.js, package.json, config/base.json, config/profiles/staging.json]

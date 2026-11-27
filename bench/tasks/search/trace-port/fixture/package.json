@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "PORT_OFFSET=2 node src/main.js --profile staging",
+    "start:prod": "node src/main.js --profile production"
+  }
+}

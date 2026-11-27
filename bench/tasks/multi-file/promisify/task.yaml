@@ -1,0 +1,8 @@
+version: 1
+prompt: |
+  Convert the callback APIs in src/ (store.read, readWithRetry, greeting, nextCount) to return promises
+  and take no callback. Keep the retry behavior. The tests in test/ describe the result; do not change them.
+scope: [src/store.js, src/retry.js, src/greet.js, src/counter.js]
+oracle:
+  - command: node --test
+  - unchanged: [test/promises.test.js]

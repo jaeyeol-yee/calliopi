@@ -1,0 +1,14 @@
+version: 1
+prompt: |
+  Rename the `verbose` option to `debug` everywhere in src/, including the CLI flag (--verbose becomes --debug).
+  Keep the behavior otherwise. The tests in test/ already expect the new name; do not change them.
+scope: [src/logger.js, src/server.js, src/cli.js]
+oracle:
+  - command: node --test
+  - unchanged: [test/options.test.js]
+  - file: src/logger.js
+    absent: verbose
+  - file: src/server.js
+    absent: verbose
+  - file: src/cli.js
+    absent: verbose
