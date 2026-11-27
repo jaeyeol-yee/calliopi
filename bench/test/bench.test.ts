@@ -142,6 +142,11 @@ test('report: worst–best repetition, threshold, saturation and lineage deltas'
   assert.match(text, /- small-fix: opus@low at \$0\.20\/run/);
   assert.match(text, /claude-opus-5 50% → claude-opus-5-5 100% \(\+50pp\)/);
   assert.equal(formatReport([], 0.9), 'No runs recorded.');
+  // a provider error is not a failed task: left out of the cell, counted apart
+  const errored = { ...rec('sonnet@medium', 'anthropic/claude-sonnet-5-5', 'medium', 'small-fix', 3, false, 0), error: 'usage limit reached' };
+  const withError = cells([...records, errored]).find(c => c.arm === 'sonnet@medium')!;
+  assert.deepEqual([withError.passes, withError.runs, withError.errors], [1, 2, 1]);
+  assert.match(formatReport([...records, errored], 0.9), /1 runs ended on a provider error and are left out: usage limit reached/);
 });
 
 test('a run\'s subagents are counted with their cost and moved out of the registry', () => {

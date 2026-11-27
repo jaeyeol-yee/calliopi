@@ -13,6 +13,8 @@ export interface Cell {
   costPerRun: number; costMin: number; costMax: number;
   turns: number; tokens: number; tokensMin: number; tokensMax: number; cacheHit: number;
   toolErrors: number; parallelShare: number; outOfScope: number; timeouts: number;
+  /** Runs that ended on a provider error; they are left out of pass, cost and the rest. */
+  errors: number;
   /** Subagents started, and how many were cut off before they ended. */
   delegations: number; childrenStopped: number;
 }
@@ -30,7 +32,9 @@ const groupBy = <T>(xs: T[], key: (x: T) => string) => {
 };
 
 export function cells(records: RunRecord[]): Cell[] {
-  return [...groupBy(records, r => `${r.arm}\0${r.taskClass}`).values()].map(rs => {
+  return [...groupBy(records, r => `${r.arm}\0${r.taskClass}`).values()].flatMap(all => {
+    const rs = all.filter(r => !r.error);
+    if (!rs.length) return [];
     const r0 = rs[0]!;
     const byRep = [...groupBy(rs, r => String(r.rep)).values()].map(g => g.filter(r => r.pass).length / g.length);
     const sum = (f: (r: RunRecord) => number) => rs.reduce((a, r) => a + f(r), 0);
@@ -47,6 +51,7 @@ export function cells(records: RunRecord[]): Cell[] {
       toolErrors: sum(r => r.signals.toolErrors), parallelShare: turns ? sum(r => r.signals.parallelCalls) / turns : 0,
       outOfScope: rs.filter(r => r.outOfScope.length).length, timeouts: rs.filter(r => r.timedOut).length,
       delegations: sum(r => r.children?.count ?? 0), childrenStopped: sum(r => r.children?.ends.stopped ?? 0),
+      errors: all.length - rs.length,
     };
   }).sort((a, b) => a.taskClass.localeCompare(b.taskClass) || a.costPerRun - b.costPerRun);
 }
@@ -93,15 +98,17 @@ const usd = (x: number) => `$${x.toFixed(x < 0.1 ? 4 : 2)}`;
 
 export function formatReport(records: RunRecord[], target: number): string {
   if (!records.length) return 'No runs recorded.';
+  const errors = records.filter(r => r.error);
   const cs = cells(records);
   const prov = [...new Set(records.map(r => `Pi ${r.piVersion} · harness ${r.harnessSha}${r.harnessCommit && r.harnessCommit !== r.harnessSha ? ` (arm at ${r.harnessCommit})` : ''} · tasks ${[...new Set(records.map(x => `${x.task}@v${x.taskVersion}`))].join(', ')}`))];
-  const lines = [`# Benchmark: ${[...new Set(records.map(r => r.spec))].join(', ')}`, '', ...prov.map(p => `- ${p}`), `- ${records.length} runs, ${usd(records.reduce((a, r) => a + runCost(r), 0))} total`, '',
+  const lines = [`# Benchmark: ${[...new Set(records.map(r => r.spec))].join(', ')}`, '', ...prov.map(p => `- ${p}`), `- ${records.length} runs, ${usd(records.reduce((a, r) => a + runCost(r), 0))} total`,
+    ...(errors.length ? [`- ${errors.length} runs ended on a provider error and are left out: ${[...new Set(errors.map(r => r.error!.slice(0, 120)))].join(' · ')}`] : []), '',
     '## By arm and task class', '',
     'Cost includes subagents. Cost, turns and tokens (the run\'s own) are medians per run; ranges are min–max.', '',
-    '| class | arm | harness | pass | worst–best rep | $/run | $ range | turns | tokens | tokens range | cache hit | tool errors | parallel | out of scope | timeouts | subagents (stopped) |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
+    '| class | arm | harness | pass | worst–best rep | $/run | $ range | turns | tokens | tokens range | cache hit | tool errors | parallel | out of scope | timeouts | subagents (stopped) | provider errors |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
   for (const c of cs)
-    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} | ${c.delegations} (${c.childrenStopped}) |`);
+    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} | ${c.delegations} (${c.childrenStopped}) | ${c.errors} |`);
   lines.push('', `## Threshold per class (lowest median cost among arms whose worst repetition reaches ${pct(target)})`, '');
   for (const [cls, c] of thresholds(cs, target)) lines.push(`- ${cls}: ${c ? `${c.arm} at ${usd(c.costPerRun)}/run` : 'none reaches the target'}`);
   const sat = saturation(cs);
