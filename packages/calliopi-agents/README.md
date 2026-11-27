@@ -62,6 +62,85 @@ goal을 만들 때, 닫을 때, 서브에이전트를 띄울 때 오래된 기�
 - 기간: `<Pi agent dir>/calliopi-agents.json` — `{ "retention": { "requestsDays": 3, "recordsDays": 14 } }`.
 - 메모리: 끝난 서브에이전트의 화면은 goal이 닫힐 때 해제됩니다(그 뒤로는 기록으로 보여 줌).
 
+## `/cl-note`: 세션 메모
+
+에이전트가 헛돌았거나 직접 교정해야 했을 때 한 줄을 남깁니다. 무엇을 고칠지 나중에 정하는 사람을 위한 기록이고, 모델에게는 보내지 않습니다(턴을 시작하지 않고, 대화 컨텍스트에도 들어가지 않습니다).
+
+```text
+/cl-note 편집할 때마다 전체 테스트를 다시 돌림
+/cl-note                 최근 메모 5개
+```
+
+- **저장**: `<Pi agent dir>/calliopi-notes.jsonl`에 한 줄에 하나씩 덧붙입니다(0600). 시각, 메모, 세션 id와 세션 파일, 작업 디렉터리, 그때의 모델을 함께 남깁니다. 여러 줄을 붙여 넣어도 한 줄로 합칩니다.
+- **세션 표시**: 같은 메모를 세션에 custom entry(`calliopi-note`)로도 남겨, 세션 파일에서 메모한 지점을 찾을 수 있습니다. Pi의 custom entry는 모델 컨텍스트에 들어가지 않습니다.
+- **모아 보기**: `npm run signals`가 실행 집계와 세션 smell 뒤에 `## Notes`로 최근 50개를 보여 줍니다(`--session <id>`면 그 세션의 메모만).
+- 최상위 Pi에만 있습니다. 서브에이전트(자식 Pi)에는 등록하지 않습니다.
+- 메모는 자동으로 지우지 않습니다(GC 대상이 아님). 지우려면 파일을 직접 편집합니다.
+- 메모를 고르고 묶고 처리 표시하는 기능은 없습니다. 사람이 읽고 정합니다.
+
+## 세션 smell (`npm run signals`)
+
+최상위 Pi 세션이 잘못 흘러간 흔적을 세션 파일에서 결정적 규칙으로 셉니다. 세기만 합니다: 모델에게 알리지 않고, 알림도 없습니다. 감지기는 세션 entry를 받는 순수 함수(`@calliopi/core/smells`)이고 리포트를 실행할 때 계산하므로, 감지기가 생기기 전에 기록된 세션도 읽습니다. 배경과 선례는 [docs/research/session-smell-triggers.md](../../docs/research/session-smell-triggers.md)에 있습니다.
+
+| smell | 규칙 (run = 사용자 메시지 사이에 에이전트가 한 일) | 잠정 임계치 |
+|---|---|---|
+| `repeat` | 한 run에서 같은 도구를 같은 인자로 호출 | 3회 이상 |
+| `error-streak` | 한 run에서 도구 결과가 연속으로 오류 | 3회 이상 |
+| `interrupted` | 사용자가 답변을 중단(`stopReason: aborted`) | 1회 |
+| `context-jump` | 한 run의 두 요청 사이에 프롬프트(input + cache read + cache write)가 증가 | 30,000 토큰 이상 |
+| `restate` | 사용자가 친 메시지가 바로 앞의 것과 거의 같음(문자 쌍의 Dice 유사도, 둘 다 20자 이상). `/`, `<`, `[`로 시작하는 메시지(슬래시 명령, 스킬·템플릿, 하네스가 쓴 메시지)는 비교하지 않음 | 60% 이상 |
+| `backtrack` | 작업을 버리는 git 명령: `restore`(`--staged`만이면 제외), `revert`(`--abort`·`--quit` 제외), `reset --hard`, `checkout --`·`checkout .` (에이전트의 `bash`, 사용자의 `!`) | 1회 |
+
+```bash
+npm run signals                    # 모든 최상위 세션
+npm run signals -- --days 14       # 최근 14일에 시작한 세션(메모도 같은 기간)
+npm run signals -- --session <id>  # 한 세션
+```
+
+- **읽는 곳**: `<Pi agent dir>/sessions/<프로젝트>/*.jsonl`. 서브에이전트의 세션은 레지스트리에 있어 여기 들어오지 않습니다(위의 실행 집계가 봅니다).
+- **보고**: smell별로 한 번이라도 나온 세션 수와 비율, 전체 건수, 가장 자주 걸린 도구. 같은 수를 결과별, 하네스 버전별, 모델별로 한 번씩 더. 그리고 최근 10건을 세션 id, entry id와 함께 보여 줍니다(그 지점을 열어 실제 문제인지 판단하기 위한 것).
+- **결과**(세션이 어떻게 끝났는지의 대리 지표): `git commit`이나 `gh pr create`가 성공했으면(에이전트의 `bash` 결과가 오류가 아님, 또는 사용자의 `!`가 0으로 끝남. `--dry-run`·`--help` 제외) `shipped`, 아니면 마지막 답변이 중단됐으면 `aborted`, 오류였으면 `error`, 그 밖은 `other`.
+- **하네스 버전**: run이 시작될 때 이 Calliopi 체크아웃의 커밋(12자)과 추적 파일의 미커밋 변경 여부를 세션에 custom entry(`calliopi-harness`)로 남깁니다(`lib/harness.ts`). 세션에 마지막으로 남긴 값과 같으면 다시 쓰지 않습니다. 리포트는 요청이 가장 많이 돈 버전으로 세션을 묶고(`abc123def456`, `abc123def456-dirty`), 기록이 없는 세션은 `unrecorded`입니다. Pi의 custom entry는 모델 컨텍스트에 들어가지 않습니다. 최상위 Pi에만 있습니다. 코드가 git 체크아웃 안에 없거나, 그 체크아웃의 `package.json` 이름이 `calliopi`가 아니면(다른 저장소 안에 복사된 경우) 아무것도 남기지 않습니다. 버전은 확장을 불러올 때 한 번 읽으므로(`git` 호출 2번, 각 3초 제한) run은 기다리지 않습니다. 새로 만든 추적되지 않는 파일은 dirty로 치지 않습니다.
+- **세부 내용에는 개수, 도구 이름, git 하위 명령만** 들어갑니다. 사용자나 모델이 쓴 글, 도구 인자, 경로는 넣지 않습니다. 세션 파일의 도구 이름·모델 이름·id가 평범한 이름 꼴이 아니면 `unknown`으로 바꿉니다.
+- **임계치는 잠정값**입니다. 발생률과 정밀도(걸린 것이 실제 문제인 비율)를 재기 위한 출발점이고, 근거는 아직 없습니다.
+- **알려진 한계**:
+  - 폴링처럼 정당한 반복도 `repeat`로 잡힙니다.
+  - `interrupted`는 중단한 이유를 모릅니다(방향 수정, 오타, 단순 취소가 섞임).
+  - `context-jump`는 큰 파일을 일부러 읽은 경우도 잡고, 함께 보고하는 도구는 직전에 실행된 도구일 뿐 원인이 아닐 수 있습니다.
+  - `restate`는 같은 메시지를 실수로 두 번 보낸 것과 답을 못 받아 다시 말한 것을 구분하지 못합니다. 바로 앞 메시지와만 비교합니다.
+  - `backtrack`은 의도한 정리(실험을 버림)도 잡습니다.
+  - git·gh 명령은 셸을 실행하지 않고 읽습니다: heredoc 본문과 따옴표 안은 버리고, `;`, `&`, `|`, `(`, 줄바꿈으로 자른 조각의 첫 명령만 봅니다(앞의 `A=1`, `sudo`, `then` 등과 git 자체 옵션은 건너뜀). `$(…)` 안이나 `eval`, alias, 스크립트 파일 안의 명령은 보지 못합니다.
+  - `shipped`는 코드 작업이 아닌 세션(조사, 질문)에는 맞지 않습니다. 커밋 뒤에 잘못된 세션도 `shipped`이고, `git commit … || true`처럼 실패를 가린 명령도 성공으로 봅니다.
+  - `/tree`·`/fork`로 가지가 있는 세션은 파일 순서대로 한 줄로 읽습니다.
+  - 모델 요청 자체는 최상위 세션에 기록되지 않으므로 prefix 재작성은 여기서 세지 않습니다.
+
+## `/cl-debrief`: 세션이 끝난 뒤의 분석
+
+대화형 세션이 smell과 함께 끝나면, 별도의 Pi가 백그라운드에서 걸린 지점을 읽고 "실제 문제였는가, 원인은 어디로 보이는가"를 적어 둡니다. **기본은 꺼져 있습니다.** 실행할 때마다 모델 호출이 한 번 들고, 세션의 발췌가 그 모델로 전송되기 때문입니다.
+
+```text
+/cl-debrief on                  켜기 (그 세션의 모델로 분석)
+/cl-debrief on openai/gpt-x     켜기, 분석 모델 지정
+/cl-debrief off                 끄기
+/cl-debrief status              켜짐 여부, 모델, 건수
+/cl-debrief                     아직 안 본 결과 하나 보기
+```
+
+- **언제**: Pi를 종료하거나 `/new`, `/resume`으로 세션을 떠날 때. `/reload`와 `/fork`는 세션이 이어지므로 제외합니다. `pi -p`나 rpc처럼 대화형이 아닌 실행, 저장되지 않는 세션, smell이 없는 세션에서는 아무것도 띄우지 않습니다. 같은 세션은 앞선 분석이 끝났고 그 뒤로 세션이 더 길어졌을 때만 다시 분석합니다(시간 초과나 오류로 끝난 분석도 세션이 그대로면 다시 하지 않음).
+- **무엇을 보내나**: 걸린 지점마다 앞뒤 3개 entry의 발췌와 감지기의 설명입니다(최대 8지점). entry마다 글은 400자까지, 도구 호출은 4개까지 인자 200자씩, 도구 결과는 400자까지 자르고 제어 문자는 뺍니다. 세션 파일 전체를 보내지는 않지만, **사용자가 쓴 글과 도구 인자·결과의 앞부분이 들어가므로 거기 있던 비밀값도 함께 전송될 수 있습니다.** 보낸 내용은 `<세션 id>.prompt.md`에 그대로 남습니다.
+- **어떻게 도나**: `pi -p --no-session --no-tools --no-extensions`를 부모와 분리된 프로세스로 띄웁니다. 도구가 없어 파일을 읽거나 고칠 수 없고, 세션을 남기지 않습니다. 발췌는 명령줄 인자가 아니라 표준 입력으로 넘깁니다(`ps`에 보이지 않음). 부모 Pi가 종료돼도 계속 돌고, 답을 쓰면 스스로 끝납니다. 시간 제한(기본 5분, 1~60분)을 넘으면 종료를 요청하고(TERM) 5초 뒤 강제로 끝냅니다(KILL). 끝날 때 그 프로세스 그룹에 남은 것도 함께 정리합니다. 아무도 기다리지 않습니다.
+- **다시 띄우지 않음**: 분석용 Pi는 설정이나 자동 탐색으로 잡히는 확장을 불러오지 않습니다(`--no-extensions`). 부모 Pi가 명령줄 `-e`로 받은 확장만 넘기는데, 그 안에 Calliopi가 있어도 `CALLIOPI_DEBRIEF=1`을 보고 아무것도 등록하지 않습니다(도구, goal, 메모, 또 다른 분석 모두 없음).
+- **결과**: `<Pi agent dir>/calliopi-debriefs/`(0700)에 세션별로 기록(`.json`), 보낸 내용(`.prompt.md`), 답(`.md`), 종료 상태(`.exit`: 종료 코드 또는 `timeout`), stderr(`.md.log`)가 남습니다(모두 0600). 다음에 Pi를 시작하면 "지난 세션 debrief N건"을 알리고, `/cl-debrief`로 하나씩 봅니다. `npm run signals`에는 `## Debriefs`로 상태별 건수와 최근 결과의 요약 줄이 나옵니다. 알림과 결과는 사람에게만 보이고 모델 컨텍스트에 들어가지 않습니다.
+- **모델**: 지정하지 않으면 세션을 돌린 모델이 자기 세션을 읽습니다. 모델은 자기 작업을 관대하게 보는 경향이 있으므로 다른 계열의 모델을 지정하는 편이 낫습니다.
+- **설정**: `<Pi agent dir>/calliopi-agents.json` — `{ "debrief": { "enabled": true, "model": "provider/id", "timeoutMinutes": 5 } }`.
+- **한계**:
+  - 결과는 모델이 발췌를 읽고 쓴 의견입니다. 측정이 아니고, 맞는지 확인된 적이 없습니다.
+  - 발췌는 짧습니다. 판단에 부족하면 "cannot tell"이라고 쓰게 했습니다.
+  - 결과 파일은 자동으로 지우지 않습니다.
+  - 종료 순간 `sh`가 없거나 Pi가 강제로 죽으면 분석이 시작되지 않거나 `결과 없음`으로 남습니다.
+  - macOS와 Linux의 `sh`와 `ps`를 전제로 합니다.
+  - 분석 모델이 설정에 설치된 확장이 제공하는 모델이면 분석용 Pi에서 찾지 못해 `오류`로 끝납니다. Pi에 기본으로 있는 provider의 모델을 `on provider/model`로 지정하세요.
+
 ## `/cl-agents`: 목록과 화면
 
 ```text
@@ -123,9 +202,13 @@ lib/fleet.ts           자식들의 pseudo-terminal: 시작, 중지, 결과 없�
 lib/viewer.ts          /cl-agents: goal별 목록(tree), 오른쪽 표, 실제 화면 붙이기(ctrl+]로 떼기)
 lib/goals.ts           Active Goal: 도구, /cl-goal, 목적 고정, 자동 계속과 안전장치, 닫을 때 정리
 lib/gc.ts              보존 기간에 따른 기록 정리
+lib/notes.ts           /cl-note: 세션 메모 쓰기와 최근 메모 보기
+lib/harness.ts         하네스 버전(커밋, dirty)을 세션에 남기기
+lib/debrief.ts         /cl-debrief: 세션이 끝난 뒤 분리된 Pi로 걸린 지점 분석, 결과 알림
+lib/signals.ts         npm run signals: 역할 lint, 실행 집계, 최상위 세션 smell, 메모
 lib/export.ts          goal 내보내기(JSON)
 ```
 
 ## 테스트
 
-`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.
+`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다. `/cl-note`는 Pi 대역(stand-in)으로 handler를 호출해 파일, 세션 entry, 알림을 확인하고 모델로 보낸 것이 없는지 봅니다. 하네스 버전 기록도 같은 방식으로 확인하고, 버전 읽기는 임시 git 저장소에서 확인합니다. debrief는 pseudo-terminal의 실제 Pi에 같은 메시지를 두 번 입력하고 종료한 뒤, 분리된 분석 Pi가 결과 파일을 쓰고 끝나는지, 그 Pi가 세션·분석·에이전트 기록을 남기지 않는지, 꺼져 있거나 smell이 없으면 아무것도 생기지 않는지 확인합니다. 시간 제한은 `pi` 자리에 셸 스크립트를 넣어 확인합니다.
