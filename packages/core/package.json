@@ -2,13 +2,14 @@
   "name": "@calliopi/core",
   "version": "0.0.0",
   "private": true,
-  "description": "Execution primitives shared by Calliopi layers: fzf selection, program runners, workflows, PR lookup, subscription usage, terminal multiplexers, subagent records. No dependencies.",
+  "description": "Execution primitives and primitive tools shared by Calliopi layers: fzf selection, program runners, workflows, PR lookup, subscription usage, terminal multiplexers, subagent records, web_fetch. No runtime dependencies besides Pi.",
   "type": "module",
   "calliopi": {
     "layer": "core"
   },
   "imports": {
-    "#lib/*": "./lib/*"
+    "#lib/*": "./lib/*",
+    "#extensions/*": "./extensions/*"
   },
   "exports": {
     "./fzf": "./lib/fzf.ts",
@@ -20,6 +21,7 @@
     "./usage": "./lib/usage/index.ts",
     "./multiplexer": "./lib/multiplexer/index.ts",
     "./agents": "./lib/agents/index.ts",
+    "./web": "./lib/web/index.ts",
     "./package.json": "./package.json"
   },
   "pi": {
@@ -35,7 +37,12 @@
     "node": ">=22.18"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
     "@types/node": "^22",
     "typescript": "^5.9"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   }
 }

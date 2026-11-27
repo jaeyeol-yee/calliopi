@@ -12,6 +12,7 @@ Calliopi의 가장 아래 계층입니다. 다른 패키지를 참조하지 않�
 | `@calliopi/core/usage` | 구독 사용량 strategy(`claude`, `codex`, `cursor`), `fetchUsage`, `defaultEnv` |
 | `@calliopi/core/multiplexer` | 터미널 멀티플렉서 strategy(`rex`, `herdr`, `tmux`), `detectMultiplexer`, `openSidePane` |
 | `@calliopi/core/agents` | 서브에이전트 기록: 레지스트리(`createAgent`, `postInbox`, `writeResult`), 예산과 상속(`budgetFor`, `remaining`, `exceeded`), goal(`moveGoal`, `listGoals`, `planPrune`), 역할 카탈로그(`parseRole`, `mergeCatalog`, `roleGuidelines`), 위임 규칙(`mayDelegate`, `resolveModel`, `resolveTools`), 종료 분류(`classifyEnd`), 요청 델타 기록(`encodeRequest`, `decodeRequests`), tree(`buildTree`, `treeRows`) |
+| `@calliopi/core/web` | `web_fetch` 엔진: 주소 정책(`isPublicAddress`), URL 검사(`checkUrl`), 호스트 규칙(`decide`), `fetchPage`, HTML→텍스트(`htmlToText`), 페이징·캐시·비신뢰 포장(`readPage`) |
 
 ## PR 조회
 
@@ -89,3 +90,18 @@ provider마다 `UsageStrategy`(`fetch(env) → UsageSnapshot`)를 하나씩 둡�
 - 모든 지표에 리셋 시각(`resetsAt`)과 창 길이(`periodMs`)가 있으면 담습니다.
 - 한 provider가 실패해도 나머지는 그대로 나오고, 실패한 provider는 `error`에 이유를 담습니다.
 - 파일·명령·HTTP는 `UsageEnv`로 주입합니다. 테스트는 가짜 환경을 씁니다.
+
+## 기본 도구: web_fetch
+
+`extensions/web-fetch.ts`가 모든 Pi(자식 포함)에 `web_fetch({ url, offset?, limit? })`를 등록합니다. `read`의 URL판입니다. 요약하지 않고 원문 텍스트를 창 단위(기본 20,000자, 최대 100,000자)로 돌려주며, 머리말에 읽은 범위와 이어 읽을 `offset`을 적습니다.
+
+- 끌 수 없는 안전 장치(엔진, `lib/web/`):
+  - http(s)만, 자격 증명 URL 거부.
+  - 공인 인터넷 주소만 허용. IPv4 특수 대역 전부를 거부하고, IPv6는 2000::/3 중 특수 대역을 뺀 것만 허용합니다(IPv4-mapped는 안의 IPv4로 판정).
+  - 이름은 직접 해석해 모든 주소를 검사하고, 검사한 주소로만 연결합니다(DNS rebinding 방지).
+  - 같은 origin 안의 리다이렉트(같은 호스트의 http→https 포함)만 따라가며 홉마다 재검사합니다. 다른 origin이면 따라가지 않고 그 URL을 알려 줍니다.
+  - 압축 해제 후 5MB에서 자르고, 전체 30초 제한. 텍스트 형식(HTML, text/*, JSON, XML 등)만 받습니다. 제어 문자와 방향 제어 문자는 지웁니다.
+  - 결과 본문은 호출마다 새 nonce를 붙인 태그로 감싸 "신뢰할 수 없는 웹 내용"으로 표시합니다. 페이지가 태그를 닫을 수 없습니다.
+  - 10분, 32개, 800만 자 한도의 LRU 캐시. `offset`으로 이어 읽으면 같은 텍스트를 봅니다.
+- 사용자 정책(선택): `<agentDir>/calliopi-web.json`에 `{ "allow": [], "deny": [], "ask": [] }`(호스트 패턴: `example.com`, `*.example.com`, `*`). deny가 우선, allow 목록이 있으면 일치해야 하고, ask는 세션마다 호스트당 한 번 묻습니다. 파일이 없으면 모든 공인 호스트를 묻지 않고 허용합니다(`read`가 파일마다 묻지 않는 것과 같음). 파일이 깨져 있으면 전부 막습니다.
+- `bash`의 `curl`은 막지 않습니다. 웹 내용만 읽힐 역할은 `bash` 없이 `web_fetch`를 주세요.

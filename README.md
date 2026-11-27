@@ -47,7 +47,7 @@ calliopi/
 
 `ui`는 대화 기록의 사용자 입력과 Pi 답변 앞에 헤더를 붙이고(`/cl-headers`), 현재 브랜치가 PR에 들어 있으면 footer에 `onto owner/repo#N open|merged…`를 표시합니다(`/cl-branch`). `/cl-usage`는 Claude·Codex·Cursor 구독 사용량을 gauge로 보여 줍니다. 사용법은 [packages/ui/README.md](packages/ui/README.md)를 보세요.
 
-`core/extensions`와 `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다. 예시 지침이나 no-op 확장을 자동 로드하지 않습니다.
+`core/extensions`에는 기본 도구 `web_fetch`(웹 페이지를 텍스트로 읽는 `read`의 URL판)만 있습니다. `context`의 리소스 디렉터리는 `.gitkeep`만 포함합니다.
 
 Claude Code 클라우드 세션(claude.ai/code)에서 개발하려면 [docs/cloud.md](docs/cloud.md)를 보세요. 환경 setup script(`scripts/cloud-setup.sh`)와 저장소 SessionStart hook(`scripts/cloud-install.sh`)으로 나눠 준비합니다.
 
@@ -78,7 +78,7 @@ app       calliopi-fanout    calliopi-workflows    calliopi-agents     명령·�
               │                 │        │
 ui, context   ui ◄──────────────┘        │           화면과 입력 / 모델이 읽을 자료
               │                          │
-core          core ◄─────────────────────┘           fzf 선택·워크플로우 엔진·실행기 타입·PR 조회·구독 사용량 (의존성 없음)
+core          core ◄─────────────────────┘           실행 기본 요소(fzf·워크플로우·실행기·PR 조회·사용량)와 기본 도구(web_fetch)
 ```
 
 - 각 패키지는 `package.json`의 `"calliopi": { "layer": … }`로 계층(`core`, `ui`, `context`, `app`)을 선언합니다.
