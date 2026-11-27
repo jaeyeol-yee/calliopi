@@ -1,7 +1,7 @@
-version: 1
+version: 2
 prompt: |
   Review src/pagination.js against its comments. Do not change any file.
   If you find a bug, end your answer with one line of the form `line N` naming the line of the bug.
 oracle:
-  - answer: "^line 8$"
+  - answer: "^line [89]$"   # the end computation, or the slice that uses it
   - unchanged: [src/pagination.js]
