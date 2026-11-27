@@ -1,0 +1,14 @@
+# S2: effort sweeps for the models S1 found cost-effective, on all 12 tasks, to find per class the
+# cheapest model × effort that reaches the target (threshold) and where more effort stops helping
+# (saturation). Medium is rerun so every point shares one harness and one time window.
+name: s2-effort
+runs: 2
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 35
+tasks: all
+arms:
+  - { model: openai/gpt-6.1-terra, effort: [off, low, medium, high, xhigh, max] }
+  - { model: openai/gpt-6.2-sol, effort: [low, medium, high, xhigh, max] }
+  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, xhigh, max] }
+  - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, xhigh, max] }
