@@ -81,6 +81,15 @@ test('catalog: frontmatter becomes a role; bad files are errors, odd keys warnin
   const { roles, shadowed } = mergeCatalog([[role({ source: 'builtin' })], [role({ source: '~/.pi/agents/reviewer.md', model: 'x' })]]);
   assert.equal(roles.get('reviewer')!.model, 'x');
   assert.deepEqual(shadowed, ['reviewer: ~/.pi/agents/reviewer.md가 builtin를 대신합니다.']);
+  // an untrusted (project) layer cannot replace a role, and its new roles need approval at least once
+  const proj = mergeCatalog([[role({ source: 'builtin' })], [role({ source: '.pi/agents/reviewer.md', tools: ['edit'] }), role({ name: 'helper', source: '.pi/agents/helper.md' })]], [true, false]);
+  assert.equal(proj.roles.get('reviewer')!.source, 'builtin');
+  assert.equal(proj.roles.get('helper')!.approval, 'once');
+  assert.match(proj.shadowed[0]!, /대신할 수 없어 무시합니다/);
+  // values that are there but malformed are errors, never a looser default
+  for (const fm of [{ approval: true }, { approval: 'yes' }, { context: false }, { model_locked: 'true' }, { tools: null }, { tools: 'read bash' }, { tools: [1] }, { disallowed_tools: 'edit write' }]) {
+    assert.ok('error' in parseRole('x', { description: 'd', ...fm }, '', 'x.md'), JSON.stringify(fm));
+  }
   const lines = roleGuidelines('subagent', [role({ when: 'a change is ready.', notWhen: 'a typo' })]);
   assert.ok(lines.every(l => l.includes('subagent'))); // Pi appends them flat: each names the tool
   assert.equal(lines.at(-1), 'Use subagent with role "reviewer" (Reviews a change) when a change is ready; not a typo.');
@@ -190,7 +199,10 @@ test('tree: parents first, siblings by start, orphans at the top, connectors and
   const spend = (id: string, parent: string | null, tokens: number, done: boolean) => ({ dir: id, meta: { id, parent, createdAt: 0 } as AgentMeta,
     status: { state: 'running' as const, turns: 0, tokens, startedAt: 0, updatedAt: 0 }, result: done ? { status: 'done' as const, summary: '', usage: { turns: 0, tokens: tokens * 10, ms: 0 }, endedAt: 0 } : undefined });
   const family = [spend('a', null, 1, false), spend('b', 'a', 2, true), spend('c', 'b', 3, false), spend('d', null, 4, false)];
-  assert.equal(descendantTokens(family, 'a'), 20 + 3); // b by its result, c by its status; not a itself, not d
+  // b's result already counts c (a child's usage includes its subagents'): not walked below it
+  assert.equal(descendantTokens(family, 'a'), 20);
+  const running = [spend('a', null, 1, false), spend('b', 'a', 2, false), spend('c', 'b', 3, false)];
+  assert.equal(descendantTokens(running, 'a'), 2 + 3); // running ones by their own status, all the way down
   assert.equal(descendantTokens(family, 'd'), 0);
 });
 
@@ -240,4 +252,18 @@ test('pruning: request logs then whole records age out after their goal closes; 
   ]);
   assert.deepEqual(planPrune(records, goals, DEFAULT_RETENTION, now, dir => dir !== '/r/no-goal').map(a => a.dir), ['/r/in-old', '/r/in-recent', '/r/lost-goal']); // already pruned
   assert.deepEqual(staleGoals(goals, records.filter(x => x.meta.id !== 'in-old'), DEFAULT_RETENTION, now).map(x => x.id), ['old']);
+});
+
+test('regressions: inbox seq after gaps, decodeRequests on a torn start, fractional budgets', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-reg-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const rec = createAgent(root, { root: 's', parent: null, depth: 1, role: 'scout', model: 'm', modelSource: 'inherit', tools: [], cwd: root, createdAt: 1,
+    call: { task: 't', budget: DEFAULT_BUDGET, context: 'none', background: true }, pane: null } as never);
+  for (let i = 1; i <= 4; i++) postInbox(rec.dir, { id: `m${i}`, kind: 'steer', text: String(i), at: i });
+  for (const n of ['000002.json', '000003.json']) fs.rmSync(path.join(rec.dir, 'inbox', n));
+  assert.equal(postInbox(rec.dir, { id: 'm5', kind: 'steer', text: '5', at: 5 }).seq, 5);
+  assert.deepEqual(readInbox(rec.dir, 4).map(m => m.id), ['m5']);
+  const out = decodeRequests([JSON.stringify({ seq: 2, at: 0, set: { messages: [3] }, prefix: { messages: 2 } }), JSON.stringify({ seq: 3, at: 0, whole: { a: 1 } })].join('\n'));
+  assert.deepEqual(out.map(r => r.seq), [2, 3]);
+  assert.deepEqual(budgetFor({ turns: 0.5 }, undefined).exhausted, ['turns']);
 });

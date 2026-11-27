@@ -84,3 +84,15 @@ test('viewer: long details scroll with J/K and PgUp/PgDn (and the wheel over the
   assert.match(lines[0]!, /┬ scout-1 /, 'the wheel over the list moves the selection');
   assert.match(lines.at(-1)!, /상세 1–|접기 · x:/, 'a new selection starts at the top of its details');
 });
+
+test('viewer: a Kitty key release is not a second scroll', () => {
+  const tui = { terminal: { columns: 100, rows: 14 }, requestRender: () => {} };
+  const long = Array.from({ length: 30 }, (_, i) => `para ${i}`).join('\n');
+  const records = [rec('reviewer-1', null, 1, { result: { status: 'done', summary: long, usage: { turns: 1, tokens: 1, ms: 1000 }, endedAt: 0 } })];
+  const view = new AgentsView(tui, { fg: (_c: string, s: string) => s }, new Fleet(), () => records, () => {});
+  view.render(100);
+  view.handleInput('K'); view.handleInput('\x1b[75;2:3u'); // K pressed, its Kitty release
+  assert.match(view.render(100).map(plain).at(-1)!, /상세 1–/, 'K moved up from the top: nothing; the release did nothing either');
+  view.handleInput('J'); view.handleInput('\x1b[74;2:3u'); view.handleInput('\x1b[6;2:3~'); // J, its release, a Shift+PgDn release
+  assert.match(view.render(100).map(plain).at(-1)!, /상세 2–/);
+});

@@ -7,7 +7,7 @@
 //   requests.jsonl every model request the child sent (lib/agents/requests.ts)
 //   session.jsonl  the child's Pi session
 // Files are replaced atomically, so a reader never sees half a file.
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -73,7 +73,7 @@ export const writeStatus = (dir: string, status: AgentStatus) => writeJson(path.
 /** The first result stands: a later writer (a stop racing a finish) does not replace it. */
 export function writeResult(dir: string, result: AgentResult): boolean {
   const file = path.join(dir, FILES.result);
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(result), { mode: 0o600 });
   try { fs.linkSync(tmp, file); return true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false; throw error; }
@@ -97,10 +97,12 @@ export function listAgents(root: string, topSession: string): AgentRecord[] {
 /** Append a message to a child's inbox; its seq is the next free one, so concurrent writers never collide. */
 export function postInbox(dir: string, message: Omit<InboxMessage, 'seq'>): InboxMessage {
   const inbox = path.join(dir, FILES.inbox);
-  for (let seq = fs.readdirSync(inbox).filter(n => n.endsWith('.json')).length + 1; ; seq++) {
+  // After the highest seq there, not the count: a gap (a removed file) must not reuse a number.
+  const top = fs.readdirSync(inbox).reduce((n, f) => (/^\d{6,}\.json$/.test(f) ? Math.max(n, Number(f.slice(0, -5))) : n), 0);
+  for (let seq = top + 1; ; seq++) {
     const full: InboxMessage = { ...message, seq };
     const file = path.join(inbox, `${String(seq).padStart(6, '0')}.json`);
-    const tmp = `${file}.${process.pid}.tmp`;
+    const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(full), { mode: 0o600 });
     try { fs.linkSync(tmp, file); return full; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }

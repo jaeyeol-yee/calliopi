@@ -47,7 +47,8 @@ export function decodeRequest(prev: unknown, record: RequestRecord): unknown {
   for (const key of record.drop ?? []) delete out[key];
   for (const [key, value] of Object.entries(record.set)) {
     const k = record.prefix?.[key];
-    out[key] = k ? [...(out[key] as unknown[]).slice(0, k), ...(value as unknown[])] : value;
+    // A prefix needs the earlier array; without it (a torn or missing earlier record) keep what there is.
+    out[key] = k ? [...(Array.isArray(out[key]) ? out[key].slice(0, k) : []), ...(Array.isArray(value) ? value : [value])] : value;
   }
   return out;
 }
@@ -60,7 +61,7 @@ export function decodeRequests(text: string): { seq: number; at: number; payload
     if (!line.trim()) continue;
     let record: RequestRecord;
     try { record = JSON.parse(line) as RequestRecord; } catch { break; }
-    prev = decodeRequest(prev, record);
+    try { prev = decodeRequest(prev, record); } catch { break; }
     out.push({ seq: record.seq, at: record.at, payload: prev });
   }
   return out;

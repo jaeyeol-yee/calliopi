@@ -10,10 +10,11 @@ import { Type } from 'typebox';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
-  FILES, MARK, STATUS_TEXT, budgetFor, createAgent, mayDelegate, readAgent, resolveModel, resolveTools, resultForParent, roleGuidelines, writeResult,
+  delegates, FILES, MARK, STATUS_TEXT, budgetFor, createAgent, mayDelegate, readAgent, resolveModel, resolveTools, resultForParent, roleGuidelines, writeResult,
   type AgentRecord, type AgentRole, type ContextMode, type FullBudget,
 } from '@calliopi/core/agents';
 import { Fleet } from '#lib/fleet.ts';
+import { currentRequest } from '#lib/goals.ts';
 import { loadCatalog } from '#lib/catalog.ts';
 import { FINISH_TOOL, childSystemPrompt } from '#lib/contract.ts';
 import { PROMPT_FILE, childSpawn, extensionArgs, piInvocation, prepareSession, type ChildLaunch } from '#lib/launch.ts';
@@ -79,6 +80,8 @@ export interface ParentOptions {
 export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOptions): Fleet {
   const fleet = new Fleet();
   const approved = new Set<string>();
+  /** A 'once' role being asked about: a second call at the same time waits for the same answer. */
+  const asking = new Map<string, Promise<boolean>>();
   const watched = new Map<string, fs.FSWatcher | undefined>();
   let delegations = 0;
   let poll: NodeJS.Timeout | undefined;
@@ -133,14 +136,19 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       background: Type.Optional(Type.Boolean({ description: 'Default true: return at once; you are told when each ends. false: wait for all.' })),
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const fail = (text: string) => ({ content: [{ type: 'text' as const, text }], details: undefined, isError: true });
+      let reserved = 0;
+      // Every refusal gives back the slots this call reserved.
+      const fail = (text: string) => { delegations -= reserved; reserved = 0; return { content: [{ type: 'text' as const, text }], details: undefined, isError: true }; };
       const background = params.background !== false;
 
       // 1. Check everything before anything starts: no child is left behind by a refusal.
-      if (delegations + params.tasks.length > MAX_PER_SESSION) return fail(`This session may delegate at most ${MAX_PER_SESSION} tasks; ${delegations} already were.`);
+      if (delegations + params.tasks.length > MAX_PER_SESSION) return fail(`This Pi may delegate at most ${MAX_PER_SESSION} tasks per run (until /reload or a new session); ${delegations} already were.`);
+      // Reserved before any await: two calls at once must not both pass the check.
+      delegations += params.tasks.length; reserved = params.tasks.length;
       const catalog = loadCatalog(ctx.cwd).roles;
       const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : '';
-      const parentTools = pi.getAllTools().map(t => t.name).filter(n => n !== SUBAGENT_TOOL && n !== FINISH_TOOL);
+      // The tools this Pi can use now (its --tools selection), not every tool configured: a child never has more.
+      const parentTools = pi.getActiveTools().filter(n => n !== SUBAGENT_TOOL && n !== FINISH_TOOL);
       const left = place.budgetLeft?.();
       const plans = [];
       for (const t of params.tasks) {
@@ -157,7 +165,13 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       for (const { t, role } of plans) {
         if (role.approval === 'none' || (role.approval === 'once' && approved.has(role.name))) continue;
         if (!ctx.hasUI) return fail(`Role ${role.name} needs the user's approval, and there is no UI to ask.`);
-        if (!(await ctx.ui.confirm('서브에이전트에 맡길까요?', `${role.name}: ${t.task}`))) return fail(`The user declined delegating to ${role.name}.`);
+        const ask = () => ctx.ui.confirm('서브에이전트에 맡길까요?', `${role.name}: ${t.task}`);
+        let answer: Promise<boolean>;
+        if (role.approval === 'once') { answer = asking.get(role.name) ?? ask(); asking.set(role.name, answer); }
+        else answer = ask();
+        const ok = await answer;
+        if (role.approval === 'once') asking.delete(role.name);
+        if (!ok) return fail(`The user declined delegating to ${role.name}.`);
         approved.add(role.name);
       }
       if (signal?.aborted) return fail('Cancelled before any subagent started.');
@@ -165,19 +179,27 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       // 2. Start them together (old records age out first).
       opts.collect?.();
       const goal = opts.goal?.(ctx, params.tasks[0]!.task) ?? null;
+      // The user's request it serves (the top Pi only; below, the parent's task is the request).
+      const request = place.depth === 0 ? currentRequest(ctx.sessionManager.getBranch()) : undefined;
       const root = place.root ?? ctx.sessionManager.getSessionId();
       const launch: ChildLaunch = { pi: piInvocation(), extensions: [AGENTS_EXTENSION, ...extensionArgs()], ...opts.launch };
-      const records = plans.map(({ t, role, model, budget }) => {
+      const records: AgentRecord[] = [];
+      try { for (const { t, role, model, budget } of plans) records.push((() => {
         const record = createAgent(opts.root(), {
-          root, parent: place.parentId, goal, depth: place.depth + 1, role: role.name, model: model.model, modelSource: model.source,
-          thinking: role.thinking, tools: resolveTools(role, parentTools), cwd: ctx.cwd, createdAt: Date.now(),
+          root, parent: place.parentId, goal, ...(request ? { request } : {}), depth: place.depth + 1, role: role.name, model: model.model, modelSource: model.source,
+          // A child whose role may delegate needs the subagent tool in its --tools too.
+          thinking: role.thinking, tools: [...resolveTools(role, parentTools), ...(delegates(place.depth + 1, role) ? [SUBAGENT_TOOL] : [])], cwd: ctx.cwd, createdAt: Date.now(),
           call: { task: t.task, done: t.done, budget, context: (t.context ?? role.context) as ContextMode, background, parentToolCallId: toolCallId },
           pane: null,
         });
         fs.writeFileSync(path.join(record.dir, PROMPT_FILE), childSystemPrompt(record.meta, role.instructions), { mode: 0o600 });
         prepareSession(record.dir, record.meta, ctx.sessionManager.getSessionFile());
         return record;
-      });
+      })()); } catch (error) {
+        // A record could not be written: the ones made so far are closed, none starts.
+        for (const r of records) writeResult(r.dir, { status: 'error', summary: '', reason: `준비하지 못함: ${(error as Error).message}`, usage: { turns: 0, tokens: 0, ms: 0 }, endedAt: Date.now() });
+        return fail(`Could not prepare the subagents (${(error as Error).message}); none is running.`);
+      }
       const started = await Promise.allSettled(records.map(r => fleet.start(r, childSpawn(r.dir, r.meta, launch))));
       const failed = started.flatMap((s, i) => (s.status === 'rejected' ? [`${records[i]!.meta.id}: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`] : []));
       if (failed.length) {
@@ -189,7 +211,7 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
         }
         return fail(`Could not start the subagents (${failed.join('; ')}); none is running.`);
       }
-      delegations += records.length;
+      reserved = 0; // kept: they started
       opts.onSpawned?.(records, ctx);
 
       if (background) {

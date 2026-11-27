@@ -4,7 +4,7 @@
 // keys to it, so the user can watch it think and step in. Ctrl+] goes back to the list; the child
 // keeps running. An agent that has ended shows its last screen, or its result when this Pi did not
 // run it (an earlier session).
-import { CURSOR_MARKER, matchesKey, renderFakeCursor, truncateToWidth, visibleWidth, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER, isKeyRelease, matchesKey, renderFakeCursor, truncateToWidth, visibleWidth, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { MARK, OPEN, STATUS_TEXT, buildTree, formatBudget, goalAgentTokens, stateOf, treeCounts, treeRows, type AgentRecord, type Goal } from '@calliopi/core/agents';
 import { metadataTable, type MetadataValue } from '@calliopi/ui/table';
@@ -39,7 +39,9 @@ interface Theme { fg(color: string, text: string): string }
 const SPLIT_MIN = 70;
 
 /** One row of the list: a goal (null: the agents without one) or an agent under it. */
-export type Item = { kind: 'goal'; goal: Goal | null; agents: AgentRecord[] } | { kind: 'agent'; record: AgentRecord; prefix: string };
+export type Item = { kind: 'goal'; goal: Goal | null; agents: AgentRecord[] }
+  | { kind: 'request'; goal: Goal | null; text: string; agents: AgentRecord[] }
+  | { kind: 'agent'; record: AgentRecord; prefix: string };
 
 const GOAL_MARK: Record<Goal['status'], string> = { active: '▶', paused: '⏸', done: '✓', abandoned: '✗' };
 const GOAL_STATE: Record<Goal['status'], string> = { active: '진행 중', paused: '일시 중지', done: '완료', abandoned: '포기' };
@@ -66,7 +68,19 @@ export function listItems(records: AgentRecord[], goals: Goal[], folded: (key: s
   for (const goal of order) {
     const agents = records.filter(r => r.meta.goal === goal.id);
     items.push({ kind: 'goal', goal, agents });
-    if (!folded(goal.id, foldedByDefault(goal, goals))) items.push(...tree(agents, '  '));
+    if (folded(goal.id, foldedByDefault(goal, goals))) continue;
+    // One goal, several user requests (a request came while another's subagents still ran): a sub-heading each.
+    const byRequest = new Map<string, { text: string; agents: AgentRecord[] }>();
+    for (const r of agents) {
+      const key = r.meta.request?.id ?? '';
+      const group = byRequest.get(key) ?? { text: r.meta.request?.text ?? '(요청 없음)', agents: [] };
+      group.agents.push(r); byRequest.set(key, group);
+    }
+    if (byRequest.size < 2) { items.push(...tree(agents, '  ')); continue; }
+    for (const group of byRequest.values()) {
+      items.push({ kind: 'request', goal, text: group.text, agents: group.agents });
+      items.push(...tree(group.agents, '    '));
+    }
   }
   if (loose.length) {
     items.push({ kind: 'goal', goal: null, agents: loose });
@@ -88,6 +102,10 @@ export class AgentsView implements Component, Focusable {
   /** From the last render: page height, and where the right column starts (0: no split). */
   private page = 10;
   private splitAt = 0;
+  /** Narrow layout: the first row of the details under the list (0: wide layout). */
+  private detailsRow = 0;
+  /** The agent whose screen is shown, by id: rows may move as agents start and goals fold. */
+  private attached: string | null = null;
 
   private readonly tui: Tui;
   private readonly theme: Theme;
@@ -102,10 +120,13 @@ export class AgentsView implements Component, Focusable {
   }
 
   private current(): Item | undefined { return this.items[this.selected]; }
-  private agent(): AgentRecord | undefined { const c = this.current(); return c?.kind === 'agent' ? c.record : undefined; }
+  private agent(): AgentRecord | undefined {
+    if (this.mode === 'screen' && this.attached) return this.records().find(r => r.meta.id === this.attached);
+    const c = this.current(); return c?.kind === 'agent' ? c.record : undefined;
+  }
   private goalOf(item: Item | undefined): Goal | null | undefined {
     if (!item) return undefined;
-    if (item.kind === 'goal') return item.goal;
+    if (item.kind !== 'agent') return item.goal;
     return this.goals().find(g => g.id === item.record.meta.goal) ?? null;
   }
 
@@ -120,7 +141,8 @@ export class AgentsView implements Component, Focusable {
   /** Wheel (fullscreen Pi only; in regular mode the terminal keeps the wheel): scrolls what is under the pointer. */
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult {
     if (event.type !== 'wheel' || !event.wheelDelta) return {}; // only the wheel is ours
-    if (this.mode === 'list' && !(this.splitAt && event.x > this.splitAt)) {
+    const overDetails = this.splitAt ? event.x > this.splitAt : this.detailsRow ? event.y >= this.detailsRow : false;
+    if (this.mode === 'list' && !overDetails) {
       this.select(this.selected + Math.sign(event.wheelDelta));
       this.tui.requestRender();
     } else this.scroll(event.wheelDelta);
@@ -145,12 +167,14 @@ export class AgentsView implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    // Kitty sends a release for every key: one press is one step, and a release is nobody's input.
+    if (isKeyRelease(data)) return;
     if (this.mode === 'screen') {
       const child = this.agent() && this.fleet.get(this.agent()!.meta.id);
       const live = !!child && !child.exited;
       // ctrl+] always leaves; Esc too when nothing is listening (an ended agent): a live one gets it
       if (matchesKey(data, DETACH_KEY) || (!live && (matchesKey(data, 'escape') || data === 'q'))) {
-        this.mode = 'list'; this.offset = 0; child?.pane.scrollToBottom(); this.tui.requestRender(); return;
+        this.mode = 'list'; this.attached = null; this.offset = 0; child?.pane.scrollToBottom(); this.tui.requestRender(); return;
       }
       const step = scrollStep(data, this.page, { live });
       if (step) return this.scroll(step);
@@ -168,7 +192,7 @@ export class AgentsView implements Component, Focusable {
       const key = item.goal?.id ?? '';
       const closed = foldedByDefault(item.goal, this.goals());
       this.toggled.set(key, !(this.toggled.get(key) ?? closed));
-    } else if (matchesKey(data, 'enter') && item) { this.mode = 'screen'; this.offset = 0; }
+    } else if (matchesKey(data, 'enter') && item?.kind === 'agent') { this.mode = 'screen'; this.attached = item.record.meta.id; this.offset = 0; }
     else if (data === 'x' && this.agent()) this.fleet.stop(this.agent()!.meta.id);
     else if (data === 'e' && item) {
       try { this.notice = `내보냄: ${this.onExport(this.goalOf(item) ?? null)}`; } catch (error) { this.notice = `내보내지 못함: ${error instanceof Error ? error.message : String(error)}`; }
@@ -184,6 +208,7 @@ export class AgentsView implements Component, Focusable {
     const height = Math.max(8, Math.floor(this.tui.terminal.rows * 0.85) - 2);
     this.page = height;
     this.splitAt = 0;
+    this.detailsRow = 0;
     const border = (s: string) => this.theme.fg('border', s);
     const fit = (s: string) => truncateToWidth(s, inner, '…', true);
     const records = this.records();
@@ -197,6 +222,7 @@ export class AgentsView implements Component, Focusable {
     ];
 
     const a = this.agent();
+    if (this.mode === 'screen' && !a) { this.mode = 'list'; this.attached = null; } // its record is gone
     if (this.mode === 'screen' && a) {
       const child = this.fleet.get(a.meta.id);
       const state = stateOf(a);
@@ -225,7 +251,9 @@ export class AgentsView implements Component, Focusable {
       : ` ↑↓ 이동 · Enter: 화면/접기${total > h ? ` · PgUp/PgDn·J/K: 상세 ${this.position(total, h)}` : ''} · x: 중지 · e: 내보내기 · Esc: 닫기 `;
     if (!this.items.length) return box(title, [fit(this.theme.fg('dim', ' 아직 맡긴 일이 없습니다.')), ...Array(height - 1).fill(fit(''))], ' Esc: 닫기 ');
     const rows = this.items.map((item, i) => {
-      const line = item.kind === 'agent' ? `${item.prefix}${agentLine(item.record)}` : goalLine(item, this.toggled.get(item.goal?.id ?? '') ?? foldedByDefault(item.goal, goals));
+      const line = item.kind === 'agent' ? `${item.prefix}${agentLine(item.record)}`
+        : item.kind === 'request' ? `  » ${item.text} (${item.agents.length})`
+        : goalLine(item, this.toggled.get(item.goal?.id ?? '') ?? foldedByDefault(item.goal, goals));
       return i === this.selected ? this.theme.fg('accent', `▸${line}`) : ` ${line}`;
     });
     /** The list, scrolled so the selected row is in view. */
@@ -234,13 +262,17 @@ export class AgentsView implements Component, Focusable {
       return [...rows.slice(start, start + h), ...Array(Math.max(0, h - rows.length)).fill('')];
     };
     const item = this.current()!;
-    const detail = item.kind === 'agent' ? detailRows(item.record) : goalRows(item, records);
+    const detail: [string, MetadataValue][] = item.kind === 'agent' ? detailRows(item.record)
+      : item.kind === 'request' ? [['요청', item.text], ['에이전트', item.agents.map(r => `${MARK[stateOf(r)]} ${r.meta.id}`).join(' · ')]]
+      : goalRows(item, records);
     const table = (w: number) => metadataTable(detail, w, { fg: (token, text) => this.theme.fg(token, text) });
     const pad = (line: string, w: number) => truncateToWidth(line, w, '…', true);
 
     if (inner < SPLIT_MIN) { // narrow: the details under the list
       const listHeight = Math.min(rows.length, Math.max(3, Math.floor(height / 3)));
       const details = table(inner);
+      this.page = height - listHeight; // PgUp/PgDn move by what the details show
+      this.detailsRow = 1 + listHeight; // the wheel below the list scrolls them
       const body = [...list(listHeight), ...this.window(details, height - listHeight)];
       return box(title, [...body, ...Array(height - body.length).fill('')].map(fit), footerFor(details.length, height - listHeight));
     }
@@ -253,7 +285,7 @@ export class AgentsView implements Component, Focusable {
     this.splitAt = leftCols + 1;
     const footer = footerFor(details.length, height);
     const label = (text: string, cols: number, color: string) => this.theme.fg(color, truncateToWidth(text, cols, '…', true));
-    const heading = item.kind === 'agent' ? ` ${item.record.meta.id} ` : item.goal ? ` goal ${item.goal.id} ` : ' goal 없음 ';
+    const heading = item.kind === 'agent' ? ` ${item.record.meta.id} ` : item.kind === 'request' ? ' 요청 ' : item.goal ? ` goal ${item.goal.id} ` : ' goal 없음 ';
     return [
       border('╭') + label(title, leftCols, 'accent') + border('┬') + label(heading, rightCols, 'dim') + border('╮'),
       ...Array.from({ length: height }, (_, i) => border('│') + pad(left[i] ?? '', leftCols) + border('│') + pad(right[i] ?? '', rightCols) + border('│')),

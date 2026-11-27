@@ -35,7 +35,8 @@ export function budgetFor(requested: Budget | undefined, role: Budget | undefine
     budget[d] = d === 'turns' || d === 'tokens' ? Math.floor(value) : Math.floor(value * 10) / 10;
   }
   // Nothing left to give: the caller should not delegate rather than start a child that ends at once.
-  const exhausted = clamped.filter(d => budget[d] < (d === 'minutes' ? 0.5 : 1));
+  // Also a dimension that rounding took to nothing (a request of 0.5 turns): it would end the child at once.
+  const exhausted = DIMENSIONS.filter(d => d !== 'idleMinutes' && budget[d] < (d === 'minutes' ? 0.5 : 1) && (clamped.includes(d) || budget[d] <= 0));
   return { budget, clamped, exhausted };
 }
 

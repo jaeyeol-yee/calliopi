@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_BUDGET, FILES, createAgent, decodeRequests, postInbox, readAgent, type AgentMeta, type AgentRecord } from '@calliopi/core/agents';
+import { DEFAULT_BUDGET, FILES, createAgent, decodeRequests, postInbox, readAgent, writeStatus, type AgentMeta, type AgentRecord } from '@calliopi/core/agents';
 import { briefingMessage, childSystemPrompt, taskMessage } from '#lib/contract.ts';
 import { AGENT_DIR_ENV, PROMPT_FILE, childSpawn, piInvocation, prepareSession } from '#lib/launch.ts';
-import { Fleet } from '#lib/fleet.ts';
+import { Fleet, closeOrphans } from '#lib/fleet.ts';
+import { isChildOf } from '#extensions/agents.ts';
 import { installChild, spent } from '#lib/child.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -45,7 +46,7 @@ test('launch: a session file naming the parent, and a command that carries the a
   assert.throws(() => prepareSession(dir, meta, undefined, new Date('2026-11-26T07:00:00.000Z'))); // never overwrites
   const spawn = childSpawn(dir, { ...meta, thinking: 'low' }, { pi: ['node', '/pi/cli.js'], extensions: ['/x/agents.ts'], env: { EXTRA: '1' } }, { HOME: '/h', DEMO_CHILD_SCENARIO: '/c.yaml' });
   assert.equal(spawn.command, 'node');
-  assert.deepEqual(spawn.args, ['/pi/cli.js', '--session-dir', dir, '--session-id', 'scout-1', '-e', '/x/agents.ts', '--model', 'faux/demo', '--thinking', 'low', '--tools', 'read,finish',
+  assert.deepEqual(spawn.args, ['/pi/cli.js', '--session-dir', dir, '--session-id', 'scout-1', '-e', '/x/agents.ts', '--model', 'faux/demo', '--thinking', 'low', '--tools', 'read,finish', '--no-mcp',
     '--append-system-prompt', path.join(dir, PROMPT_FILE)]);
   assert.deepEqual(spawn.env, { HOME: '/h', DEMO_CHILD_SCENARIO: '/c.yaml', [AGENT_DIR_ENV]: dir, DEMO_SCENARIO: '/c.yaml', EXTRA: '1' }); // the parent's environment, inherited
   assert.ok(!spawn.args.some(a => a.includes('Find where login'))); // the child submits its task itself
@@ -213,4 +214,17 @@ test('child Pi: background before task, finish ends it, inbox stop, reminder the
   childD.pane.stop(); // killed outright
   await until('d recorded', () => !!readAgent(d.dir)?.result);
   assert.equal(readAgent(d.dir)!.result!.status, 'stopped');
+});
+
+test('a Pi that only inherited CALLIOPI_AGENT_DIR is not the child; orphans of an ended Pi are closed with their usage', t => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-orphan-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const r = createAgent(root, { root: 'top', parent: null, depth: 1, role: 'scout', model: 'm', modelSource: 'inherit', tools: [], cwd: root, createdAt: 1,
+    call: { task: 't', budget: DEFAULT_BUDGET, context: 'none', background: true }, pane: null } as never);
+  assert.equal(isChildOf(r.dir, ['node', 'pi', '--session-id', r.meta.id]), true);
+  assert.equal(isChildOf(r.dir, ['node', 'pi']), false);
+  assert.equal(isChildOf(r.dir, ['node', 'pi', '--session-id', 'other']), false);
+  writeStatus(r.dir, { state: 'running', turns: 3, tokens: 500, startedAt: Date.now(), updatedAt: Date.now(), pid: 999_999 });
+  assert.deepEqual(closeOrphans([readAgent(r.dir)!], new Fleet()), [r.meta.id]);
+  assert.deepEqual([readAgent(r.dir)!.result!.status, readAgent(r.dir)!.result!.usage.tokens], ['stopped', 500]);
 });

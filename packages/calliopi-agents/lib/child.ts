@@ -72,30 +72,40 @@ export function installChild(pi: ExtensionAPI, dir: string, busy: () => boolean 
     ended = true; // before writing: a failed write must not end it again on every tick
     const { status: end, reason } = classifyEnd(facts);
     const u = usage();
-    const written = writeResult(dir, {
-      status: end, reason, summary: facts.finish?.summary ?? facts.lastText ?? lastAnswer,
-      evidence: facts.finish?.evidence, artifacts: facts.finish?.artifacts,
-      usage: { turns: u.turns, tokens: u.tokens, ms: u.ms }, endedAt: Date.now(),
-    });
-    clearInterval(poll); clearInterval(briefingWait); watcher?.close();
+    let written = false;
+    try {
+      written = writeResult(dir, {
+        status: end, reason, summary: facts.finish?.summary ?? facts.lastText ?? lastAnswer,
+        evidence: facts.finish?.evidence, artifacts: facts.finish?.artifacts,
+        usage: { turns: u.turns, tokens: u.tokens, ms: u.ms }, endedAt: Date.now(),
+      });
+    } catch (error) {
+      // Not written: exiting anyway lets the parent record what it saw (lib/fleet.ts).
+      ctxRef?.ui.notify(`결과를 쓰지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    } finally {
+      clearInterval(poll); clearInterval(briefingWait); watcher?.close();
+      // Its work is over: the Pi exits (its last screen stays with the parent, in /cl-agents).
+      setTimeout(() => ctxRef?.shutdown?.(), 500).unref?.();
+    }
     if (written) ctxRef?.ui.notify(`부모에게 결과를 보냈습니다: ${end}${reason ? ` (${reason})` : ''}`, end === 'done' ? 'info' : 'warning');
-    // Its work is over: the Pi exits (its last screen stays with the parent, in /cl-agents).
-    setTimeout(() => ctxRef?.shutdown?.(), 500).unref?.();
   };
 
+  // Handed over first, then marked: a failure in between leaves it to be delivered again (at least once;
+  // `delivered` ids keep it from going twice once marked).
   const deliver = (message: InboxMessage) => {
-    markDelivered(dir, message);
     if (message.kind === 'stop') {
+      markDelivered(dir, message);
       end({ stopped: true });
       ctxRef?.abort();
       return;
     }
-    if (message.kind === 'briefing' && !message.text.trim()) { save({ briefing: { at: Date.now(), how: 'failed' } }); return; } // no background: stop waiting
+    if (message.kind === 'briefing' && !message.text.trim()) { save({ briefing: { at: Date.now(), how: 'failed' } }); markDelivered(dir, message); return; } // no background: stop waiting
     const text = message.kind === 'briefing' ? briefingMessage(message.text, taskSent) : steerMessage(message.text);
     if (message.kind === 'briefing') save({ briefing: { at: Date.now(), how: taskSent ? 'steer' : 'first' } });
     if (!taskSent) pi.sendMessage({ customType: 'calliopi-briefing', content: text, display: true });
     else if (ctxRef?.isIdle()) pi.sendUserMessage(text);
     else pi.sendUserMessage(text, { deliverAs: 'steer' });
+    markDelivered(dir, message);
   };
 
   /** New inbox messages in seq order, each once; a briefing waits for the task unless it is late. */

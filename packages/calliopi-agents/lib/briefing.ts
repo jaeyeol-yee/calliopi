@@ -28,7 +28,15 @@ export function summaryInput(entries: readonly Entry[]): { previous?: string; me
   let start = 0, previous: string | undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
-    if (e.type === 'custom' && e.customType === SUMMARY_ENTRY) { previous = (e.data as SummaryEntryData).summary; start = i + 1; break; }
+    if (e.type === 'custom' && e.customType === SUMMARY_ENTRY) {
+      // The summary covers the context up to its `upTo` entry, not up to where it was written: messages
+      // that came while it was being made are after `upTo` and must be in the next one.
+      const data = e.data as SummaryEntryData;
+      previous = data.summary;
+      const covered = data.upTo ? entries.findIndex(x => x.id === data.upTo) : -1;
+      start = covered >= 0 && covered < i ? covered + 1 : i + 1;
+      break;
+    }
     if (e.type === 'compaction' && e.summary) { previous = e.summary; start = i + 1; break; }
   }
   const messages = entries.slice(start).flatMap(e => (e.type === 'message' && e.message ? [e.message] : []));

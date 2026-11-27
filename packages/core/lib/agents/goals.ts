@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readJson, treeDir, writeJson } from '#lib/agents/registry.ts';
+import { descendantTokens } from '#lib/agents/tree.ts';
 import type { AgentRecord } from '#lib/agents/types.ts';
 
 export type GoalStatus = 'active' | 'paused' | 'done' | 'abandoned';
@@ -81,8 +82,14 @@ export function goalOverBudget(goal: Goal, agentTokens: number): string | null {
 }
 
 /** Tokens the goal's subagents spent (finished ones by their result, running ones by their status). */
-export const goalAgentTokens = (goal: Goal, records: AgentRecord[]) =>
-  records.filter(r => r.meta.goal === goal.id).reduce((n, r) => n + (r.result?.usage.tokens ?? r.status?.tokens ?? 0), 0);
+export function goalAgentTokens(goal: Goal, records: AgentRecord[]): number {
+  // Grandchildren inherit the goal, and a finished child's result already counts them: sum the goal's
+  // topmost agents, each by its result, or (running) by its status plus what runs below it.
+  const linked = records.filter(r => r.meta.goal === goal.id);
+  const ids = new Set(linked.map(r => r.meta.id));
+  return linked.filter(r => !r.meta.parent || !ids.has(r.meta.parent))
+    .reduce((n, r) => n + (r.result ? r.result.usage.tokens : (r.status?.tokens ?? 0) + descendantTokens(records, r.meta.id)), 0);
+}
 
 export interface Retention { requestsDays: number; recordsDays: number }
 export const DEFAULT_RETENTION: Retention = { requestsDays: 3, recordsDays: 14 };
@@ -99,9 +106,14 @@ export function planPrune(records: AgentRecord[], goals: Goal[], retention: Rete
   const day = 24 * 60 * 60 * 1000;
   const actions: PruneAction[] = [];
   for (const r of records) {
-    if (!r.result) continue; // running (or lost without a result): never
     const goal = r.meta.goal ? byId.get(r.meta.goal) : undefined;
     if (goal && OPEN.includes(goal.status)) continue;
+    // Without a result it is running, or was lost (killed with its Pi): only once it has been silent past
+    // the records retention, counted from its last status, or its creation when it never wrote one.
+    if (!r.result) {
+      if (now - (r.status?.updatedAt ?? r.meta.createdAt) >= Math.max(1, retention.recordsDays) * day) actions.push({ dir: r.dir, what: 'all' });
+      continue;
+    }
     const since = goal?.closedAt ?? r.result.endedAt;
     const age = now - since;
     if (age >= retention.recordsDays * day) actions.push({ dir: r.dir, what: 'all' });

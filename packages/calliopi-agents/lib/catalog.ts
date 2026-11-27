@@ -1,6 +1,7 @@
 // The role catalog on disk: agents/*.md, from least to most specific — this package's built-ins,
-// the user's (<Pi agent dir>/agents), then the project's (.agents/agents, .pi/agents). A later
-// file replaces an earlier role of the same name.
+// the user's (<Pi agent dir>/agents), then the project's (.agents/agents, .pi/agents). The user's
+// roles replace built-ins of the same name; a project's only add new names and need approval once
+// (a checked-out repository is not trusted to redefine reviewer or scout).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,7 @@ function readDir(dir: string): { roles: AgentRole[]; problems: string[] } {
 
 export function loadCatalog(cwd: string, dirs = catalogDirs(cwd)): { roles: Map<string, AgentRole>; problems: string[] } {
   const layers = dirs.map(readDir);
-  const { roles, shadowed } = mergeCatalog(layers.map(l => l.roles));
+  // The first two directories (built-in, the user's) are trusted; any after them belong to the project.
+  const { roles, shadowed } = mergeCatalog(layers.map(l => l.roles), dirs.map((_, i) => i < 2));
   return { roles, problems: [...layers.flatMap(l => l.problems), ...shadowed] };
 }

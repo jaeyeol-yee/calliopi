@@ -52,6 +52,9 @@ export function childSpawn(dir: string, meta: AgentMeta, launch: ChildLaunch, en
       '--model', meta.model,
       ...(meta.thinking ? ['--thinking', meta.thinking] : []),
       '--tools', [...meta.tools, FINISH_TOOL].join(','),
+      // --tools keeps MCP tools unless an entry names them (Pi docs/cli.md): a role that does not list
+      // mcp__ tools gets none, rather than every MCP tool of the user's setup.
+      ...(meta.tools.some(t => t.startsWith('mcp__')) ? [] : ['--no-mcp']),
       '--append-system-prompt', path.join(dir, PROMPT_FILE),
     ],
     env: vars,

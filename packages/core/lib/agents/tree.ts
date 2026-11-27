@@ -66,7 +66,10 @@ export function descendantTokens(records: AgentRecord[], id: string): number {
     for (const r of children.get(parent) ?? []) {
       if (seen.has(r.meta.id)) continue;
       seen.add(r.meta.id);
-      total += r.result?.usage.tokens ?? r.status?.tokens ?? 0;
+      // A finished child's result already counts what its own subagents spent (lib/child.ts usage()):
+      // do not walk below it, or their tokens are counted twice.
+      if (r.result) { total += r.result.usage.tokens; continue; }
+      total += r.status?.tokens ?? 0;
       walk(r.meta.id);
     }
   };

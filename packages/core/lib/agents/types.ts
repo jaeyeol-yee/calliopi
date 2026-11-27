@@ -84,6 +84,8 @@ export interface AgentMeta {
   parent: string | null;
   /** The goal it works for (the top Pi's open goal when it was started, inherited below); null: none. */
   goal?: string | null;
+  /** The user's request it was started for (its session entry and first line), to group a goal's agents. */
+  request?: { id: string; text: string };
   depth: number;
   role: string;
   model: string;

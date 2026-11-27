@@ -244,7 +244,7 @@ test('viewer: agents grouped by goal, the open one first, closed ones folded; a 
     status: { state: 'running', turns: 1, tokens: 5, startedAt: now, updatedAt: now },
     result: done ? { status: 'done', summary: 's', usage: { turns: 1, tokens: 7, ms: 1000 }, endedAt: now } : undefined });
   const records = [rec('scout-1', 'g-a', true), rec('scout-2', 'g-b', false), rec('scout-3', null, true)];
-  const kinds = (items: ReturnType<typeof listItems>) => items.map(i => i.kind === 'goal' ? `goal:${i.goal?.id ?? '-'}` : `  ${i.record.meta.id}`);
+  const kinds = (items: ReturnType<typeof listItems>) => items.map(i => i.kind === 'goal' ? `goal:${i.goal?.id ?? '-'}` : i.kind === 'request' ? `req:${i.text}` : `  ${i.record.meta.id}`);
   assert.deepEqual(kinds(listItems(records, goals, (_k, closed) => closed)), ['goal:g-b', '  scout-2', 'goal:g-a', 'goal:-', '  scout-3']);
   assert.deepEqual(kinds(listItems(records, [], () => false)), ['  scout-1', '  scout-2', '  scout-3']); // no goals: the plain tree
 
@@ -281,4 +281,54 @@ test('export: the goal, its delegation summaries and its agents as a tree with t
   assert.deepEqual(out.agents.map(a => a.id), [parent.meta.id]);
   assert.equal(out.agents[0]!.children[0]!.id, child.meta.id);
   assert.equal(out.agents[0]!.children[0]!.compactions[0]!.summary, '## Goal\nX');
+});
+
+test('implicit goal: never paused, /cl-goal words with no goal are an objective, a restart closes a left-over one', async t => {
+  const root = tmp(t);
+  const fleet = { stop: () => {}, release: () => {}, get: () => undefined } as unknown as Fleet;
+  const f = fakePi();
+  let orphans = 0;
+  const goals = installGoals(f.pi as never, { root: () => root, fleet, collect: () => {}, closeOrphans: () => { orphans++; } });
+  f.handlers.get('session_start')!({}, f.ctx);
+  f.branch.push({ type: 'message', id: 'u1', message: { role: 'user', content: 'look around' } });
+  const id = goals.ensure(f.ctx as never, 'x')!;
+  createAgent(root, agentMeta(root, id)); // running
+  await f.commands.get('cl-goal')!.handler('pause', f.ctx);
+  assert.equal(listGoals(root, 'sess-1')[0]!.status, 'active');
+  assert.match(f.notices.at(-1)!, /일시 중지하지 않습니다/);
+  const blocked = await f.tools.get('goal_update')!.execute('id', { status: 'blocked', outcome: 'x' }, undefined, undefined, f.ctx);
+  assert.match(blocked.content[0]!.text, /does not pause/);
+  assert.equal(listGoals(root, 'sess-1')[0]!.status, 'active');
+  assert.match((await f.tools.get('goal_get')!.execute('id', {}, undefined, undefined, f.ctx)).content[0]!.text, /: 실행 중/);
+  // a new Pi on the same session: the left-over implicit goal is closed, orphans recorded first
+  const g = fakePi();
+  const again = installGoals(g.pi as never, { root: () => root, fleet, collect: () => {}, closeOrphans: () => { orphans++; } });
+  g.handlers.get('session_start')!({}, g.ctx);
+  assert.equal(orphans, 1);
+  assert.equal(again.linkId(), null);
+  assert.notEqual(listGoals(root, 'sess-1')[0]!.status, 'active');
+  // no goal open: "done the migration" is an objective, not the done command
+  await g.commands.get('cl-goal')!.handler('done the migration', g.ctx);
+  assert.equal(listGoals(root, 'sess-1').find(x => !x.implicit)!.objective, 'done the migration');
+});
+
+test('implicit goal: all of its subagents failed to start -> abandoned, not done', t => {
+  const root = tmp(t);
+  const fleet = { stop: () => {}, release: () => {} } as unknown as Fleet;
+  const f = fakePi();
+  const goals = installGoals(f.pi as never, { root: () => root, fleet, collect: () => {} });
+  f.handlers.get('session_start')!({}, f.ctx);
+  const id = goals.ensure(f.ctx as never, 'x')!;
+  const a = createAgent(root, agentMeta(root, id));
+  writeResult(a.dir, { status: 'error', summary: '', usage: { turns: 0, tokens: 0, ms: 0 }, endedAt: 0 });
+  f.run();
+  assert.equal(listGoals(root, 'sess-1')[0]!.status, 'abandoned');
+});
+
+test('viewer: one goal with agents of two requests shows a sub-heading per request', () => {
+  const now = Date.now();
+  const g = { id: 'g-1', session: 'sess-1', objective: 'first', implicit: true, status: 'active', continuations: 0, usage: { turns: 0, tokens: 0 }, createdAt: now, updatedAt: now } as Goal;
+  const r = (id: string, req: string) => ({ dir: id, meta: { ...agentMeta('/', 'g-1'), id, request: { id: req, text: `ask ${req}` } } as unknown as AgentMeta });
+  const items = listItems([r('scout-1', 'u1'), r('scout-2', 'u2')], [g], () => false);
+  assert.deepEqual(items.map(i => i.kind === 'request' ? `req:${i.text}` : i.kind === 'agent' ? i.record.meta.id : 'goal'), ['goal', 'req:ask u1', 'scout-1', 'req:ask u2', 'scout-2']);
 });

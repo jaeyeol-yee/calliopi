@@ -19,6 +19,12 @@ test('summary input: only what came after the last delegation summary or compact
   assert.equal(summaryInput([{ type: 'custom', id: 'x', customType: 'other', data: {} }, msg('f', 'g')]).previous, undefined);
 });
 
+test('summary input: messages that came while a summary was made are in the next one', () => {
+  const m = (id: string, text: string) => ({ type: 'message', id, message: { role: 'user', content: text } });
+  const entries = [m('a', 'one'), m('b', 'during'), { type: 'custom', id: 's', customType: SUMMARY_ENTRY, data: { summary: 'S', upTo: 'a' } }, m('c', 'after')];
+  assert.deepEqual(summaryInput(entries).messages, [{ role: 'user', content: 'during' }, { role: 'user', content: 'after' }]);
+});
+
 test('briefing: each role gets the sections it needs; writers also get Progress', () => {
   assert.deepEqual(sectionsFor({ tools: ['read', 'bash'], disallowedTools: [] }), ['Goal', 'Constraints & Preferences', 'Key Decisions', 'Critical Context']);
   assert.deepEqual(sectionsFor({ tools: undefined, disallowedTools: ['edit', 'write'] }), ['Goal', 'Constraints & Preferences', 'Key Decisions', 'Critical Context']);

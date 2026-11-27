@@ -102,7 +102,7 @@ test('top Pi delegates: background by default wakes the model when a child ends;
   const second = agents().find(r => r.meta.id === 'scout-1')!;
   assert.equal(second.result!.status, 'done');
   assert.equal(agents().find(r => r.meta.id === 'scout-2')!.result!.status, 'done'); // started together with scout-1
-  assert.deepEqual(second.meta.tools.sort(), ['bash', 'find', 'grep', 'ls', 'read']);
+  assert.deepEqual(second.meta.tools.sort(), ['bash', 'read']); // the role's tools the top Pi has active (its default read, bash, edit, write)
   const header = sessionOf(second)[0];
   assert.match(header.parentSession, new RegExp(`${second.meta.root}\\.jsonl$`)); // the child's session names the top Pi's
   const topSession = () => fs.readFileSync(header.parentSession, 'utf8');
