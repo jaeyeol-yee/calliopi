@@ -1,0 +1,15 @@
+# Checks the runner, oracle and report with the scripted faux/bench model: no API key, no cost.
+version: 1
+prompt: Make `node --test` pass.
+scope: [src/greet.js]
+oracle:
+  - command: node --test
+  - unchanged: [test/greet.test.js]
+faux:
+  - tool: edit
+    args:
+      path: src/greet.js
+      edits:
+        - oldText: "return 'Hello, ';"
+          newText: "return `Hello, ${name}`;"
+  - text: "Fixed greet."

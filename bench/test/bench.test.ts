@@ -1,0 +1,105 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { CATALOG, loadPi, versionAtLeast } from '../lib/catalog.ts';
+import { cells, formatReport, lineages, saturation, thresholds } from '../lib/report.ts';
+import type { RunRecord } from '../lib/run.ts';
+import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
+import { loadTasks, runOracle, snapshot } from '../lib/task.ts';
+
+test('every catalog model exists in the installed Pi, with its lineage orders distinct', async () => {
+  const pi = await loadPi();
+  const missing = CATALOG.filter(c => (!c.minPi || versionAtLeast(pi.version, c.minPi)) && !pi.get(c.id)).map(c => c.id);
+  assert.deepEqual(missing, [], `Pi ${pi.version} (${pi.source}) lacks these catalog models`);
+  const keys = CATALOG.map(c => `${c.lineage}:${c.order}`);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(pi.get('anthropic/claude-opus-5-5')!.efforts.includes('medium'));
+});
+
+test('spec: effort lists expand, replicates need labels, harness and efforts are checked', async () => {
+  const spec = parseSpec(`name: t\nruns: 2\narms:\n  - { model: anthropic/claude-opus-5-5, effort: [low, high] }\n  - { model: anthropic/claude-opus-5-5, effort: low, label: rep }\n  - { model: anthropic/claude-fable-5-2, effort: off, harness: off }\n`);
+  assert.deepEqual(spec.arms.map(a => [a.id, a.effort, a.harness]), [['claude-opus-5-5@low', 'low', 'on'], ['claude-opus-5-5@high', 'high', 'on'], ['rep', 'low', 'on'], ['claude-fable-5-2@off-bare', 'off', 'off']]);
+  assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, effort: medium }\n  - { model: a/b, effort: medium }\n`), /appears twice/);
+  assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, effort: huge }\n`), /unknown effort/);
+  assert.throws(() => parseSpec(`name: t\narms: []\n`), /non-empty/);
+  const tasks = loadTasks();
+  const problems = checkSpec(spec, await loadPi(), tasks);
+  assert.deepEqual(problems, ['claude-fable-5-2@off-bare: anthropic/claude-fable-5-2 does not accept effort off (minimal, low, medium, high, xhigh, max)']);
+  const runs = plan(spec, tasks);
+  assert.equal(runs.length, 2 * 4 * 4); // runs × non-smoke tasks × arms
+  assert.equal(runs[0]!.rep, 1); assert.equal(runs.at(-1)!.rep, 2);
+});
+
+test('the shipped specs parse and check clean', async () => {
+  const pi = await loadPi(), tasks = loadTasks();
+  for (const f of fs.readdirSync(path.join(import.meta.dirname, '..', 'specs')))
+    assert.deepEqual(checkSpec(parseSpec(fs.readFileSync(path.join(import.meta.dirname, '..', 'specs', f), 'utf8')), pi, tasks), [], f);
+});
+
+// Every task: doing nothing fails its oracle, the reference solution passes it.
+const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: string }> = {
+  'search/find-default': { answer: 'The default is requestTimeoutMs.\nsrc/config/defaults.js:5' },
+  'small-fix/off-by-one': { edits: [['src/range.js', 'i < end', 'i <= end']], answer: 'Fixed.' },
+  'multi-file/rename-option': {
+    edits: [['src/logger.js', 'options.verbose', 'options.debug'], ['src/server.js', '{ verbose: config.verbose }', '{ debug: config.debug }'], ['src/cli.js', "{ verbose: argv.includes('--verbose')", "{ debug: argv.includes('--debug')"], ['src/cli.js', '--verbose', '--debug']],
+    answer: 'Renamed.',
+  },
+  'review/spot-bug': { answer: 'The 5 euro discount uses > instead of >= 100 euros.\nline 6' },
+  'smoke/faux-fix': { edits: [['src/greet.js', "return 'Hello, ';", 'return `Hello, ${name}`;']], answer: 'ok' },
+};
+
+test('each task: a no-op fails its oracle and the reference solution passes it', () => {
+  for (const task of loadTasks()) {
+    const solution = SOLUTIONS[task.id];
+    assert.ok(solution, `${task.id} has no reference solution in this test`);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-oracle-'));
+    try {
+      fs.cpSync(task.fixture, dir, { recursive: true });
+      const before = snapshot(dir);
+      assert.ok(runOracle(task, dir, 'I looked at it.', before).some(c => !c.pass), `${task.id}: a no-op passes`);
+      for (const [file, from, to] of solution.edits ?? []) {
+        const p = path.join(dir, file), text = fs.readFileSync(p, 'utf8');
+        assert.ok(text.includes(from), `${task.id}: ${file} lacks ${from}`);
+        fs.writeFileSync(p, text.replace(from, to));
+      }
+      const checks = runOracle(task, dir, solution.answer, before);
+      assert.ok(checks.every(c => c.pass), `${task.id}: ${JSON.stringify(checks.filter(c => !c.pass))}`);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+const rec = (arm: string, model: string, effort: string, taskClass: string, rep: number, pass: boolean, cost: number, harness: 'on' | 'off' = 'on'): RunRecord => ({
+  spec: 's', arm, model, effort, harness, task: `${taskClass}/x`, taskClass, taskVersion: 1, rep, piVersion: '1.6.0', harnessSha: 'abc', at: '', ms: 1,
+  exit: 0, timedOut: false, pass, checks: [], changed: [], outOfScope: [], answer: '',
+  signals: { turns: 2, toolCalls: {}, toolErrors: 0, parallelCalls: 1, input: 10, output: 5, cacheRead: 30, cacheWrite: 10, cost },
+});
+
+test('report: worst–best repetition, threshold, saturation and lineage deltas', () => {
+  const records = [
+    // a cheap model that passes once of two reps, a dearer one that always passes
+    rec('sonnet@medium', 'anthropic/claude-sonnet-5-5', 'medium', 'small-fix', 1, true, 0.1),
+    rec('sonnet@medium', 'anthropic/claude-sonnet-5-5', 'medium', 'small-fix', 2, false, 0.1),
+    rec('opus@low', 'anthropic/claude-opus-5-5', 'low', 'small-fix', 1, true, 0.2),
+    rec('opus@low', 'anthropic/claude-opus-5-5', 'low', 'small-fix', 2, true, 0.2),
+    rec('opus@high', 'anthropic/claude-opus-5-5', 'high', 'small-fix', 1, true, 0.5),
+    rec('opus@high', 'anthropic/claude-opus-5-5', 'high', 'small-fix', 2, true, 0.5),
+    rec('opus5@low', 'anthropic/claude-opus-5', 'low', 'small-fix', 1, true, 0.3),
+    rec('opus5@low', 'anthropic/claude-opus-5', 'low', 'small-fix', 2, false, 0.3),
+    rec('bare', 'anthropic/claude-sonnet-5-5', 'low', 'small-fix', 1, true, 0.01, 'off'),
+  ];
+  const cs = cells(records);
+  const sonnet = cs.find(c => c.arm === 'sonnet@medium')!;
+  assert.deepEqual([sonnet.passes, sonnet.runs, sonnet.min, sonnet.max], [1, 2, 0, 1]);
+  assert.equal(sonnet.cacheHit, 30 / 50);
+  assert.equal(thresholds(cs, 0.9).get('small-fix')!.arm, 'opus@low'); // the bare arm is cheaper but harness off
+  assert.deepEqual(saturation(cs), [{ taskClass: 'small-fix', model: 'anthropic/claude-opus-5-5', effort: 'low', rate: 1 }]);
+  const opus = lineages(cs).find(l => l.lineage === 'claude-opus' && l.effort === 'low')!;
+  assert.deepEqual(opus.versions.map(v => [v.model, v.rate, v.delta]), [['anthropic/claude-opus-5', 0.5, undefined], ['anthropic/claude-opus-5-5', 1, 0.5]]);
+  const text = formatReport(records, 0.9);
+  assert.match(text, /Pi 1\.6\.0 · harness abc · tasks small-fix\/x@v1/);
+  assert.match(text, /- small-fix: opus@low at \$0\.20\/run/);
+  assert.match(text, /claude-opus-5 50% → claude-opus-5-5 100% \(\+50pp\)/);
+  assert.equal(formatReport([], 0.9), 'No runs recorded.');
+});

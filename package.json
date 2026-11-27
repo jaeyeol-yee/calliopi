@@ -39,10 +39,12 @@
     "check:imports": "node scripts/check-imports.ts",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "check": "npm run check:imports && npm run typecheck && npm test && npm run demo:test",
+    "check": "npm run check:imports && npm run typecheck && npm test && npm run demo:test && npm run bench:test",
     "demo": "node demo/build.ts",
     "demo:check": "node demo/build.ts --check",
     "demo:test": "tsc -p demo && node --test demo/test/*.test.ts",
-    "signals": "node packages/calliopi-agents/scripts/signals.ts"
+    "signals": "node packages/calliopi-agents/scripts/signals.ts",
+    "bench": "node bench/run.ts",
+    "bench:test": "tsc -p bench && node --test bench/test/*.test.ts"
   }
 }

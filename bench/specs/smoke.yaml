@@ -1,0 +1,8 @@
+# Checks the runner, oracle and report with the scripted faux model: no API key, no cost.
+name: smoke
+runs: 2
+timeoutMinutes: 2
+tasks: [smoke/faux-fix]
+arms:
+  - { model: faux/bench, effort: off }
+  - { model: faux/bench, effort: off, harness: off }

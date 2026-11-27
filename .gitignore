@@ -9,3 +9,6 @@ dist/
 
 # demo/build.ts output (generated tapes)
 demo/.out/
+
+# bench/run.ts output (run records, fixtures copies, reports)
+bench/.out/
