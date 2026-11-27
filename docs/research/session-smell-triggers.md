@@ -2,7 +2,7 @@
 
 2026-11-27 조사. 질문은 "Calliopi가 세션을 진행하면서 이상 신호(red flag, smell)를 감지해 자기개선을 트리거할 수 있는가, 그런 선례가 있는가"다. 판정 기준과 RSI 전반의 경향은 [agent-self-improvement-evidence.md](agent-self-improvement-evidence.md)에 있고, 이 문서는 그중 "무엇이 개선을 시작하게 하는가"만 다룬다. 출처와 읽은 범위는 [부록](#부록-출처와-읽은-범위)에 있다.
 
-3절과 4절은 제안이다. 임계치 숫자를 포함해 저장소 소유자가 확정하기 전까지 결정이 아니다.
+3절과 4절은 제안이다. 임계치 숫자를 포함해 저장소 소유자가 확정하기 전까지 결정이 아니다. 5절은 이 문서와 같은 PR에서 실제로 넣은 것이다.
 
 ## 1. 선례
 
@@ -16,13 +16,24 @@
 | Claude Code `/fewer-permission-prompts` | 수동 | 트랜스크립트에서 반복되는 읽기 전용 호출 | 허용 목록을 제안한다. |
 | OmO Kibitzer | 세션 중 상주 | 세션 이벤트를 받는 읽기 전용 사이드카 모델 | 넛지만 한다. 파일과 메모리를 쓰지 못한다. |
 | OMC `self-improve` 스킬 | 수동 시작 후 자율 루프 | 사용자가 준 벤치마크 점수 | 후보를 만들어 토너먼트로 고른다. 벤치마크 파일은 봉인한다. |
+| Factory Signals | 사후, 하루 한 번 배치 | LLM 판정. 반복 재질문(3회 이상), 거부된 도구 호출, 되돌리기, 컨텍스트에 넣었다 빼기, 오류 이벤트 | 임계치를 넘으면 티켓을 만들고, 에이전트가 수정 PR을 올리고, 사람이 승인한다. |
+| Replit Telescope와 개선 루프 | 사후 | 실패 trace를 요약하고 임베딩해 클러스터로 묶는다 | 에이전트가 가설, 패치, draft PR을 만들고 벤치와 A/B로 잰다. 출시는 사람이 정한다. |
+| Replit decision-time guidance | 세션 중, 매 반복 | 경량 분류기가 궤적을 본다(반복 실패, 순환 편집) | 해당할 때만 짧은 지시를 꼬리에 넣고 기록에 남기지 않는다. 순환이면 다른 모델에게 자문하게 한다. |
+| Claude Code auto memory | 세션 중 | 모델이 사용자의 교정과 선호를 스스로 메모한다 | 다음 세션 시작 때 색인(200줄 또는 25KB까지)을 불러온다. |
+| claude-reflect (플러그인) | 세션 중 | 훅이 교정을 큐에 쌓는다. mod 판은 짧은 프롬프트마다 모델로 판정한다 | 사람이 검토해 CLAUDE.md에 넣는다. |
 
 관찰:
 
 - **감지는 자동이고 반영은 사람이 승인한다.** 확인한 제품 가운데 세션 중에 자기 프롬프트를 고쳐 적용하는 것은 없었다. OMC `self-improve`만 자율 루프인데, 대상이 하네스가 아니라 사용자의 코드이고 판정자는 고정된 벤치마크다.
 - **감지 방식은 둘로 갈린다.** 결정적 규칙(choco-pi)과 LLM 사후 분석(Devin, Claude Code)이다. 세션 중에 LLM이 판정하는 것은 OmO Kibitzer뿐이고, 문서 설명만 확인했다.
 - **가장 흔한 입력은 사용자의 교정이다.** Devin은 채팅 피드백에서 제안을 만들고, Claude Code는 과거 세션을 읽는다. 둘 다 사람이 이미 불편을 표현한 지점에서 출발한다.
-- **효과를 측정해 공개한 곳은 없었다.** 넛지나 제안이 결과를 낫게 했다는 수치를 찾지 못했다. choco-pi는 도입 전 위반 사례를 기록했지만 도입 후 수치는 이력에 없다.
+- **효과 수치를 낸 곳은 사용자 행동을 재고, 고친 뒤 같은 수치를 다시 본 곳이다.** 모두 자사 블로그의 자기 보고이고 방법은 공개되지 않았다.
+  - Factory: 모호한 요청 처리를 바꾼 뒤 재질문 마찰이 48시간 안에 30% 줄었다고 한다. 릴리스와 마찰률을 맞대어 회귀를 잡았고, 이슈의 73%가 자동으로 해결됐다고 한다. 재질문이 이어지면 이탈을 예측한다는 관찰도 있다.
+  - Replit: 같은 문구를 시스템 프롬프트 대신 꼬리에 넣자 루프당 도구 실행이 15% 늘었다. 리마인더는 서너 개부터 효과가 줄거나 음수가 됐다. 개선 루프의 결과는 사례 하나를 정성적으로만 적었다.
+  - Cursor Bugbot: 세션 신호는 아니지만 같은 구조다. 결과 지표(지적한 버그가 머지 시점에 실제로 고쳐졌는가)를 정의한 뒤 실험 40회로 해결률을 52%에서 70% 이상으로 올렸고, 많은 변경이 지표를 떨어뜨렸다고 적었다.
+- **효과 수치가 없는 곳도 많다.** choco-pi는 도입 전 위반 사례를 기록했지만 도입 후 수치는 이력에 없다. Devin, Claude Code의 `/insights`와 auto memory, claude-reflect, OmO에서도 찾지 못했다.
+- **효과가 난 곳의 공통점은 넷이다.** 신호가 사용자 행동이다. 세션의 결과 지표가 있다. 변경과 신호를 버전으로 잇는다. 고치는 대상이 주로 코드다(Factory의 예는 도구 타임아웃 처리와 출력 잘림이었다).
+- **연구에서는 경험을 텍스트로 쌓아 효과를 냈다.** Reflexion(HumanEval 80% → 91%), Agent Workflow Memory(WebArena 상대 성공률 +51.1%), ACE(에이전트 벤치 +10.6%)가 그렇다. 비슷한 과제가 되풀이되고 자동 피드백이 있는 벤치마크에서의 결과다. ACE는 요약을 되풀이해 고쳐 쓰면 세부가 사라진다고 경고한다(context collapse).
 
 ## 2. 설계에 영향을 주는 근거
 
@@ -74,13 +85,13 @@
 
 규모:
 
-- H0는 서브에이전트 쪽에서 일부 충족됐다. 기존 기록에서 reviewer 실행 32회 중 5회가 `finish` 없이 끝났다(약 16%). 최상위 세션은 기록이 없다.
+- H0는 서브에이전트 쪽에서 일부 충족됐다. 기존 기록에서 reviewer 실행 32회 중 5회가 `finish` 없이 끝났다(약 16%). 최상위 세션의 첫 수치는 5절에 있다.
 - H4는 표본이 많이 든다. 발생률 16%를 5%로 낮춘 효과를 유의수준 5%, 검정력 80%로 잡으려면 조건당 약 120회, 8%로 낮춘 효과는 약 260회가 필요하다(두 비율 비교의 정규 근사). 그래서 실사용 기록으로는 큰 효과만 보고, 작은 효과는 신호를 유발하는 과제를 반복 재생해 잰다.
 - H2는 상관이다. 어려운 과제일수록 신호도 많고 결과도 나쁘다. 인과는 H4에서만 확인된다.
 
 ### 후보 감지기
 
-모두 결정적 규칙이다. 처음에는 기록만 하고 모델에게 알리지 않는다.
+모두 결정적 규칙이다. 처음에는 기록만 하고 모델에게 알리지 않는다. 이 표는 조사 시점의 후보이고, 실제로 넣은 것은 5절에 있다.
 
 | 신호 | Pi 이벤트 | 비고 |
 |---|---|---|
@@ -94,15 +105,55 @@
 
 넛지를 붙이게 되면 도구 결과 끝에 붙인다. choco-pi가 쓰는 방식이고, 매 요청마다 위치가 바뀌는 리마인더가 캐시 표시를 가져가던 문제(PR #18)를 피한다. 넛지는 모델이 읽는 텍스트이므로 `prompt` 유형 PR의 근거를 따른다.
 
-## 5. 지금 있는 것과 없는 것
+## 5. 넣은 것과 첫 수치
 
-- 있는 것: 종료 분류(`classifyEnd`의 `unanswered`, `drifted`, `budget_exceeded`, `idle`), 실행별 집계(`npm run signals`: finish 누락, 도구 오류, 계약 밖 호출, 반복, prefix 재작성, 캐시 적중), 편집 권한 없이 제안만 하는 `improver` 역할.
-- 없는 것: 최상위 세션의 신호(지금은 서브에이전트 실행만 본다), 사람의 메모를 남기는 곳, 3일 넘는 보존(`requests.jsonl`은 3일 뒤 지워진다), 신호가 쌓였음을 알려 주는 트리거.
-- 확인하지 않은 것: 표의 Pi 이벤트는 Pi 1.6.0 확장 문서에서 이름만 확인했다. 각 이벤트가 주는 값과 호출 순서는 구현 전에 읽어야 한다.
+이 문서와 같은 PR에서 넣었다. 모두 세기만 하고, 모델이 읽는 텍스트는 바꾸지 않는다.
+
+- **메모**: `/cl-note <한 줄>`. 사람만 쓸 수 있고 모델에게 보내지 않는다(3절의 1, 2단계).
+- **감지기**: 세션 entry를 받는 순수 함수(`@calliopi/core/smells`)다. 세션 중에는 돌지 않고 `npm run signals`가 세션 파일을 읽을 때 계산한다. 조치가 없는 동안에는 세션 파일이 곧 기록이고, 감지기가 생기기 전의 세션도 셀 수 있기 때문이다.
+
+  | smell | 규칙 (run = 사용자 메시지 사이에 에이전트가 한 일) | 누구의 행동 |
+  |---|---|---|
+  | `repeat` | 한 run에서 같은 도구를 같은 인자로 3회 이상 | 에이전트 |
+  | `error-streak` | 한 run에서 도구 오류가 3회 이상 연속 | 에이전트 |
+  | `context-jump` | 한 run의 두 요청 사이에 프롬프트가 30,000토큰 이상 증가 | 에이전트 |
+  | `interrupted` | 사용자가 답변을 중단 | 사용자 |
+  | `restate` | 사용자 메시지가 바로 앞 사용자 메시지와 60% 이상 같음(문자 쌍의 Dice 유사도, 둘 다 20자 이상) | 사용자 |
+  | `backtrack` | 작업을 버리는 git 명령(`restore`, `revert`, `reset --hard`, `checkout --`) | 둘 다 |
+
+- **결과 대리 지표**: 에이전트가 실행한 `git commit`이나 `gh pr create`가 성공했으면 `shipped`, 아니면 마지막 답변이 중단됐으면 `aborted`, 오류였으면 `error`, 그 밖은 `other`.
+- **하네스 버전**: 최상위 세션의 run이 시작될 때 Calliopi 체크아웃의 커밋과 미커밋 변경 여부를 세션에 custom entry(`calliopi-harness`)로 남긴다. 세션 중에 하는 일은 이것 하나다. 리포트는 smell을 결과별, 버전별, 모델별로 나눠 보여 준다.
+
+후보 표에서 넣지 않은 것: 문구로 잡는 사용자 교정(오탐이 많다. `restate`와 `interrupted`가 대신한다), 편집 뒤 검사 없이 종료("검사"를 결정적으로 정의하기 어렵다), 최상위 세션의 prefix 재작성(요청을 기록하지 않는다).
+
+### 첫 수치 (2026-11-27, 이 머신의 최상위 세션 24개)
+
+| smell | 나온 세션 | 비율 | 건수 |
+|---|---|---|---|
+| `repeat` | 0 | 0% | 0 |
+| `error-streak` | 1 | 4% | 1 |
+| `context-jump` | 2 | 8% | 3 |
+| `interrupted` | 13 | 54% | 20 |
+| `restate` | 8 | 33% | 13 |
+| `backtrack` | 4 | 17% | 5 |
+
+결과는 `shipped` 12, `aborted` 3, `other` 9였다. 하네스 버전은 기록이 생기기 전이라 24개 모두 없다.
+
+- 사용자 행동 신호(`interrupted`, `restate`, `backtrack`)가 흔하고 에이전트 쪽 신호는 드물다. 1절의 관찰과 같은 방향이다. `repeat`와 `error-streak`는 H0의 기준(5%)에 못 미친다.
+- H1은 재지 않았다. 걸린 42건 중 하나도 열어서 판정하지 않았다. `restate`에는 같은 메시지를 실수로 두 번 보낸 경우가, `backtrack`에는 의도한 정리가 섞여 있을 수 있다.
+- H2는 이 수로는 말할 수 없다. `shipped` 12개 중 8개에 `interrupted`가 있었으므로, 적어도 "중단이 있으면 결과가 나쁘다"는 단순한 형태는 아니다. `shipped`는 코드 작업이 아닌 세션(조사, 질문)에는 맞지 않는 지표다.
+- 24개는 한 사람의 세션이다. 모델 간 비교나 버전 간 비교를 하기에는 적다.
+
+### 아직 없는 것
+
+- 트리거: 신호가 쌓여도 Calliopi가 먼저 알리지 않는다. `npm run signals`를 돌려야 보인다.
+- 세션 중 넛지: 없다. 넣는다면 Replit의 방식(해당할 때만, 하나만, 꼬리에, 남기지 않고)이 가장 구체적이지만 결과 수치가 공개되지 않았다.
+- 메모를 묶거나 처리했다고 표시하는 기능, 메모와 smell을 잇는 기능.
+- 가지가 있는 세션(`/tree`, `/fork`)은 파일 순서대로 한 줄로 읽는다. 실제 세션 24개에는 가지가 없어 확인하지 못했다.
 
 ## 부록: 출처와 읽은 범위
 
-저장소는 2026-11-27에 얕게 클론해 해당 파일을 읽었다. 논문은 초록만 읽었다.
+저장소는 2026-11-27에 얕게 클론해 해당 파일을 읽었다. 논문은 초록만 읽었다. 회사 블로그의 수치는 그 회사의 자기 보고다.
 
 - choco-pi (`31525ad4`): `packages/choco-pi-hooks/README.md`의 "Skill checks", 커밋 `5c656cb`, `docs/model-guidance-history.md`의 2026-11-23·24 항목. https://github.com/Nebu1eto/choco-pi
 - Devin: https://docs.devin.ai/product-guides/session-insights, https://docs.devin.ai/product-guides/knowledge (Knowledge는 Skills로 옮겨 가는 중이라고 적혀 있다)
@@ -112,5 +163,11 @@
 - METR 실험: https://arxiv.org/abs/2507.09089
 - 컨텍스트 파일 평가: https://arxiv.org/abs/2602.11988
 - Anthropic, 하네스 설계: https://www.anthropic.com/research/harness-design-long-running-apps
-- Calliopi의 기존 수치: [model-guidance-history.md](../model-guidance-history.md)의 2026-11-27 항목
-- Pi 확장 이벤트: `@earendil-works/pi-coding-agent` 1.6.0의 `docs/extensions.md`
+- Factory Signals (2026-01-23): https://factory.com/news/factory-signals
+- Replit: https://frontier.replit.com/decision-time-guidance/ (2026-01-20), https://frontier.replit.com/evaluating-and-improving-agent-at-scale/ (2026-06-23)
+- Cursor Bugbot (2026-01-15): https://cursor.com/blog/building-bugbot
+- Claude Code auto memory: https://code.claude.com/docs/en/memory
+- claude-reflect: https://github.com/BayramAnnakov/claude-reflect (README만 읽었다)
+- 연구(초록만): Reflexion https://arxiv.org/abs/2303.11366, Agent Workflow Memory https://arxiv.org/abs/2409.07429, ACE https://arxiv.org/abs/2510.04618
+- Calliopi의 기존 수치: [model-guidance-history.md](../model-guidance-history.md)의 2026-11-27 항목. 5절의 수치는 `npm run signals`의 출력이다.
+- Pi 확장 이벤트: `@earendil-works/pi-coding-agent` 1.6.0의 `docs/extensions.md`. 실제로 쓴 `agent_start`와 `appendEntry`는 Pi 1.6.0 프로세스에서 동작을 확인했다.
