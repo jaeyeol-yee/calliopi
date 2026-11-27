@@ -1,7 +1,9 @@
 // Reads subagent records on disk into the signals core computes: the role lint for a catalog and
-// per-run counts for every recorded run (or one top-level session's). Used by `npm run signals`.
+// per-run counts for every recorded run (or one top-level session's), and the person's notes. Used by
+// `npm run signals`.
 import fs from 'node:fs';
 import path from 'node:path';
+import { formatNotes, type Note } from '@calliopi/core/notes';
 import { FILES, formatSignals, lintRole, listAgents, parseRequests, sessionFile, runSignals, summarizeSignals, type AgentRole, type RunSignals } from '@calliopi/core/agents';
 
 const readLines = (file: string) => {
@@ -18,5 +20,6 @@ export function collectRuns(root: string, topSession?: string): RunSignals[] {
   });
 }
 
-export const signalsReport = (roles: Iterable<AgentRole>, runs: RunSignals[]) =>
-  formatSignals(summarizeSignals(runs), [...roles].flatMap(lintRole));
+/** `notes`: the person's /cl-note lines, shown after the run counts; omitted when not given. */
+export const signalsReport = (roles: Iterable<AgentRole>, runs: RunSignals[], notes?: Note[]) =>
+  [formatSignals(summarizeSignals(runs), [...roles].flatMap(lintRole)), ...(notes ? [formatNotes(notes)] : [])].join('\n\n');

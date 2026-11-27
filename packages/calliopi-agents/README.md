@@ -62,6 +62,22 @@ goal을 만들 때, 닫을 때, 서브에이전트를 띄울 때 오래된 기�
 - 기간: `<Pi agent dir>/calliopi-agents.json` — `{ "retention": { "requestsDays": 3, "recordsDays": 14 } }`.
 - 메모리: 끝난 서브에이전트의 화면은 goal이 닫힐 때 해제됩니다(그 뒤로는 기록으로 보여 줌).
 
+## `/cl-note`: 세션 메모
+
+에이전트가 헛돌았거나 직접 교정해야 했을 때 한 줄을 남깁니다. 무엇을 고칠지 나중에 정하는 사람을 위한 기록이고, 모델에게는 보내지 않습니다(턴을 시작하지 않고, 대화 컨텍스트에도 들어가지 않습니다).
+
+```text
+/cl-note 편집할 때마다 전체 테스트를 다시 돌림
+/cl-note                 최근 메모 5개
+```
+
+- **저장**: `<Pi agent dir>/calliopi-notes.jsonl`에 한 줄에 하나씩 덧붙입니다(0600). 시각, 메모, 세션 id와 세션 파일, 작업 디렉터리, 그때의 모델을 함께 남깁니다. 여러 줄을 붙여 넣어도 한 줄로 합칩니다.
+- **세션 표시**: 같은 메모를 세션에 custom entry(`calliopi-note`)로도 남겨, 세션 파일에서 메모한 지점을 찾을 수 있습니다. Pi의 custom entry는 모델 컨텍스트에 들어가지 않습니다.
+- **모아 보기**: `npm run signals`가 실행 집계 뒤에 `## Notes`로 최근 50개를 보여 줍니다(`--session <id>`면 그 세션의 메모만).
+- 최상위 Pi에만 있습니다. 서브에이전트(자식 Pi)에는 등록하지 않습니다.
+- 메모는 자동으로 지우지 않습니다(GC 대상이 아님). 지우려면 파일을 직접 편집합니다.
+- 메모를 고르고 묶고 처리 표시하는 기능은 없습니다. 사람이 읽고 정합니다.
+
 ## `/cl-agents`: 목록과 화면
 
 ```text
@@ -123,9 +139,11 @@ lib/fleet.ts           자식들의 pseudo-terminal: 시작, 중지, 결과 없�
 lib/viewer.ts          /cl-agents: goal별 목록(tree), 오른쪽 표, 실제 화면 붙이기(ctrl+]로 떼기)
 lib/goals.ts           Active Goal: 도구, /cl-goal, 목적 고정, 자동 계속과 안전장치, 닫을 때 정리
 lib/gc.ts              보존 기간에 따른 기록 정리
+lib/notes.ts           /cl-note: 세션 메모 쓰기와 최근 메모 보기
+lib/signals.ts         npm run signals: 역할 lint, 실행 집계, 메모
 lib/export.ts          goal 내보내기(JSON)
 ```
 
 ## 테스트
 
-`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다.
+`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다. `/cl-note`는 Pi 대역(stand-in)으로 handler를 호출해 파일, 세션 entry, 알림을 확인하고 모델로 보낸 것이 없는지 봅니다.
