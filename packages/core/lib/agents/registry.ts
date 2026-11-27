@@ -86,6 +86,16 @@ export function readAgent(dir: string): AgentRecord | undefined {
   return { dir, meta, status: readJson<AgentStatus>(path.join(dir, FILES.status)), result: readJson<AgentResult>(path.join(dir, FILES.result)) };
 }
 
+/** The child's Pi session file. Pi names it `<time>_<session id>.jsonl` in the agent's directory, so
+ *  `meta.session` (the name written before the child started) is only a fallback. */
+export function sessionFile(record: AgentRecord): string {
+  try {
+    const found = fs.readdirSync(record.dir).filter(n => n.endsWith(`_${record.meta.id}.jsonl`)).sort().at(-1);
+    if (found) return path.join(record.dir, found);
+  } catch { /* gone */ }
+  return record.meta.session;
+}
+
 /** Every agent of one tree, oldest first. */
 export function listAgents(root: string, topSession: string): AgentRecord[] {
   const base = treeDir(root, topSession);

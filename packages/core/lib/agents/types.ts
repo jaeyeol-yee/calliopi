@@ -95,7 +95,7 @@ export interface AgentMeta {
   cwd: string;
   createdAt: number;
   call: AgentCall;
-  /** The child's Pi session file. */
+  /** Where the child's Pi session was expected; read it through sessionFile(), which finds the file Pi wrote. */
   session: string;
   /** Unused since children run in the parent's pseudo-terminals (always null); kept for old records. */
   pane: PaneLocation | null;
