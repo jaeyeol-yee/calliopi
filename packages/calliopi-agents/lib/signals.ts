@@ -3,6 +3,7 @@
 // and the person's notes. Used by `npm run signals`.
 import fs from 'node:fs';
 import path from 'node:path';
+import { formatDebriefs, type Debrief } from '@calliopi/core/debrief';
 import { formatNotes, type Note } from '@calliopi/core/notes';
 import { formatSmells, sessionInfo, sessionSmells, type SessionSmells } from '@calliopi/core/smells';
 import { FILES, formatSignals, lintRole, listAgents, parseRequests, sessionFile, runSignals, summarizeSignals, type AgentRole, type RunSignals } from '@calliopi/core/agents';
@@ -47,6 +48,6 @@ export function collectSessions(sessionsDir: string, opts: { sinceMs?: number; s
   return out.sort((a, b) => a.info.startedAt - b.info.startedAt);
 }
 
-/** After the run counts: `sessions`, the smells of top-level sessions, then `notes`, the person's /cl-note lines. Each is omitted when not given. */
-export const signalsReport = (roles: Iterable<AgentRole>, runs: RunSignals[], notes?: Note[], sessions?: SessionSmells[]) =>
-  [formatSignals(summarizeSignals(runs), [...roles].flatMap(lintRole)), ...(sessions ? [formatSmells(sessions)] : []), ...(notes ? [formatNotes(notes)] : [])].join('\n\n');
+/** After the run counts: `sessions`, the smells of top-level sessions; `debriefs`, the background reviews; `notes`, the person's /cl-note lines. Each is omitted when not given. */
+export const signalsReport = (roles: Iterable<AgentRole>, runs: RunSignals[], notes?: Note[], sessions?: SessionSmells[], debriefs?: Debrief[]) =>
+  [formatSignals(summarizeSignals(runs), [...roles].flatMap(lintRole)), ...(sessions ? [formatSmells(sessions)] : []), ...(debriefs ? [formatDebriefs(debriefs)] : []), ...(notes ? [formatNotes(notes)] : [])].join('\n\n');

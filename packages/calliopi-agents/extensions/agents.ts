@@ -13,6 +13,7 @@ import { AGENT_DIR_ENV } from '#lib/launch.ts';
 import { brief } from '#lib/briefing.ts';
 import { writeGoalExport } from '#lib/export.ts';
 import { collect, retention } from '#lib/gc.ts';
+import { DEBRIEF_ENV, installDebrief } from '#lib/debrief.ts';
 import { installGoals, type Goals } from '#lib/goals.ts';
 import { installHarnessStamp } from '#lib/harness.ts';
 import { installNotes } from '#lib/notes.ts';
@@ -27,6 +28,9 @@ export function isChildOf(dir: string, argv = process.argv): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
+  // A Pi started to review a finished session (lib/debrief.ts) is no agent of ours: no tools, no goal,
+  // no records, and above all no review of its own.
+  if (process.env[DEBRIEF_ENV]) return;
   const cwd = process.cwd();
   const root = () => registryRoot(getAgentDir());
   /** Aged records go: request logs, then whole records, after their goal closes (lib/gc.ts). */
@@ -58,6 +62,7 @@ export default function (pi: ExtensionAPI) {
     viewer(fleet, id => id);
     installNotes(pi, { file: () => notesFile(getAgentDir()) }); // the person's notes: the top Pi only
     installHarnessStamp(pi); // which Calliopi commit a top-level session ran under, for npm run signals
+    installDebrief(pi, { agentDir: getAgentDir }); // off unless turned on: a background review of a session that ended with a smell
     return;
   }
 

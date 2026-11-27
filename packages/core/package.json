@@ -23,6 +23,7 @@
     "./agents": "./lib/agents/index.ts",
     "./notes": "./lib/notes.ts",
     "./smells": "./lib/smells.ts",
+    "./debrief": "./lib/debrief.ts",
     "./web": "./lib/web/index.ts",
     "./package.json": "./package.json"
   },

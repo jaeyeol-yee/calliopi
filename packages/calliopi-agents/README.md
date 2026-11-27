@@ -114,6 +114,32 @@ npm run signals -- --session <id>  # 한 세션
   - `/tree`·`/fork`로 가지가 있는 세션은 파일 순서대로 한 줄로 읽습니다.
   - 모델 요청 자체는 최상위 세션에 기록되지 않으므로 prefix 재작성은 여기서 세지 않습니다.
 
+## `/cl-debrief`: 세션이 끝난 뒤의 분석
+
+대화형 세션이 smell과 함께 끝나면, 별도의 Pi가 백그라운드에서 걸린 지점을 읽고 "실제 문제였는가, 원인은 어디로 보이는가"를 적어 둡니다. **기본은 꺼져 있습니다.** 실행할 때마다 모델 호출이 한 번 들고, 세션의 발췌가 그 모델로 전송되기 때문입니다.
+
+```text
+/cl-debrief on                  켜기 (그 세션의 모델로 분석)
+/cl-debrief on openai/gpt-x     켜기, 분석 모델 지정
+/cl-debrief off                 끄기
+/cl-debrief status              켜짐 여부, 모델, 건수
+/cl-debrief                     아직 안 본 결과 하나 보기
+```
+
+- **언제**: Pi를 종료하거나 `/new`, `/resume`으로 세션을 떠날 때. `/reload`와 `/fork`는 세션이 이어지므로 제외합니다. `pi -p`나 rpc처럼 대화형이 아닌 실행, 저장되지 않는 세션, smell이 없는 세션에서는 아무것도 띄우지 않습니다. 같은 세션은 그 뒤로 더 길어졌을 때만 다시 분석합니다.
+- **무엇을 보내나**: 걸린 지점마다 앞뒤 3개 entry를 각 400자까지 자른 발췌와 감지기의 설명입니다(최대 8지점). 세션 파일 전체를 보내지 않습니다. 보낸 내용은 `<세션 id>.prompt.md`에 그대로 남습니다.
+- **어떻게 도나**: `pi -p --no-session --no-tools`를 부모와 분리된 프로세스로 띄웁니다. 도구가 없어 파일을 읽거나 고칠 수 없고, 세션을 남기지 않습니다. 부모 Pi가 종료돼도 계속 돌고, 답을 쓰면 스스로 끝납니다. 시간 제한(기본 5분)을 넘으면 중지됩니다. 아무도 기다리지 않습니다.
+- **다시 띄우지 않음**: 분석용 Pi에는 `CALLIOPI_DEBRIEF=1`이 설정되고, 이 확장은 그 안에서 아무것도 등록하지 않습니다(도구, goal, 메모, 또 다른 분석 모두 없음).
+- **결과**: `<Pi agent dir>/calliopi-debriefs/`(0700)에 세션별로 기록(`.json`), 보낸 내용(`.prompt.md`), 답(`.md`), 종료 상태(`.exit`), stderr(`.md.log`)가 남습니다. 다음에 Pi를 시작하면 "지난 세션 debrief N건"을 알리고, `/cl-debrief`로 하나씩 봅니다. `npm run signals`에는 `## Debriefs`로 상태별 건수와 최근 결과의 요약 줄이 나옵니다. 알림과 결과는 사람에게만 보이고 모델 컨텍스트에 들어가지 않습니다.
+- **모델**: 지정하지 않으면 세션을 돌린 모델이 자기 세션을 읽습니다. 모델은 자기 작업을 관대하게 보는 경향이 있으므로 다른 계열의 모델을 지정하는 편이 낫습니다.
+- **설정**: `<Pi agent dir>/calliopi-agents.json` — `{ "debrief": { "enabled": true, "model": "provider/id", "timeoutMinutes": 5 } }`.
+- **한계**:
+  - 결과는 모델이 발췌를 읽고 쓴 의견입니다. 측정이 아니고, 맞는지 확인된 적이 없습니다.
+  - 발췌는 짧습니다. 판단에 부족하면 "cannot tell"이라고 쓰게 했습니다.
+  - 결과 파일은 자동으로 지우지 않습니다.
+  - 종료 순간 `sh`가 없거나 Pi가 강제로 죽으면 분석이 시작되지 않거나 `결과 없음`으로 남습니다.
+  - macOS와 Linux의 `sh`를 전제로 합니다.
+
 ## `/cl-agents`: 목록과 화면
 
 ```text
@@ -177,10 +203,11 @@ lib/goals.ts           Active Goal: 도구, /cl-goal, 목적 고정, 자동 계�
 lib/gc.ts              보존 기간에 따른 기록 정리
 lib/notes.ts           /cl-note: 세션 메모 쓰기와 최근 메모 보기
 lib/harness.ts         하네스 버전(커밋, dirty)을 세션에 남기기
+lib/debrief.ts         /cl-debrief: 세션이 끝난 뒤 분리된 Pi로 걸린 지점 분석, 결과 알림
 lib/signals.ts         npm run signals: 역할 lint, 실행 집계, 최상위 세션 smell, 메모
 lib/export.ts          goal 내보내기(JSON)
 ```
 
 ## 테스트
 
-`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다. `/cl-note`는 Pi 대역(stand-in)으로 handler를 호출해 파일, 세션 entry, 알림을 확인하고 모델로 보낸 것이 없는지 봅니다. 하네스 버전 기록도 같은 방식으로 확인하고, 버전 읽기는 임시 git 저장소에서 확인합니다.
+`npm test -w @calliopi/calliopi-agents`. 테스트 프로세스의 pseudo-terminal에 최상위 Pi와 자식 Pi를 demo의 faux 모델로 띄워(자식의 답은 `DEMO_CHILD_SCENARIO`) foreground 결과 반환, background 깨우기, `/cl-agents`(목록 → 화면 → 목록 → 닫기), goal(`/cl-goal` → 자동 시작 → 링크된 서브에이전트 → `goal_update done` → 더 이어 하지 않음), 세션 헤더의 `parentSession`, 위임 시점 요약(faux `completions`)과 잘린 배경이 과제보다 먼저 오는지, 그리고 배경 → 과제 순서, `finish`, inbox `stop`, 상기 후 `unanswered`를 확인합니다. faux 모델은 provider 요청(payload)을 만들지 않으므로 요청 기록은 handler를 직접 호출해 확인합니다. `/cl-note`는 Pi 대역(stand-in)으로 handler를 호출해 파일, 세션 entry, 알림을 확인하고 모델로 보낸 것이 없는지 봅니다. 하네스 버전 기록도 같은 방식으로 확인하고, 버전 읽기는 임시 git 저장소에서 확인합니다. debrief는 pseudo-terminal의 실제 Pi에 같은 메시지를 두 번 입력하고 종료한 뒤, 분리된 분석 Pi가 결과 파일을 쓰고 끝나는지, 그 Pi가 세션·분석·에이전트 기록을 남기지 않는지, 꺼져 있거나 smell이 없으면 아무것도 생기지 않는지 확인합니다. 시간 제한은 `pi` 자리에 셸 스크립트를 넣어 확인합니다.
