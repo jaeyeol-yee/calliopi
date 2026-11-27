@@ -5,6 +5,7 @@
 - Target models:
 - Smoke run on those models, or the provider doc that justifies it:
 - Cost and cache impact:
+- [ ] Entry appended to docs/model-guidance-history.md
 
 ## AI
 - Agent and model used:

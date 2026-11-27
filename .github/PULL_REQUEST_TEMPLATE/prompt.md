@@ -9,6 +9,7 @@ Criteria: docs/research/agent-self-improvement-evidence.md -->
 - Results: before/after per model, tokens and turns, prefix rewrites
 - Regressions and no-effect cases / What it is NOT:
 - Repro script: <!-- no script, no numbers -->
+- [ ] Entry appended to docs/model-guidance-history.md
 
 ## AI
 - Agent and model used:
