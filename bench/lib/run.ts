@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { listAgents, sessionFile, treeDir } from '@calliopi/core/agents';
 import { isFaux, type PlannedRun } from './spec.ts';
 import { changedFiles, runOracle, snapshot, type CheckResult } from './task.ts';
 
@@ -20,6 +21,15 @@ export interface RunSignals {
   /** Dollars, as Pi priced each response. */
   cost: number;
   stopReason?: string;
+}
+
+/** Subagents a run started: their work and cost belong to the run. */
+export interface Children {
+  count: number;
+  cost: number;
+  turns: number;
+  /** End status → count; children cut off when `pi -p` exited show as stopped. */
+  ends: Record<string, number>;
 }
 
 export interface RunRecord {
@@ -43,7 +53,33 @@ export interface RunRecord {
   changed: string[];
   outOfScope: string[];
   signals: RunSignals;
+  children: Children;
   answer: string;
+}
+
+/** What a run cost with its subagents. */
+export const runCost = (r: RunRecord) => r.signals.cost + (r.children?.cost ?? 0);
+
+const agentDir = (env: NodeJS.ProcessEnv) => env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), '.pi', 'agent');
+
+/** The subagents of the run whose Pi session is `session`: counted, then moved from the user's registry into the run's directory. */
+export function collectChildren(session: string | undefined, into: string, env: NodeJS.ProcessEnv = process.env): Children {
+  const out: Children = { count: 0, cost: 0, turns: 0, ends: {} };
+  const id = session && path.basename(session, '.jsonl').split('_').at(-1);
+  if (!id) return out;
+  const tree = treeDir(path.join(agentDir(env), 'calliopi-agents'), id);
+  for (const child of listAgents(path.dirname(tree), path.basename(tree))) {
+    out.count++;
+    const end = child.result?.status ?? child.status?.state ?? 'starting';
+    out.ends[end] = (out.ends[end] ?? 0) + 1;
+    const s = fs.existsSync(sessionFile(child)) ? sessionSignals(sessionFile(child)) : undefined;
+    out.cost += s?.cost ?? 0; out.turns += s?.turns ?? 0;
+  }
+  if (out.count && fs.existsSync(tree)) {
+    fs.cpSync(tree, path.join(into, 'agents'), { recursive: true });
+    fs.rmSync(tree, { recursive: true, force: true });
+  }
+  return out;
 }
 
 export function sessionSignals(file: string | undefined): RunSignals {
@@ -113,7 +149,7 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   const answer = r.stdout ?? '';
   fs.writeFileSync(path.join(dir, 'answer.txt'), answer);
   fs.writeFileSync(path.join(dir, 'stderr.txt'), r.stderr ?? '');
-  const sessionFile = fs.readdirSync(sessions).filter(n => n.endsWith('.jsonl')).map(n => path.join(sessions, n)).at(0);
+  const session = fs.readdirSync(sessions).filter(n => n.endsWith('.jsonl')).map(n => path.join(sessions, n)).at(0);
   const checks = runOracle(task, work, answer, before);
   const changed = changedFiles(before, snapshot(work));
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
@@ -126,6 +162,6 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
     exit: r.status, timedOut, pass: !timedOut && checks.every(c => c.pass), checks, changed,
     outOfScope: task.scope.length ? changed.filter(f => !task.scope.includes(f)) : [],
-    signals: sessionSignals(sessionFile), answer: answer.slice(-2000),
+    signals: sessionSignals(session), children: collectChildren(session, dir, env), answer: answer.slice(-2000),
   };
 }

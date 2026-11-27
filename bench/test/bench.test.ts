@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { CATALOG, loadPi, versionAtLeast } from '../lib/catalog.ts';
 import { cells, formatReport, lineages, median, saturation, thresholds } from '../lib/report.ts';
-import type { RunRecord } from '../lib/run.ts';
+import { collectChildren, type RunRecord } from '../lib/run.ts';
+import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
 import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
 import { loadTasks, runOracle, snapshot } from '../lib/task.ts';
 
@@ -88,6 +89,7 @@ const rec = (arm: string, model: string, effort: string, taskClass: string, rep:
   spec: 's', arm, model, effort, harness, task: `${taskClass}/x`, taskClass, taskVersion: 1, rep, piVersion: '1.6.0', harnessSha: 'abc', at: '', ms: 1,
   exit: 0, timedOut: false, pass, checks: [], changed: [], outOfScope: [], answer: '',
   signals: { turns: 2, toolCalls: {}, toolErrors: 0, parallelCalls: 1, input: 10, output: 5, cacheRead: 30, cacheWrite: 10, cost },
+  children: { count: 0, cost: 0, turns: 0, ends: {} },
 });
 
 test('report: worst–best repetition, threshold, saturation and lineage deltas', () => {
@@ -117,4 +119,24 @@ test('report: worst–best repetition, threshold, saturation and lineage deltas'
   assert.match(text, /- small-fix: opus@low at \$0\.20\/run/);
   assert.match(text, /claude-opus-5 50% → claude-opus-5-5 100% \(\+50pp\)/);
   assert.equal(formatReport([], 0.9), 'No runs recorded.');
+});
+
+test('a run\'s subagents are counted with their cost and moved out of the registry', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-children-'));
+  try {
+    const env = { PI_CODING_AGENT_DIR: home };
+    const root = path.join(home, 'calliopi-agents'), top = '01a2-run';
+    const meta = { root: top, parent: null, depth: 1, role: 'reviewer', model: 'm/x', modelSource: 'inherit', tools: [], cwd: '/', createdAt: 1, call: { task: 't' }, pane: null } as never;
+    const a = createAgent(root, meta), b = createAgent(root, meta);
+    writeResult(a.dir, { status: 'done', summary: '', usage: { turns: 1, tokens: 1, ms: 1 }, endedAt: 1 } as never);
+    writeResult(b.dir, { status: 'stopped', summary: '', usage: { turns: 1, tokens: 1, ms: 1 }, endedAt: 1 } as never);
+    fs.writeFileSync(path.join(a.dir, `2026_${a.meta.id}.jsonl`), JSON.stringify({ type: 'message', message: { role: 'assistant', content: [], usage: { cost: { total: 0.25 } } } }) + '\n');
+    const into = path.join(home, 'run');
+    fs.mkdirSync(into);
+    const children = collectChildren(path.join(home, `2026-11-27T00_${top}.jsonl`), into, env);
+    assert.deepEqual(children, { count: 2, cost: 0.25, turns: 1, ends: { done: 1, stopped: 1 } });
+    assert.ok(!fs.existsSync(treeDir(root, top)));
+    assert.ok(fs.existsSync(path.join(into, 'agents', a.meta.id, 'result.json')));
+    assert.deepEqual(collectChildren(undefined, into, env), { count: 0, cost: 0, turns: 0, ends: {} });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

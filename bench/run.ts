@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadPi } from './lib/catalog.ts';
 import { formatReport } from './lib/report.ts';
-import { ROOT, runOne, type PiBinary, type RunRecord } from './lib/run.ts';
+import { ROOT, runCost, runOne, type PiBinary, type RunRecord } from './lib/run.ts';
 import { checkSpec, isFaux, parseSpec, plan } from './lib/spec.ts';
 import { loadTasks } from './lib/task.ts';
 
@@ -57,9 +57,9 @@ async function main(argv: string[]) {
   for (const [i, run] of runs.entries()) {
     if (spec.budgetUsd !== undefined && spent >= spec.budgetUsd) { console.log(`budget reached: $${spent.toFixed(2)} of $${spec.budgetUsd}; ${runs.length - i} runs not started`); break; }
     const record = runOne(run, { spec: spec.name, harnessSha, outDir, timeoutMinutes: spec.timeoutMinutes, pi: r => (isFaux(r.arm.model) ? dev : installed) });
-    spent += record.signals.cost;
+    spent += runCost(record);
     fs.appendFileSync(path.join(outDir, 'runs.jsonl'), `${JSON.stringify(record)}\n`);
-    console.log(`[${i + 1}/${runs.length}] ${record.pass ? 'pass' : 'FAIL'} ${run.task.id} · ${run.arm.id} · rep ${run.rep} · ${(record.ms / 1000).toFixed(0)}s · $${record.signals.cost.toFixed(4)}`);
+    console.log(`[${i + 1}/${runs.length}] ${record.pass ? 'pass' : 'FAIL'} ${run.task.id} · ${run.arm.id} · rep ${run.rep} · ${(record.ms / 1000).toFixed(0)}s · $${runCost(record).toFixed(4)}${record.children.count ? ` · ${record.children.count} subagents` : ''}`);
   }
   const report = formatReport(readRecords(outDir), spec.target);
   fs.writeFileSync(path.join(outDir, 'report.md'), `${report}\n`);
