@@ -1,4 +1,4 @@
-version: 2
+version: 3
 prompt: |
   `node --test` fails. Make src/lru.js behave as its comment describes. Do not change the tests.
 scope: [src/lru.js]
@@ -10,3 +10,11 @@ oracle:
   # hidden/ is copied over the work directory after the run; the model never sees it.
   - hidden: node --test test/hidden.test.js
     dimension: hidden
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      required:
+        change: ["recen(t|cy)", "least[- ]recently", "re-?insert", "mov(e|es|ed|ing) [^.\\n]{0,30}(end|back|front|newest)", "refresh", "(insertion|use|usage) order"]
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        per-file-detail: ["\\b(src|test)/[\\w./-]+"]

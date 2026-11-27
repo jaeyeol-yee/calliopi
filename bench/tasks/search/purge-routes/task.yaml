@@ -1,4 +1,4 @@
-version: 1
+version: 2
 tier: hard
 prompt: |
   `purge` in src/audit.js drops audit entries for good. Which of the routes in src/routes.js can end up
@@ -13,3 +13,11 @@ oracle:
     dimension: outcome
   - unchanged: [src/audit.js, src/routes.js, src/maintenance.js, src/retention.js]
     dimension: outcome
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        on-topic: ["purge|routes?\\b"]
+        evidence: ["\\b[\\w/-]+\\.(js|json|md)\\b"]
+        per-route-reason: ["anonymize|/jobs|/sessions|nightly|retention|dropAuditTrail|forget"]

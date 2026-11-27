@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { listAgents, sessionFile, treeDir } from '@calliopi/core/agents';
 import { isFaux, type PlannedRun } from './spec.ts';
-import { runOracle, snapshot, taskGroup, type CheckResult, type Dimension } from './task.ts';
+import { runOracle, snapshot, taskGroup, type CheckResult, type ContentSize, type Dimension } from './task.ts';
 
 export const ROOT = path.resolve(import.meta.dirname, '..', '..');
 const FAUX = path.join(ROOT, 'bench', 'faux-extension.ts');
@@ -59,6 +59,8 @@ export interface RunRecord {
   dimensions?: Partial<Record<Dimension, boolean>>;
   /** Precision on review tasks: cited findings that are no bug. */
   extraFindings?: number;
+  /** The answer's words, and those in blocks the task neither needs nor allows. */
+  content?: ContentSize;
   /** The run ended on a provider error (limit, outage): it says nothing about the model or the task. */
   error?: string;
   checks: CheckResult[];
@@ -201,7 +203,7 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
     ...(arm.harness === 'on' ? { harnessCommit: at?.commit ?? ctx.harnessSha } : {}),
     task: task.id, taskClass: taskGroup(task), taskVersion: task.version, rep,
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
-    exit: r.status, timedOut, pass: !timedOut && grade.pass, dimensions: grade.dimensions, ...(grade.extraFindings !== undefined ? { extraFindings: grade.extraFindings } : {}),
+    exit: r.status, timedOut, pass: !timedOut && grade.pass, dimensions: grade.dimensions, ...(grade.extraFindings !== undefined ? { extraFindings: grade.extraFindings } : {}), ...(grade.content ? { content: grade.content } : {}),
     ...(providerError(signals) ? { error: providerError(signals) } : {}), checks: grade.checks, changed: grade.changed, outOfScope: grade.outOfScope,
     signals, children: collectChildren(session, dir, env), answer: answer.slice(-2000),
   };

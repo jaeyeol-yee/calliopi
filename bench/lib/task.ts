@@ -17,11 +17,14 @@
 //     - citation: [[5, 10], [12]]   # dimension citation: the last line (`line N` / `lines N, M`) names a line of
 //                                   # every bug; cited lines of no bug are counted as extra findings (precision).
 //                                   # []: the file has no bug, and citing any line fails
+//     - content:               # dimension coverage: every `required` item (regexes, as in diagnosis) is in the answer.
+//         required: { cause: ["<=", "off[- ]by[- ]one"] }       # Blocks of the answer (paragraphs, list items) that
+//         allowed: { verification: ["node --test"] }            # carry no required, diagnosis or allowed item are surplus
 //     - hidden: node --test test/hidden.test.js   # dimension hidden: run with the task's hidden/ copied over the work
 //   faux: [...]                # replies for faux/* models (smoke tasks)
 //
-// A run passes (strict pass) when every dimension that applies to its task passes. Extra findings are
-// a count beside that, not a dimension.
+// A run passes (strict pass) when every dimension that applies to its task passes. Extra findings and
+// the surplus share of the answer are numbers beside that, not dimensions.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,7 +34,7 @@ import YAML from 'yaml';
 export const CLASSES = ['search', 'small-fix', 'multi-file', 'review', 'smoke'] as const;
 export type TaskClass = (typeof CLASSES)[number];
 
-export const DIMENSIONS = ['outcome', 'diagnosis', 'citation', 'scope', 'hidden'] as const;
+export const DIMENSIONS = ['outcome', 'diagnosis', 'citation', 'coverage', 'scope', 'hidden'] as const;
 export type Dimension = (typeof DIMENSIONS)[number];
 
 export type Check = (
@@ -43,6 +46,8 @@ export type Check = (
   | { diagnosis: Record<string, string[]> }
   /** Per bug, the lines that count as citing it. */
   | { citation: number[][] }
+  /** What the answer must say (required: fails coverage when missing) and may say (allowed); the rest is surplus. */
+  | { content: { required: Record<string, string[]>; allowed: Record<string, string[]> } }
   /** A command run in a copy of the work directory with the task's hidden/ files laid over it. */
   | { hidden: string }
 ) & { dimension: Dimension };
@@ -97,6 +102,16 @@ export function parseTask(id: string, text: string, fixture: string, hidden?: st
       if (bugs.some(lines => !lines.length || lines.some(n => !Number.isInteger(n) || n < 1))) throw bad('citation needs a list of line numbers per bug');
       return { citation: bugs, ...dim('citation') };
     }
+    if (c.content && typeof c.content === 'object') {
+      const items = (of: unknown, what: string) => {
+        const entries = Object.entries((of ?? {}) as Record<string, unknown>).map(([name, any]) => [name, Array.isArray(any) ? any.map(String) : []] as const);
+        if (entries.some(([, any]) => !any.length)) throw bad(`content.${what} needs a non-empty regex list per item`);
+        for (const [, any] of entries) for (const re of any) new RegExp(re, 'i');
+        return Object.fromEntries(entries);
+      };
+      const content = c.content as Record<string, unknown>;
+      return { content: { required: items(content.required, 'required'), allowed: items(content.allowed, 'allowed') }, ...dim('coverage') };
+    }
     if (typeof c.hidden === 'string') {
       if (!hidden) throw bad('needs a hidden/ directory next to fixture/');
       return { hidden: c.hidden, ...dim('hidden') };
@@ -150,12 +165,20 @@ export interface CheckResult {
   extra?: number;
 }
 
+export interface ContentSize {
+  /** Words in the answer; in its blocks that carry an allowed item but no required one; and in those that carry neither (surplus). The rest are needed. */
+  words: number; allowedWords: number; surplusWords: number;
+  blocks: number; surplusBlocks: number;
+}
+
 export interface Grade {
   checks: CheckResult[];
   /** Pass per dimension, for the dimensions the task has. */
   dimensions: Partial<Record<Dimension, boolean>>;
   /** Precision: findings cited beyond the real bugs. Undefined when the task has no citation check or the citation could not be read. */
   extraFindings?: number;
+  /** The answer's size against what the task needs; for tasks with a content check. */
+  content?: ContentSize;
   changed: string[];
   outOfScope: string[];
   /** Strict pass: every dimension passes. */
@@ -170,6 +193,46 @@ export function citedLines(answer: string): number[] | undefined {
   return m ? [...new Set(m[1]!.match(/\d+/g)!.map(Number))] : undefined;
 }
 
+/** The answer as blocks: paragraphs, with every list item, heading and table row a block of its own. */
+export function answerBlocks(answer: string): string[] {
+  const blocks: string[] = [];
+  let open = false;
+  for (const line of answer.split('\n')) {
+    if (!/[\p{L}\p{N}]/u.test(line)) { open = false; continue; } // blank lines and rules end a block
+    if (open && !/^\s*([-*•]|\d+[.)]|#+|\|)\s?/.test(line)) blocks[blocks.length - 1] += ` ${line.trim()}`;
+    else blocks.push(line.trim());
+    open = true;
+  }
+  return blocks;
+}
+
+/** Words: list markers, table bars and other tokens without a letter or digit do not count. */
+const wordCount = (text: string) => text.split(/\s+/).filter(token => /[\p{L}\p{N}]/u.test(token)).length;
+
+/** How much of the answer is needed: a block is needed when it holds a required item (or is the final answer line), allowed when it holds an allowed one or is an item of a list such a block introduces, surplus otherwise. */
+export function contentSize(answer: string, needed: string[], allowed: string[], finalLine: boolean): ContentSize {
+  const blocks = answerBlocks(answer);
+  if (finalLine && blocks.length) {
+    // the line the prompt asks for is needed even when it shares a paragraph
+    const last = lastLine(answer), at = blocks.length - 1;
+    if (blocks[at] !== last && blocks[at]!.endsWith(last)) blocks.splice(at, 1, blocks[at]!.slice(0, -last.length).trim(), last);
+  }
+  const has = (res: string[], block: string) => res.some(re => new RegExp(re, 'i').test(block));
+  // A list item with no item of its own belongs to the line that introduces the list ("The rest matches the comments:").
+  let lead: 'needed' | 'allowed' | undefined;
+  const words = { needed: 0, allowed: 0, surplus: 0 };
+  let surplusBlocks = 0;
+  for (const [i, block] of blocks.entries()) {
+    const own = (finalLine && i === blocks.length - 1) || has(needed, block) ? 'needed' : has(allowed, block) ? 'allowed' : undefined;
+    const listItem = /^([-*•]|\d+[.)])\s/.test(block);
+    if (!listItem) lead = own && /:(\*\*|__|\*|_)?$/.test(block) ? own : undefined;
+    const kind = own ?? (listItem ? lead : undefined) ?? 'surplus';
+    words[kind] += wordCount(block);
+    if (kind === 'surplus') surplusBlocks++;
+  }
+  return { words: words.needed + words.allowed + words.surplus, allowedWords: words.allowed, surplusWords: words.surplus, blocks: blocks.length, surplusBlocks };
+}
+
 const shell = (command: string, cwd: string): { pass: boolean; detail?: string } => {
   // Without the test runner's context: under `node --test`, a nested `node --test` reports to the parent and exits 0.
   const { NODE_TEST_CONTEXT: _, ...env } = process.env;
@@ -180,7 +243,8 @@ const shell = (command: string, cwd: string): { pass: boolean; detail?: string }
 /** Grades what a run left in `dir` (never written to) and its final answer; `before` is the fixture's snapshot. */
 export function runOracle(task: Task, dir: string, answer: string, before: Map<string, string>): Grade {
   const read = (f: string) => { try { return fs.readFileSync(path.join(dir, f), 'utf8'); } catch { return undefined; } };
-  const checks = task.oracle.map((c): CheckResult => {
+  const checks = task.oracle.flatMap((c): CheckResult[] => [grade(c)].filter(r => r.check));
+  function grade(c: Check): CheckResult {
     const dimension = c.dimension;
     if ('command' in c) return { check: `command: ${c.command}`, dimension, ...shell(c.command, dir) };
     if ('hidden' in c) {
@@ -209,6 +273,11 @@ export function runOracle(task: Task, dir: string, answer: string, before: Map<s
       const extra = cited.filter(n => !c.citation.flat().includes(n));
       return { check, dimension, pass: !missed.length, extra: extra.length, detail: `cited ${cited.join(', ')}${missed.length ? `; no line of ${missed.map(lines => lines.join('|')).join(', ')}` : ''}${extra.length ? `; extra ${extra.join(', ')}` : ''}` };
     }
+    if ('content' in c) {
+      // Without required items the check only measures the answer's size (below); it has no verdict.
+      const missed = Object.entries(c.content.required).filter(([, any]) => !any.some(re => new RegExp(re, 'i').test(answer))).map(([item]) => item);
+      return { check: Object.keys(c.content.required).length ? `content: ${Object.keys(c.content.required).join(', ')}` : '', dimension, pass: !missed.length, ...(missed.length ? { detail: `not in the answer: ${missed.join(', ')}` } : {}) };
+    }
     if ('unchanged' in c) {
       const changed = c.unchanged.filter(f => before.get(f) !== read(f));
       return { check: `unchanged: ${c.unchanged.join(', ')}`, dimension, pass: !changed.length, ...(changed.length ? { detail: `changed: ${changed.join(', ')}` } : {}) };
@@ -219,12 +288,16 @@ export function runOracle(task: Task, dir: string, answer: string, before: Map<s
       && (c.matches === undefined || new RegExp(c.matches, 'm').test(text))
       && (c.absent === undefined || !new RegExp(c.absent, 'm').test(text));
     return { check: `file: ${c.file}`, dimension, pass: ok, ...(ok ? {} : { detail: text === undefined ? 'missing' : 'content does not match' }) };
-  });
+  }
   const changed = changedFiles(before, snapshot(dir));
   const outOfScope = task.scope ? changed.filter(f => !task.scope!.includes(f)) : [];
   if (task.scope) checks.push({ check: `scope: ${task.scope.join(', ') || 'no file may change'}`, dimension: 'scope', pass: !outOfScope.length, ...(outOfScope.length ? { detail: `changed: ${outOfScope.join(', ')}` } : {}) });
   const dimensions: Partial<Record<Dimension, boolean>> = {};
   for (const d of DIMENSIONS) { const of = checks.filter(c => c.dimension === d); if (of.length) dimensions[d] = of.every(c => c.pass); }
   const extras = checks.flatMap(c => (c.extra === undefined ? [] : [c.extra]));
-  return { checks, dimensions, ...(extras.length ? { extraFindings: extras.reduce((a, b) => a + b, 0) } : {}), changed, outOfScope, pass: Object.values(dimensions).every(Boolean) };
+  const content = task.oracle.find(c => 'content' in c);
+  const size = content && 'content' in content ? contentSize(answer,
+    [...Object.values(content.content.required), ...task.oracle.flatMap(c => ('diagnosis' in c ? Object.values(c.diagnosis) : []))].flat(),
+    Object.values(content.content.allowed).flat(), task.oracle.some(c => 'answer' in c || 'citation' in c)) : undefined;
+  return { checks, dimensions, ...(extras.length ? { extraFindings: extras.reduce((a, b) => a + b, 0) } : {}), ...(size ? { content: size } : {}), changed, outOfScope, pass: Object.values(dimensions).every(Boolean) };
 }

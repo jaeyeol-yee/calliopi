@@ -1,4 +1,4 @@
-version: 2
+version: 3
 prompt: |
   How many call sites in src/ call sendEmail directly rather than through notify()? Count each place
   in the code that invokes sendEmail (under any name), not counting notify() itself, comments or strings.
@@ -9,3 +9,14 @@ oracle:
     dimension: outcome
   - unchanged: [src/mail/mailer.js, src/jobs/reminders.js, src/api/signup.js, src/admin/broadcast.js]
     dimension: outcome
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      required:
+        reminders: ["reminders"]
+        signup: ["signup"]
+        broadcast: ["broadcast"]
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        on-topic: ["sendEmail|notify\\(|call sites?|callers?"]
+        evidence: ["\\b[\\w/-]+\\.(js|json|md)\\b"]

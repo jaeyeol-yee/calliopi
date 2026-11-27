@@ -10,7 +10,7 @@ import { collectChildren, type RunRecord } from '../lib/run.ts';
 import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
 import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
 import { createRequire } from 'node:module';
-import { citedLines, loadTasks, parseTask, runOracle, snapshot, taskGroup, type Task } from '../lib/task.ts';
+import { answerBlocks, citedLines, contentSize, loadTasks, parseTask, runOracle, snapshot, taskGroup, type Task } from '../lib/task.ts';
 
 test('every catalog model exists in the installed Pi, with its lineage orders distinct', async () => {
   const pi = await loadPi();
@@ -48,14 +48,14 @@ test('the shipped specs parse and check clean', async () => {
 // Every task: doing nothing fails its oracle, the reference solution passes it.
 const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: string }> = {
   'search/find-default': { answer: 'The default is requestTimeoutMs.\nsrc/config/defaults.js:5' },
-  'small-fix/off-by-one': { edits: [['src/range.js', 'i < end', 'i <= end']], answer: 'Fixed.' },
+  'small-fix/off-by-one': { edits: [['src/range.js', 'i < end', 'i <= end']], answer: 'The loop stopped before `end`; it now uses `<=`.' },
   'multi-file/rename-option': {
     edits: [['src/logger.js', 'options.verbose', 'options.debug'], ['src/server.js', '{ verbose: config.verbose }', '{ debug: config.debug }'], ['src/cli.js', "{ verbose: argv.includes('--verbose')", "{ debug: argv.includes('--debug')"], ['src/cli.js', '--verbose', '--debug']],
-    answer: 'Renamed.',
+    answer: 'Renamed `verbose` to `debug` in src/, and the flag to `--debug`.',
   },
   'review/spot-bug': { answer: 'The 5 euro discount uses > instead of >= 100 euros.\nline 6' },
   'search/trace-port': { answer: 'The staging profile sets 8100 and PORT_OFFSET=2 shifts it.\n8102' },
-  'small-fix/thousands': { edits: [['src/parse.js', ".replace(',', '')", ".replaceAll(',', '')"]], answer: 'Fixed.' },
+  'small-fix/thousands': { edits: [['src/parse.js', ".replace(',', '')", ".replaceAll(',', '')"]], answer: 'parseAmount removed only the first comma; it now removes every separator.' },
   'multi-file/locale': {
     edits: [
       ['src/format.js', 'function formatPrice(cents) {\n  return `€${(cents / 100).toFixed(2)}`;', "function formatPrice(cents, locale = 'en') {\n  const [whole, frac] = (cents / 100).toFixed(2).split('.');\n  if (locale === 'de') return `${whole.replace(/\\B(?=(\\d{3})+$)/g, '.')},${frac} €`;\n  return `€${whole}.${frac}`;"],
@@ -64,7 +64,7 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
       ['src/invoice.js', 'function invoiceLine(item) {', "function invoiceLine(item, locale = 'en') {"],
       ['src/invoice.js', 'formatPrice(item.cents * item.qty)', 'formatPrice(item.cents * item.qty, locale)'],
     ],
-    answer: 'Done.',
+    answer: 'formatPrice, summary and invoiceLine take a `locale`; `de` puts the sign after, with a decimal comma and dot grouping.',
   },
   'review/pagination': { answer: 'slice already excludes its end, so the last item of each page is lost.\nline 8' },
   'search/direct-callers': { answer: 'reminders.js (mail.sendEmail), signup.js (deliver), broadcast.js (send).\n3' },
@@ -73,7 +73,7 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
       ['src/lru.js', '    return this.map.get(key);', '    if (!this.map.has(key)) return undefined;\n    const value = this.map.get(key);\n    this.map.delete(key);\n    this.map.set(key, value);\n    return value;'],
       ['src/lru.js', '    this.map.set(key, value);\n    if', '    this.map.delete(key);\n    this.map.set(key, value);\n    if'],
     ],
-    answer: 'Fixed.',
+    answer: 'get and set now move the key to the most recently used position.',
   },
   'multi-file/promisify': {
     edits: [
@@ -83,7 +83,7 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
       ['src/greet.js', '*', "const { readWithRetry } = require('./retry');\nasync function greeting(name) { return `${await readWithRetry('greeting', 3)}, ${name}`; }\nmodule.exports = { greeting };\n"],
       ['src/counter.js', '*', "const { readWithRetry } = require('./retry');\nasync function nextCount() { return Number(await readWithRetry('count', 2)) + 1; }\nmodule.exports = { nextCount };\n"],
     ],
-    answer: 'Done.',
+    answer: 'The four APIs return promises and take no callback; the retry limits are as before.',
   },
   'review/duration': { answer: 'TOKEN is a shared /g regex: after a throw its lastIndex is left set. `<` lets a unit repeat.\nlines 5, 12' },
   'search/unused-flags': { answer: 'Five flags are only defined, set, or named in comments and tests.\nerrorLog, fastExport, legacyAuth, pushAlerts, strictMode' },
@@ -103,7 +103,7 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
       ['src/api.js', 'body: notes.list().filter(', "body: notes.list({ includeArchived: params.get('archived') === '1' }).filter("],
       ['src/api.js', "  if (method === 'GET' && path === '/stats')", "  if (method === 'POST' && /^\\/notes\\/\\d+\\/restore$/.test(path)) return notes.restore(id) ? { status: 200, body: notes.get(id) } : { status: 404 };\n  if (method === 'GET' && path === '/stats')"],
     ],
-    answer: 'Done.',
+    answer: 'remove now archives the note instead of deleting it; restore, the filtered list, stats, the export column and the API follow the seven points.',
   },
   'multi-file/cents': {
     edits: [
@@ -113,7 +113,7 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
       ['src/format.js', 'return `€${amount.toFixed(2)}`;', 'return `€${(amount / 100).toFixed(2)}`;'],
       ['src/invoice.js', 'lineTotal(item.price, item.qty)', 'lineTotal(item.cents, item.qty)'],
     ],
-    answer: 'Done.',
+    answer: 'Every amount is now integer cents; the discount and the tax are rounded half up before they are applied.',
   },
   'review/bounds': { answer: 'The four helpers match their comments; `hi = mid` and the exclusive upper end are right for a first-index search.\nno bugs' },
   'review/token-bucket': { answer: '1. Line 26: `elapsed` is in milliseconds but is multiplied by `ratePerSec`, so the bucket refills 1000 times too fast.\n2. Line 28: `>` refuses a bucket that holds exactly `cost` tokens; it should be `>=`.\n3. Line 44: retryAfter uses remaining(), which rounds down to whole tokens, so a fraction already in the bucket is ignored and the wait is too long.\n\nlines 26, 28, 44' },
@@ -153,19 +153,22 @@ test('each task: a no-op fails its oracle and the reference solution passes ever
 
 test('each task grades the dimensions of its class, and every check names its dimension', () => {
   const expected: Record<string, string[]> = {
-    search: ['outcome', 'scope'], review: ['outcome', 'diagnosis', 'citation', 'scope'],
-    'small-fix': ['outcome', 'scope', 'hidden'], 'multi-file': ['outcome', 'scope', 'hidden'], smoke: ['outcome', 'scope', 'hidden'],
+    search: ['outcome', 'coverage', 'scope'], review: ['outcome', 'diagnosis', 'citation', 'scope'],
+    'small-fix': ['outcome', 'coverage', 'scope', 'hidden'], 'multi-file': ['outcome', 'coverage', 'scope', 'hidden'], smoke: ['outcome', 'scope', 'hidden'],
   };
   const tasks = loadTasks();
+  // their answer is a path or a list of names, which can be checked as it stands: nothing more is required
+  const selfEvident = ['search/find-default', 'search/unused-flags', 'search/purge-routes'];
   assert.equal(tasks.filter(t => t.class !== 'smoke').length, 20);
   // every class has two hard tasks, reported as <class>-hard
   assert.deepEqual(tasks.filter(t => t.tier === 'hard').map(t => taskGroup(t)).sort(), ['multi-file-hard', 'multi-file-hard', 'review-hard', 'review-hard', 'search-hard', 'search-hard', 'small-fix-hard', 'small-fix-hard']);
   for (const t of tasks) {
     // review/bounds has no bug, so nothing to diagnose
-    assert.deepEqual(Object.keys(graded(t, [], '').dimensions), expected[t.class]!.filter(d => t.id !== 'review/bounds' || d !== 'diagnosis'), t.id);
+    assert.deepEqual(Object.keys(graded(t, [], '').dimensions), expected[t.class]!.filter(d => (t.id !== 'review/bounds' || d !== 'diagnosis') && (!selfEvident.includes(t.id) || d !== 'coverage')), t.id);
+    assert.ok(t.class === 'smoke' || t.oracle.some(c => 'content' in c), `${t.id}: no content check`);
     const oracle = fs.readFileSync(path.join(t.fixture, '..', 'task.yaml'), 'utf8').split(/^oracle:$/m)[1]!.split(/^\w+:/m)[0]!;
     const listed = (oracle.match(/^ {2}- /gm) ?? []).length;
-    const named = (oracle.match(/^ {2}- (diagnosis|citation):|^ {4}dimension: /gm) ?? []).length;
+    const named = (oracle.match(/^ {2}- (diagnosis|citation|content):|^ {4}dimension: /gm) ?? []).length;
     assert.equal(named, listed, `${t.id}: a check has no dimension`);
   }
 });
@@ -230,19 +233,19 @@ test('each fix task: a fix special-cased to the provided tests passes them and f
   for (const t of fixes) {
     assert.ok(t.hidden && fs.existsSync(path.join(t.hidden, 'test', 'hidden.test.js')), `${t.id}: no hidden tests`);
     assert.ok(!fs.existsSync(path.join(t.fixture, 'test', 'hidden.test.js')), `${t.id}: the fixture shows the hidden tests`);
-    const grade = graded(t, SPECIAL_CASED[t.id]!, 'Fixed.');
-    assert.deepEqual(grade.dimensions, { outcome: true, scope: true, hidden: false }, `${t.id}: ${JSON.stringify(grade.checks)}`);
+    const grade = graded(t, SPECIAL_CASED[t.id]!, SOLUTIONS[t.id]!.answer);
+    assert.deepEqual(grade.dimensions, { outcome: true, coverage: true, scope: true, hidden: false }, `${t.id}: ${JSON.stringify(grade.checks)}`);
     assert.equal(grade.pass, false);
   }
 });
 
 test('scope: a change outside the task\'s scope fails the scope dimension, also on read-only tasks', () => {
   const fix = graded(task('small-fix/off-by-one'), SOLUTIONS['small-fix/off-by-one']!.edits!, 'Fixed.', { 'NOTES.md': 'what I did' });
-  assert.deepEqual([fix.dimensions, fix.outOfScope, fix.pass], [{ outcome: true, scope: false, hidden: true }, ['NOTES.md'], false]);
+  assert.deepEqual([fix.dimensions, fix.outOfScope, fix.pass], [{ outcome: true, coverage: false, scope: false, hidden: true }, ['NOTES.md'], false]);
   const review = graded(task('review/spot-bug'), [], SOLUTIONS['review/spot-bug']!.answer, { 'review.md': 'line 6' });
   assert.deepEqual([review.dimensions, review.outOfScope], [{ outcome: true, diagnosis: true, citation: true, scope: false }, ['review.md']]);
   const search = graded(task('search/trace-port'), [], '8102', { 'scratch.txt': '8100 + 2' });
-  assert.deepEqual([search.dimensions, search.pass], [{ outcome: true, scope: false }, false]);
+  assert.deepEqual([search.dimensions, search.pass], [{ outcome: true, coverage: false, scope: false }, false]);
 });
 
 // Review answers as models gave them (bench/records/2026-11-27.tgz), and wrong ones made up for the test.
@@ -266,6 +269,33 @@ test('review: diagnosis and citation are graded apart, and extra findings are co
   assert.deepEqual(dims('review/duration', '- **Line 12:** The order check allows the same unit twice because it only rejects `order < last`. For example, `1h1h` returns `7200` instead of throwing, contrary to the “at most once” rule.\n- **Line 14:** Converting digit strings to JavaScript numbers can lose integer precision or overflow to `Infinity`.\n\nlines 12, 14'), [false, false, 1, false]);
   // claude-sonnet-5-5@low, s2-effort: both bugs, the second cited a line early
   assert.deepEqual(dims('review/duration', '1. Line 11: the check is `order < last`, so a repeated unit such as "1h2h" passes. It should be `order <= last`.\n2. Line 5: `TOKEN` is a global regex that is shared between calls, so `lastIndex` persists.\n\nlines 5, 11'), [true, false, 1, false]);
+});
+
+// Answers as models gave them (bench/records/2026-11-27.tgz), unless noted.
+test('content: a required item missing fails coverage; the answer splits into needed, allowed and surplus blocks', () => {
+  assert.deepEqual(answerBlocks('Intro line\nwrapped onto a second.\n\n- one\n  continued\n- two\n\n1. three\n| a | b |\n|---|---|\n\n***\nlast'),
+    ['Intro line wrapped onto a second.', '- one continued', '- two', '1. three', '| a | b |', 'last']);
+  // a list item belongs to the line that introduces it; the final answer line is needed; a paragraph of neither kind is surplus
+  assert.deepEqual(contentSize('The bug is `>=`.\n\nThe rest is fine:\n- rounding\n- the floor\n\nUnrelated: the weather.\n- sunny\n\nline 6', ['>='], ['is fine'], true),
+    { words: 16, allowedWords: 7, surplusWords: 4, blocks: 7, surplusBlocks: 2 });
+  assert.deepEqual(contentSize('It is 8100 plus 2,\nso 8102', ['8100'], [], true), { words: 7, allowedWords: 0, surplusWords: 0, blocks: 2, surplusBlocks: 0 });
+  const of = (id: string, answer: string) => { const g = graded(task(id), SOLUTIONS[id]!.edits ?? [], answer); return [g.dimensions.coverage, g.content!.words, g.content!.allowedWords, g.content!.surplusWords, g.pass]; };
+  // gpt-6.1-terra@medium, s1-coarse: short and complete
+  assert.deepEqual(of('small-fix/thousands', 'Fixed `src/parse.js` to remove all thousands separators, rather than only the first one. Tests were not changed.\n\nVerified: `node --test` passes both tests.'), [true, 23, 6, 0, true]);
+  // made up: says nothing about the change
+  assert.deepEqual(of('small-fix/thousands', 'Fixed.'), [false, 1, 0, 1, false]);
+  // gpt-6.2-sol@medium, s1-coarse: only about a reviewer that never reported, not about the rename
+  assert.deepEqual(of('multi-file/rename-option', 'The reviewer stopped without reporting. My direct checks confirmed that no `verbose` references remain in `src/`, no test files changed, and both tests passed.'), [false, 24, 24, 0, false]);
+  // gpt-6.2-sol@medium, s2-effort: a bare number cannot be checked without the call sites
+  assert.deepEqual(of('search/direct-callers', '3'), [false, 1, 0, 0, false]);
+  // gpt-6.2-sol@xhigh, s2-effort: "adds 2" names the offset
+  assert.deepEqual(of('search/trace-port', '`npm start` selects the staging profile and adds 2 to its configured port of 8100. Assuming `PORT` is unset, the server is configured to listen on:\n\n8102'), [true, 27, 0, 0, true]);
+  // gpt-6.1-terra@medium, s0-calib: the third finding is no bug of the file and is not presented as none, so its block is surplus
+  const review = graded(task('review/duration'), [], '- **Line 10:** `TOKEN` is a shared global regular expression. If parsing throws, its `lastIndex` remains set.\n- **Line 12:** The strict `<` comparison allows repeated units, contrary to “each at most once.”\n- **Line 14:** Large valid quantities silently lose precision or overflow.\n\nlines 10, 12, 14');
+  assert.deepEqual([review.content, review.extraFindings, review.pass], [{ words: 44, allowedWords: 0, surplusWords: 10, blocks: 4, surplusBlocks: 1 }, 1, true]);
+  // claude-sonnet-5-5@medium, s1-coarse (shortened): saying what is no bug is allowed
+  const nonBug = graded(task('review/spot-bug'), [], 'The code uses `cents > 10_000`; the condition should be `>=`.\n\nThe rest matches the comment. The member discount is 10% with rounding.\n\nline 6');
+  assert.deepEqual(nonBug.content, { words: 23, allowedWords: 12, surplusWords: 0, blocks: 3, surplusBlocks: 0 });
 });
 
 test('hard review tasks: the clean file has no bug, the limiter has its three, and both grade as meant', () => {
@@ -309,7 +339,7 @@ test('hard review tasks: the clean file has no bug, the limiter has its three, a
 
 const rec = (arm: string, model: string, effort: string, taskClass: string, rep: number, pass: boolean, cost: number, harness: 'on' | 'off' = 'on'): RunRecord => ({
   spec: 's', arm, model, effort, harness, task: `${taskClass}/x`, taskClass, taskVersion: 1, rep, piVersion: '1.6.0', harnessSha: 'abc', at: '', ms: 1,
-  exit: 0, timedOut: false, pass, dimensions: { outcome: true, hidden: pass }, checks: [], changed: [], outOfScope: [], answer: '',
+  exit: 0, timedOut: false, pass, dimensions: { outcome: true, hidden: pass }, content: { words: 40, allowedWords: 10, surplusWords: pass ? 0 : 20, blocks: 3, surplusBlocks: pass ? 0 : 1 }, checks: [], changed: [], outOfScope: [], answer: '',
   signals: { turns: 2, toolCalls: {}, toolErrors: 0, parallelCalls: 1, input: 10, output: 5, cacheRead: 30, cacheWrite: 10, cost },
   children: { count: 0, cost: 0, turns: 0, ends: {} },
 });
@@ -348,9 +378,9 @@ test('report: worst–best repetition, threshold, saturation and lineage deltas'
   assert.match(formatReport([...records, errored], 0.9), /1 runs ended on a provider error and are left out: usage limit reached/);
   // per dimension, with extra findings beside the strict pass
   assert.deepEqual(sonnet.dimensions, { outcome: { runs: 2, passes: 2 }, hidden: { runs: 2, passes: 1 } });
-  assert.match(text, /\| small-fix \| sonnet@medium \| on \| 1\/2 \| 0%–100% \| outcome 2\/2 · hidden 1\/2 \| – \|/);
+  assert.match(text, /\| small-fix \| sonnet@medium \| on \| 1\/2 \| 0%–100% \| outcome 2\/2 · hidden 1\/2 \| – \| 40 \| 50% \/ 25% \/ 25% \|/);
   const review = [0, 2].map((extra, i): RunRecord => ({ ...rec('opus@low', 'anthropic/claude-opus-5-5', 'low', 'review', i + 1, true, 0.2), dimensions: { outcome: true, diagnosis: true, citation: true, scope: true }, extraFindings: extra }));
-  assert.match(formatReport(review, 0.9), /\| 2\/2 \| 100%–100% \| outcome 2\/2 · diagnosis 2\/2 · citation 2\/2 · scope 2\/2 \| 2 \(1\) \|/);
+  assert.match(formatReport(review, 0.9), /\| 2\/2 \| 100%–100% \| outcome 2\/2 · diagnosis 2\/2 · citation 2\/2 · scope 2\/2 \| 2 \(1\) \| 40 \| 75% \/ 25% \/ 0% \|/);
   // a record from before dimensions counts its pass as the outcome; an older task version does not mix with a newer one
   const { dimensions: _, ...before } = rec('opus@low', 'anthropic/claude-opus-5-5', 'low', 'small-fix', 1, false, 0.2);
   assert.deepEqual(cells([before]).map(c => [c.passes, c.dimensions]), [[0, { outcome: { runs: 1, passes: 0 } }]]);
@@ -399,13 +429,13 @@ test('rescore: recorded runs are graded again from answer.txt and work/, with th
     const all = rescore(dir);
     assert.deepEqual(all.map(r => [r.old.task, r.old.pass, r.now!.pass, r.now!.dimensions, r.now!.taskVersion === task(r.old.task).version]), [
       ['review/spot-bug', false, false, { outcome: true, diagnosis: true, citation: false, scope: true }, true],
-      ['small-fix/thousands', true, false, { outcome: true, scope: true, hidden: false }, true],
-      ['small-fix/off-by-one', true, false, { outcome: false, scope: true, hidden: false }, true],
+      ['small-fix/thousands', true, false, { outcome: true, coverage: false, scope: true, hidden: false }, true],
+      ['small-fix/off-by-one', true, false, { outcome: false, coverage: false, scope: true, hidden: false }, true],
     ]);
     // the third record claims a pass and a change that its files do not show
     assert.deepEqual(all.map(r => r.drift), [[], [], ['command: node --test', 'changed files: recorded src/range.js, found none']]);
     const text = formatRescore(all, 'test');
-    assert.match(text, /\| s \| 2\/3 \| 0\/3 \| 2\/3 \| 1\/1 \| 0\/1 \| 3\/3 \| 0\/2 \| 1 \(1\) \|/);
+    assert.match(text, /\| s \| 2\/3 \| 0\/3 \| 2\/3 \| 1\/1 \| 0\/1 \| 0\/2 \| 3\/3 \| 0\/2 \| 1 \(1\) \| 1 \| 80% \/ 0% \/ 20% \|/);
     assert.match(text, /## Verdict changed \(2\)/);
     assert.match(text, /`s\/runs\/a@low\/small-fix__thousands\/rep1` \| pass → fail \| now: hidden: exit 1/);
     assert.match(text, /give the recorded result in 2 of 3 runs/);

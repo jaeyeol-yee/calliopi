@@ -13,6 +13,8 @@ export interface Cell {
   dimensions: Partial<Record<Dimension, { runs: number; passes: number }>>;
   /** Findings cited beyond the real bugs, and the runs that had any. */
   extraFindings: number; extraRuns: number;
+  /** Over runs with a content check: the median of the answer's words, and the share of all their words in needed, allowed and surplus blocks. Undefined without such runs. */
+  answerWords?: number; neededShare?: number; allowedShare?: number; surplusShare?: number;
   /** Pass rate of the worst and best repetition. */
   min: number; max: number;
   /** Medians per run, with the range: caching makes one run's cost a poor estimate. */
@@ -40,6 +42,15 @@ const groupBy = <T>(xs: T[], key: (x: T) => string) => {
 /** A record's dimensions; records from before dimensions had one verdict, the outcome. */
 export const dimensionsOf = (r: RunRecord): Partial<Record<Dimension, boolean>> => r.dimensions ?? { outcome: r.pass };
 
+/** How the words of the runs' answers split into needed, allowed and surplus blocks (pooled over the runs), with the median answer length. */
+export function contentShares(rs: RunRecord[]): { answerWords?: number; neededShare?: number; allowedShare?: number; surplusShare?: number } {
+  const cs = rs.flatMap(r => (r.content ? [r.content] : []));
+  const words = cs.reduce((a, c) => a + c.words, 0);
+  if (!cs.length) return {};
+  const share = (f: (c: (typeof cs)[number]) => number) => (words ? cs.reduce((a, c) => a + f(c), 0) / words : 0);
+  return { answerWords: median(cs.map(c => c.words)), neededShare: share(c => c.words - (c.allowedWords ?? 0) - c.surplusWords), allowedShare: share(c => c.allowedWords ?? 0), surplusShare: share(c => c.surplusWords) };
+}
+
 /** Results of different versions of a task do not mix: only each task's newest recorded version counts. */
 export function currentVersions(records: RunRecord[]): RunRecord[] {
   const newest = new Map<string, number>();
@@ -65,6 +76,7 @@ export function cells(records: RunRecord[]): Cell[] {
         return of.length ? [[d, { runs: of.length, passes: of.filter(Boolean).length }]] : [];
       })),
       extraFindings: sum(r => r.extraFindings ?? 0), extraRuns: rs.filter(r => r.extraFindings).length,
+      ...contentShares(rs),
       min: Math.min(...byRep), max: Math.max(...byRep),
       costPerRun: median(costs), costMin: Math.min(...costs), costMax: Math.max(...costs),
       turns: median(rs.map(r => r.signals.turns)),
@@ -130,12 +142,12 @@ export function formatReport(records: RunRecord[], target: number): string {
     ...(stale ? [`- ${stale} runs of older task versions are left out`] : []),
     ...(errors.length ? [`- ${errors.length} runs ended on a provider error and are left out: ${[...new Set(errors.map(r => r.error!.slice(0, 120)))].join(' · ')}`] : []), '',
     '## By arm and task class', '',
-    'Strict pass: every dimension the task has passed (outcome, diagnosis, citation, scope, hidden tests). Extra findings (review: cited lines that are no bug) are counted beside it and fail nothing.',
+    'Strict pass: every dimension the task has passed (outcome, diagnosis, citation, coverage, scope, hidden tests). Extra findings (review: cited lines that are no bug) are counted beside it and fail nothing; so are the answer\'s words (median) and how they split: needed (blocks with something the task requires), allowed (justification, verification, what is no bug), surplus (neither).',
     'Cost includes subagents. Cost, turns and tokens (the run\'s own) are medians per run; ranges are min–max.', '',
-    '| class | arm | harness | strict pass | worst–best rep | by dimension | extra findings (runs) | $/run | $ range | turns | tokens | tokens range | cache hit | tool errors | parallel | out of scope | timeouts | subagents (stopped) | provider errors |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
+    '| class | arm | harness | strict pass | worst–best rep | by dimension | extra findings (runs) | answer words | needed / allowed / surplus | $/run | $ range | turns | tokens | tokens range | cache hit | tool errors | parallel | out of scope | timeouts | subagents (stopped) | provider errors |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
   for (const c of cs)
-    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${dims(c)} | ${c.dimensions.citation ? `${c.extraFindings} (${c.extraRuns})` : '–'} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} | ${c.delegations} (${c.childrenStopped}) | ${c.errors} |`);
+    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${dims(c)} | ${c.dimensions.citation ? `${c.extraFindings} (${c.extraRuns})` : '–'} | ${c.answerWords === undefined ? '–' : Math.round(c.answerWords)} | ${c.surplusShare === undefined ? '–' : `${pct(c.neededShare!)} / ${pct(c.allowedShare!)} / ${pct(c.surplusShare)}`} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} | ${c.delegations} (${c.childrenStopped}) | ${c.errors} |`);
   lines.push('', `## Threshold per class (lowest median cost among arms whose worst repetition reaches ${pct(target)} in strict passes)`, '');
   for (const [cls, c] of thresholds(cs, target)) lines.push(`- ${cls}: ${c ? `${c.arm} at ${usd(c.costPerRun)}/run` : 'none reaches the target'}`);
   const sat = saturation(cs);

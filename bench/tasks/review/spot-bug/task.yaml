@@ -1,4 +1,4 @@
-version: 2
+version: 3
 prompt: |
   Review src/discount.js against the comment at its top. Do not change any file.
   If you find a bug, end your answer with one line of the form `line N` naming the line of the bug.
@@ -16,3 +16,9 @@ oracle:
   - citation: [[6]]
   - unchanged: [src/discount.js]
     dimension: outcome
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        not-a-bug: ["(not|n't|no|isn't|aren't) (a |an |any |other |further )?(bug|issue|defect|problem)s?", "(match(es)?|agree(s)?|consistent with|follows?|as) (the|its|their) (header |top )?(comment|doc|spec)", "\\b(is|are|looks?|seems?) (correct|right|fine|ok|okay|intended|safe|sound)\\b", "(reasonable|natural|intended) reading", "(did not|didn't|not) count", "contradict", "comments? (does not|doesn't|do not|don't) (cover|say|promise|require|mention|specify)", "(minor|smaller|side) (point|note|thing|observation)s?", "left (it|that|this) alone", "\\b(correctly|as (documented|intended|specified|described))\\b"]
