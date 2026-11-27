@@ -31,9 +31,10 @@ function readDir(dir: string): { roles: AgentRole[]; problems: string[] } {
   return { roles, problems };
 }
 
-export function loadCatalog(cwd: string, dirs = catalogDirs(cwd)): { roles: Map<string, AgentRole>; problems: string[] } {
+export function loadCatalog(cwd: string, dirs = catalogDirs(cwd), trusted?: boolean[]): { roles: Map<string, AgentRole>; problems: string[] } {
   const layers = dirs.map(readDir);
-  // The first two directories (built-in, the user's) are trusted; any after them belong to the project.
-  const { roles, shadowed } = mergeCatalog(layers.map(l => l.roles), dirs.map((_, i) => i < 2));
+  // Trusted: the built-ins and the user's own directory, by path; anything else (the project's) is not.
+  const trustedDirs = [BUILTIN_DIR, path.join(getAgentDir(), 'agents')].map(d => path.resolve(d));
+  const { roles, shadowed } = mergeCatalog(layers.map(l => l.roles), trusted ?? dirs.map(d => trustedDirs.includes(path.resolve(d))));
   return { roles, problems: [...layers.flatMap(l => l.problems), ...shadowed] };
 }

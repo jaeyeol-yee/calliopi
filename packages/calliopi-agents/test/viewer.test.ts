@@ -18,7 +18,7 @@ test('viewer: the tree on the left, the selected agent as a table on the right; 
   const tui = { terminal: { columns: 100, rows: 30 }, requestRender: () => { renders++; } };
   const theme = { fg: (_c: string, s: string) => s };
   const records = [
-    rec('scout-1', null, 1, { status: { state: 'running', activity: 'read', turns: 2, tokens: 10, startedAt: Date.now() - 5000, updatedAt: 0 } }),
+    rec('scout-1', null, 1, { status: { state: 'running', activity: 'read', turns: 2, tokens: 10, startedAt: Date.now() - 5200, updatedAt: 0 } }),
     rec('verifier-1', 'scout-1', 2, { status: { state: 'running', turns: 0, tokens: 0, startedAt: Date.now(), updatedAt: 0, briefing: { at: 0, how: 'first' } } }),
     rec('reviewer-1', null, 3, { result: { status: 'done', summary: 'No blockers\nmore', evidence: 'npm test', usage: { turns: 3, tokens: 99, ms: 61_000 }, endedAt: 0 } }),
   ];

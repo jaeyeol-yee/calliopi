@@ -145,6 +145,8 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       if (delegations + params.tasks.length > MAX_PER_SESSION) return fail(`This Pi may delegate at most ${MAX_PER_SESSION} tasks per run (until /reload or a new session); ${delegations} already were.`);
       // Reserved before any await: two calls at once must not both pass the check.
       delegations += params.tasks.length; reserved = params.tasks.length;
+      // Whatever throws from here on (a rejected confirm, a failed lookup) gives the slots back too.
+      try {
       const catalog = loadCatalog(ctx.cwd).roles;
       const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : '';
       // The tools this Pi can use now (its --tools selection), not every tool configured: a child never has more.
@@ -169,8 +171,8 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
         let answer: Promise<boolean>;
         if (role.approval === 'once') { answer = asking.get(role.name) ?? ask(); asking.set(role.name, answer); }
         else answer = ask();
-        const ok = await answer;
-        if (role.approval === 'once') asking.delete(role.name);
+        let ok: boolean;
+        try { ok = await answer; } finally { if (role.approval === 'once') asking.delete(role.name); } // a rejected ask is not shared forever
         if (!ok) return fail(`The user declined delegating to ${role.name}.`);
         approved.add(role.name);
       }
@@ -242,6 +244,7 @@ export function installParent(pi: ExtensionAPI, place: Place, opts: ParentOption
       } finally {
         signal?.removeEventListener('abort', onAbort);
       }
+      } finally { delegations -= reserved; reserved = 0; }
     },
   });
 

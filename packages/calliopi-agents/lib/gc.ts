@@ -43,7 +43,7 @@ export function collect(root: string, policy: Retention, now = Date.now()): { re
       const after = readTree(dir);
       // A directory without meta.json may be a record being created (mkdir comes first): never remove a
       // tree that has one, or a tree touched in the last hour.
-      const creating = fs.readdirSync(dir).some(n => n !== 'goals' && !fs.existsSync(path.join(dir, n, FILES.meta)));
+      const creating = fs.readdirSync(dir, { withFileTypes: true }).some(d => d.isDirectory() && d.name !== 'goals' && !fs.existsSync(path.join(dir, d.name, FILES.meta)));
       const recent = now - fs.statSync(dir).mtimeMs < 60 * 60 * 1000;
       if (!after.records.length && !after.goals.length && !creating && !recent) fs.rmSync(dir, { recursive: true, force: true });
     } catch { /* one broken tree does not stop the others */ }

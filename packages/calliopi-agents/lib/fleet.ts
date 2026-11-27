@@ -63,10 +63,12 @@ const alive = (pid: number | undefined) => {
  * or it never started): recorded as stopped, so goals close and gc can age them out. Ones this Pi runs,
  * and ones whose process still lives, are left alone. Returns the ids it closed.
  */
-export function closeOrphans(records: AgentRecord[], fleet: Pick<Fleet, 'get'>): string[] {
+export function closeOrphans(records: AgentRecord[], fleet: Pick<Fleet, 'get'>, now = Date.now()): string[] {
   const closed: string[] = [];
   for (const r of records) {
     if (r.result || fleet.get(r.meta.id) || alive(r.status?.pid)) continue;
+    // No status yet: maybe a child another Pi of this session has just started; only past the start deadline.
+    if (!r.status && now - r.meta.createdAt < START_DEADLINE_MS) continue;
     if (writeResult(r.dir, harnessResult(r.dir, '결과 없이 사라짐 (그 Pi가 끝남)'))) closed.push(r.meta.id);
   }
   return closed;

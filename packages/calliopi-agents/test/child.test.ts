@@ -225,6 +225,7 @@ test('a Pi that only inherited CALLIOPI_AGENT_DIR is not the child; orphans of a
   assert.equal(isChildOf(r.dir, ['node', 'pi']), false);
   assert.equal(isChildOf(r.dir, ['node', 'pi', '--session-id', 'other']), false);
   writeStatus(r.dir, { state: 'running', turns: 3, tokens: 500, startedAt: Date.now(), updatedAt: Date.now(), pid: 999_999 });
-  assert.deepEqual(closeOrphans([readAgent(r.dir)!], new Fleet()), [r.meta.id]);
+  const fresh = createAgent(root, { ...readAgent(r.dir)!.meta, createdAt: Date.now() } as never); // no status yet, just made: maybe another Pi's
+  assert.deepEqual(closeOrphans([readAgent(r.dir)!, readAgent(fresh.dir)!], new Fleet()), [r.meta.id]);
   assert.deepEqual([readAgent(r.dir)!.result!.status, readAgent(r.dir)!.result!.usage.tokens], ['stopped', 500]);
 });
