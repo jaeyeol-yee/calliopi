@@ -199,7 +199,7 @@ export function installChild(pi: ExtensionAPI, dir: string, busy: () => boolean 
     return { messages: [...event.messages, { role: 'user', content: [{ type: 'text', text: contractReminder(meta, usage()) }], timestamp: Date.now() }] };
   });
   pi.on('before_provider_request', (event) => {
-    const moved = cacheBeforeReminder(event.payload, lastPayload); // see lib/cache.ts
+    const moved = cacheBeforeReminder(event.payload); // see lib/cache.ts
     const payload = moved ?? event.payload;
     const record = encodeRequest(lastPayload, payload, ++requestSeq, Date.now());
     lastPayload = payload;

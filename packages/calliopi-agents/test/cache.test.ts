@@ -32,30 +32,3 @@ test('nothing moves without a marked reminder, or when the message before cannot
   assert.equal(cacheBeforeReminder({ input: [] }), undefined); // OpenAI Responses: no marks
   assert.equal(cacheBeforeReminder('x'), undefined);
 });
-
-test('after a long turn the previous mark position is marked again, taking the tools mark', () => {
-  const task = { role: 'user', content: [{ type: 'text', text: 'task' }] };
-  const call = { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'read', input: {} }] };
-  const first = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'x' }] };
-  const many = (n: number) => [
-    { role: 'assistant', content: Array.from({ length: n }, (_, i) => ({ type: 'tool_use', id: `t${i}`, name: 'read', input: {} })) },
-    { role: 'user', content: Array.from({ length: n }, (_, i) => ({ type: 'tool_result', tool_use_id: `t${i}`, content: 'y' })) },
-  ];
-  const full = (messages: unknown[]) => ({
-    system: [{ type: 'text', text: 'a', cache_control: mark }, { type: 'text', text: 'b', cache_control: mark }],
-    tools: [{ name: 'read', cache_control: mark }], messages,
-  });
-  const sent = cacheBeforeReminder(full([task, call, first, reminder()])) as any;
-  assert.deepEqual(sent.messages[2].content[0].cache_control, mark);
-
-  const long = cacheBeforeReminder(full([task, call, first, ...many(9), reminder()]), sent) as any;
-  assert.deepEqual(long.messages[2].content[0].cache_control, mark); // marked again: 18 blocks back
-  assert.deepEqual(long.messages[4].content.at(-1).cache_control, mark); // the new position
-  assert.deepEqual(long.tools, [{ name: 'read' }]); // four marks at most
-  const marks = JSON.stringify(long).match(/cache_control/g)!.length;
-  assert.equal(marks, 4);
-
-  const short = cacheBeforeReminder(full([task, call, first, ...many(2), reminder()]), sent) as any;
-  assert.equal(short.messages[2].content[0].cache_control, undefined); // within reach: one conversation mark
-  assert.deepEqual(short.tools, [{ name: 'read', cache_control: mark }]);
-});
