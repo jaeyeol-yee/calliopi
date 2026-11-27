@@ -13,6 +13,7 @@
 //     - { model: anthropic/claude-opus-5-5, effort: medium, label: opus-5-5-replicate }
 //     - { model: openai/gpt-6.2-sol, effort: [low, medium, high] }
 //     - { model: anthropic/claude-fable-5-2, effort: medium, harness: off }
+//     - { model: openai/gpt-6.2-sol, effort: medium, harnessRef: main }   # Calliopi as of a git ref
 import YAML from 'yaml';
 import { EFFORTS, catalogModel, type PiCatalog } from './catalog.ts';
 import type { Task } from './task.ts';
@@ -25,6 +26,8 @@ export interface Arm {
   effort: string;
   /** on: Calliopi's extensions loaded; off: bare Pi. */
   harness: Harness;
+  /** With harness on: run Calliopi as of this git ref (a worktree) instead of the working tree. */
+  harnessRef?: string;
   /** For faux/* models: the scripted replies (see bench/faux-extension.ts). */
   faux?: unknown[];
 }
@@ -67,13 +70,15 @@ export function parseSpec(text: string): Spec {
   for (const [i, a] of (raw.arms as Record<string, unknown>[]).entries()) {
     if (!a || typeof a.model !== 'string') throw new Error(`spec: arms[${i}] needs a model`);
     const harness = a.harness === undefined || a.harness === 'on' ? 'on' : a.harness === 'off' ? 'off' : (() => { throw new Error(`spec: arms[${i}].harness must be on or off`); })();
+    const ref = a.harnessRef === undefined ? undefined : String(a.harnessRef);
+    if (ref !== undefined && (harness === 'off' || !/^[\w./-]+$/.test(ref) || ref.startsWith('-'))) throw new Error(`spec: arms[${i}].harnessRef must be a plain git ref, with harness on`);
     const efforts = (Array.isArray(a.effort) ? a.effort : [a.effort ?? 'medium']).map(String);
     for (const effort of efforts) {
       if (!(EFFORTS as readonly string[]).includes(effort)) throw new Error(`spec: arms[${i}]: unknown effort "${effort}" (${EFFORTS.join(', ')})`);
-      const base = a.label ? String(a.label) : `${short(a.model)}@${effort}${harness === 'off' ? '-bare' : ''}`;
+      const base = a.label ? String(a.label) : `${short(a.model)}@${effort}${harness === 'off' ? '-bare' : ''}${ref ? `@${ref}` : ''}`;
       const id = a.label && efforts.length > 1 ? `${base}@${effort}` : base;
       if (arms.some(x => x.id === id)) throw new Error(`spec: arm "${id}" appears twice; give a replicate a label`);
-      arms.push({ id, model: a.model, effort, harness, ...(Array.isArray(a.faux) ? { faux: a.faux } : {}) });
+      arms.push({ id, model: a.model, effort, harness, ...(ref ? { harnessRef: ref } : {}), ...(Array.isArray(a.faux) ? { faux: a.faux } : {}) });
     }
   }
   return { name, runs, target, timeoutMinutes: num(raw.timeoutMinutes, 10, 'timeoutMinutes'), ...(raw.budgetUsd !== undefined ? { budgetUsd: num(raw.budgetUsd, 0, 'budgetUsd') } : {}), tasks, arms };

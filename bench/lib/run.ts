@@ -38,6 +38,8 @@ export interface RunRecord {
   model: string;
   effort: string;
   harness: 'on' | 'off';
+  /** The Calliopi commit the run loaded (the working tree's, or its arm's harnessRef). */
+  harnessCommit?: string;
   task: string;
   taskClass: string;
   taskVersion: number;
@@ -107,15 +109,34 @@ export function sessionSignals(file: string | undefined): RunSignals {
 
 /** Which Pi runs an arm: faux arms use this repository's dev dependency, whose pi-ai the faux extension imports; real models use the installed Pi. */
 export interface PiBinary { command: string; version: string }
-export interface RunContext { spec: string; harnessSha: string; outDir: string; timeoutMinutes: number; pi: (run: PlannedRun) => PiBinary }
+export interface RunContext {
+  spec: string; harnessSha: string; outDir: string; timeoutMinutes: number; pi: (run: PlannedRun) => PiBinary;
+  /** Where Calliopi as of a ref is checked out, and its commit. */
+  harnessAt?: (ref: string) => { dir: string; commit: string };
+}
 
-export function piArgs(run: PlannedRun, sessionDir: string): string[] {
+/** A worktree of Calliopi at `ref` with its dependencies installed, made once per commit under `base`. */
+export function harnessWorktree(ref: string, base: string): { dir: string; commit: string } {
+  const git = (args: string[], cwd = ROOT) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr.trim()}`); return r.stdout.trim(); };
+  const commit = git(['rev-parse', '--short=12', `${ref}^{commit}`]);
+  const dir = path.join(base, commit);
+  if (!fs.existsSync(path.join(dir, 'node_modules'))) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    spawnSync('git', ['worktree', 'prune'], { cwd: ROOT });
+    git(['worktree', 'add', '--detach', dir, commit]);
+    const ci = spawnSync('npm', ['ci', '--prefer-offline', '--no-audit', '--no-fund', '--ignore-scripts'], { cwd: dir, encoding: 'utf8' });
+    if (ci.status !== 0) throw new Error(`npm ci in ${dir}: ${ci.stderr.trim().split('\n').slice(-3).join(' | ')}`);
+  }
+  return { dir, commit };
+}
+
+export function piArgs(run: PlannedRun, sessionDir: string, harnessDir = ROOT): string[] {
   const { arm, task } = run;
   return [
     '-p', '--offline',
     '--no-extensions', '--no-skills', '--no-context-files', '--no-prompt-templates', '--no-mcp', '--no-approve',
     '--session-dir', sessionDir,
-    ...(arm.harness === 'on' ? ['-e', ROOT] : []),
+    ...(arm.harness === 'on' ? ['-e', harnessDir] : []),
     ...(isFaux(arm.model) ? ['-e', FAUX] : []),
     '--model', arm.model, '--thinking', arm.effort,
     task.prompt,
@@ -144,7 +165,9 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   }
   const started = Date.now();
   const pi = ctx.pi(run);
-  const r = spawnSync(pi.command, piArgs(run, sessions), { cwd: work, env, encoding: 'utf8', timeout: ctx.timeoutMinutes * 60_000, maxBuffer: 64 << 20 });
+  const at = arm.harnessRef ? ctx.harnessAt?.(arm.harnessRef) : undefined;
+  if (arm.harnessRef && !at) throw new Error(`${arm.id}: no checkout for harnessRef ${arm.harnessRef}`);
+  const r = spawnSync(pi.command, piArgs(run, sessions, at?.dir), { cwd: work, env, encoding: 'utf8', timeout: ctx.timeoutMinutes * 60_000, maxBuffer: 64 << 20 });
   const ms = Date.now() - started;
   const answer = r.stdout ?? '';
   fs.writeFileSync(path.join(dir, 'answer.txt'), answer);
@@ -158,6 +181,7 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   fs.rmSync(work, { recursive: true, force: true });
   return {
     spec: ctx.spec, arm: arm.id, model: arm.model, effort: arm.effort, harness: arm.harness,
+    ...(arm.harness === 'on' ? { harnessCommit: at?.commit ?? ctx.harnessSha } : {}),
     task: task.id, taskClass: task.class, taskVersion: task.version, rep,
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
     exit: r.status, timedOut, pass: !timedOut && checks.every(c => c.pass), checks, changed,

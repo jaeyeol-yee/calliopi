@@ -94,7 +94,7 @@ const usd = (x: number) => `$${x.toFixed(x < 0.1 ? 4 : 2)}`;
 export function formatReport(records: RunRecord[], target: number): string {
   if (!records.length) return 'No runs recorded.';
   const cs = cells(records);
-  const prov = [...new Set(records.map(r => `Pi ${r.piVersion} · harness ${r.harnessSha} · tasks ${[...new Set(records.map(x => `${x.task}@v${x.taskVersion}`))].join(', ')}`))];
+  const prov = [...new Set(records.map(r => `Pi ${r.piVersion} · harness ${r.harnessSha}${r.harnessCommit && r.harnessCommit !== r.harnessSha ? ` (arm at ${r.harnessCommit})` : ''} · tasks ${[...new Set(records.map(x => `${x.task}@v${x.taskVersion}`))].join(', ')}`))];
   const lines = [`# Benchmark: ${[...new Set(records.map(r => r.spec))].join(', ')}`, '', ...prov.map(p => `- ${p}`), `- ${records.length} runs, ${usd(records.reduce((a, r) => a + runCost(r), 0))} total`, '',
     '## By arm and task class', '',
     'Cost includes subagents. Cost, turns and tokens (the run\'s own) are medians per run; ranges are min–max.', '',

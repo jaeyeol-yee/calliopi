@@ -6,3 +6,4 @@ tasks: [smoke/faux-fix]
 arms:
   - { model: faux/bench, effort: off }
   - { model: faux/bench, effort: off, harness: off }
+  - { model: faux/bench, effort: off, harnessRef: HEAD }

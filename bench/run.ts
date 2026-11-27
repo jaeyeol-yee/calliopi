@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadPi } from './lib/catalog.ts';
 import { formatReport } from './lib/report.ts';
-import { ROOT, runCost, runOne, type PiBinary, type RunRecord } from './lib/run.ts';
+import { ROOT, harnessWorktree, runCost, runOne, type PiBinary, type RunRecord } from './lib/run.ts';
 import { checkSpec, isFaux, parseSpec, plan } from './lib/spec.ts';
 import { loadTasks } from './lib/task.ts';
 
@@ -49,14 +49,20 @@ async function main(argv: string[]) {
   const outDir = path.join(OUT, spec.name);
   fs.mkdirSync(outDir, { recursive: true });
   const dirty = execFileSync('git', ['status', '--porcelain', '--', 'packages'], { cwd: ROOT, encoding: 'utf8' }).trim();
-  const harnessSha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim() + (dirty ? '-dirty' : '');
+  const harnessSha = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim() + (dirty ? '-dirty' : '');
   const installed: PiBinary = { command: 'pi', version: pi.version };
   const dev: PiBinary = { command: path.join(ROOT, 'node_modules', '.bin', 'pi'), version: JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), 'utf8')).version };
   if (spec.budgetUsd === undefined && runs.some(r => !isFaux(r.arm.model))) throw new Error(`${spec.name}: real models need budgetUsd in the spec`);
   let spent = 0;
+  // Calliopi as of each harnessRef, checked out once before any run (a bad ref fails here, not mid-way).
+  const refs = new Map<string, { dir: string; commit: string }>();
+  for (const ref of new Set(spec.arms.flatMap(a => (a.harnessRef ? [a.harnessRef] : [])))) {
+    refs.set(ref, harnessWorktree(ref, path.join(OUT, 'worktrees')));
+    console.log(`  harness ${ref} → ${refs.get(ref)!.commit}`);
+  }
   for (const [i, run] of runs.entries()) {
     if (spec.budgetUsd !== undefined && spent >= spec.budgetUsd) { console.log(`budget reached: $${spent.toFixed(2)} of $${spec.budgetUsd}; ${runs.length - i} runs not started`); break; }
-    const record = runOne(run, { spec: spec.name, harnessSha, outDir, timeoutMinutes: spec.timeoutMinutes, pi: r => (isFaux(r.arm.model) ? dev : installed) });
+    const record = runOne(run, { spec: spec.name, harnessSha, outDir, timeoutMinutes: spec.timeoutMinutes, pi: r => (isFaux(r.arm.model) ? dev : installed), harnessAt: ref => refs.get(ref)! });
     spent += runCost(record);
     fs.appendFileSync(path.join(outDir, 'runs.jsonl'), `${JSON.stringify(record)}\n`);
     console.log(`[${i + 1}/${runs.length}] ${record.pass ? 'pass' : 'FAIL'} ${run.task.id} · ${run.arm.id} · rep ${run.rep} · ${(record.ms / 1000).toFixed(0)}s · $${runCost(record).toFixed(4)}${record.children.count ? ` · ${record.children.count} subagents` : ''}`);

@@ -25,6 +25,9 @@ test('spec: effort lists expand, replicates need labels, harness and efforts are
   assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, effort: medium }\n  - { model: a/b, effort: medium }\n`), /appears twice/);
   assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, effort: huge }\n`), /unknown effort/);
   assert.throws(() => parseSpec(`name: t\narms: []\n`), /non-empty/);
+  assert.deepEqual(parseSpec(`name: t\narms:\n  - { model: a/b, harnessRef: main }\n`).arms.map(a => [a.id, a.harnessRef]), [['b@medium@main', 'main']]);
+  assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, harnessRef: main, harness: off }\n`), /harnessRef/);
+  assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, harnessRef: '--upload-pack=x' }\n`), /harnessRef/);
   assert.equal(parseSpec(`name: t\nbudgetUsd: 2.5\narms:\n  - { model: a/b }\n`).budgetUsd, 2.5);
   const tasks = loadTasks();
   const problems = checkSpec(spec, await loadPi(), tasks);
