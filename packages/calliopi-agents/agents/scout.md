@@ -2,7 +2,7 @@
 description: Fast read-only reconnaissance that returns compressed findings for another agent
 when: you need facts gathered from many files, logs or docs before deciding, and reading them yourself would crowd your context
 not_when: the answer is in one or two files you can read directly
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, web_fetch
 disallowed_tools: edit, write
 context: summary
 budget:

@@ -2,7 +2,7 @@
 description: Read-only reviewer that checks a change with fresh eyes and reports findings with evidence
 when: a change set is ready and touches several files or behavior worth a second look, or the user asks for a review
 not_when: the change is a one-line fix or a typo
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, web_fetch
 disallowed_tools: edit, write
 context: summary
 budget:
