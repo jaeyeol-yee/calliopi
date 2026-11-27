@@ -49,3 +49,14 @@ Append a new entry at the end for every `prompt` or `model` PR (see `.github/PUL
 - Not adopted: giving the reviewer read tools and the whole session file (more context, but a larger and unbounded send, and a tool-using process left running unattended); starting it for every session (a model call for sessions with nothing flagged); on by default.
 - Open risk / revisit when: the first real debriefs exist. Read 20 of them against their sessions and record how many verdicts hold; if the session's own model reviews itself, compare with a model of another family on the same sessions. Until then a debrief is an opinion, and nothing should be changed on its word alone.
 
+
+## 2026-11-27: OpenAI models — reviewer delegation, and subagents in pi -p
+
+- Scope: prompt
+- Applies to: all models; the observed difference is between families
+- Changed: `packages/calliopi-agents/agents/reviewer.md` (when, not_when); `packages/calliopi-agents/lib/parent.ts` (runs that end with their answer wait for subagents)
+- Basis: measured
+- Sources read in full: none
+- Measured: in the S1 benchmark (Pi 1.6.0, medium effort), gpt-6.1-terra, gpt-6.2-sol and gpt-6.2-astra started a reviewer on every multi-file and review task (36 of 36), opus-5-5, sonnet-5-5 and fable-5-2 on none. In `pi -p` 27 of those 36 children were cut off unfinished, and Pi printed a stale-context error after the answer. Before (c710e0d) against after (this change) in one window, one run per task on the tasks done before a ChatGPT usage limit stopped the OpenAI arms: OpenAI subagent calls 14 → 0, passes 13/14 → 14/14, cost −10 to −13%; the opus control 4/4 → 4/4 with no subagents and cost −11%, so the cost change is within the window's drift and not claimed.
+- Not adopted: nothing.
+- Open risk / revisit when: the reviewer is now offered less; a task where a fresh-eyes review would have caught a bug is not in the suite. Rerun `bench/specs/pr-delegation.yaml` with two or more runs once the OpenAI limit resets.
