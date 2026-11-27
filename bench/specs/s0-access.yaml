@@ -1,0 +1,13 @@
+# S0: each S1 model once on the cheapest task, to check access and the cost per run before S1.
+name: s0-access
+runs: 1
+timeoutMinutes: 5
+tasks: [search/find-default]
+arms:
+  - { model: anthropic/claude-opus-5-5, effort: medium }
+  - { model: anthropic/claude-fable-5-2, effort: medium }
+  - { model: anthropic/claude-sonnet-5-5, effort: medium }
+  - { model: openai/gpt-6.2-astra, effort: medium }
+  - { model: openai/gpt-6.2-sol, effort: medium }
+  - { model: openai/gpt-6.1-terra, effort: medium }
+  - { model: anthropic/claude-opus-5-5, effort: medium, harness: off }
