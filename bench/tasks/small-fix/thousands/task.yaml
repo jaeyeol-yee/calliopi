@@ -1,7 +1,12 @@
-version: 1
+version: 2
 prompt: |
   `node --test` fails: the report total is wrong for large amounts. Fix the cause. Do not change the tests.
 scope: [src/parse.js]
 oracle:
   - command: node --test
+    dimension: outcome
   - unchanged: [test/report.test.js, src/report.js]
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden

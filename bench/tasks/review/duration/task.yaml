@@ -1,10 +1,22 @@
-version: 2
+version: 3
 prompt: |
   Review src/duration.js against its comments. Do not change any file.
   List every bug you find. End your answer with one line of the form `lines N, M` naming the line of
   each bug in ascending order (or `line N` for a single bug).
+scope: []   # a read-only task: any changed or added file fails the scope dimension
 oracle:
   # A shared /g regex keeps lastIndex after a throw (declared on 5, used on 10); "<" lets a unit repeat (12).
-  # Line numbers are part of the check: a review cites file and line. Extra findings fail it.
-  - answer: "^lines (5|10), 12$"
+  # Both bugs must be diagnosed and cited. Cited lines of neither bug do not fail the run: they are
+  # counted as extra findings.
+  - diagnosis:
+      shared-regex-state:
+        - "lastIndex"
+        - "(global|shared|module[- ]level|/g|`g`|stateful)[^.\\n]{0,120}(state|position|retain|persist|leak|carr(y|ies)|across calls|between calls|subsequent|next call)"
+      repeated-unit:
+        - "<="
+        - "(repeat|duplicat)(s|ed|ing|es)?"
+        - "same unit"
+        - "(unit|appear)[^.\\n]{0,40}(twice|more than once)"
+  - citation: [[5, 10], [12]]
   - unchanged: [src/duration.js]
+    dimension: outcome

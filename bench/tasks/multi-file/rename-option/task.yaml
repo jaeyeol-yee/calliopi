@@ -1,14 +1,22 @@
-version: 1
+version: 2
 prompt: |
   Rename the `verbose` option to `debug` everywhere in src/, including the CLI flag (--verbose becomes --debug).
   Keep the behavior otherwise. The tests in test/ already expect the new name; do not change them.
 scope: [src/logger.js, src/server.js, src/cli.js]
 oracle:
   - command: node --test
+    dimension: outcome
   - unchanged: [test/options.test.js]
+    dimension: outcome
   - file: src/logger.js
     absent: verbose
+    dimension: outcome
   - file: src/server.js
     absent: verbose
+    dimension: outcome
   - file: src/cli.js
     absent: verbose
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden

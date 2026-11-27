@@ -1,7 +1,18 @@
-version: 2
+version: 3
 prompt: |
   Review src/pagination.js against its comments. Do not change any file.
   If you find a bug, end your answer with one line of the form `line N` naming the line of the bug.
+scope: []   # a read-only task: any changed or added file fails the scope dimension
 oracle:
-  - answer: "^line [89]$"   # the end computation, or the slice that uses it
+  # `end` is one short for slice, which already excludes its end: the end computation (8), or the slice that uses it (9).
+  - diagnosis:
+      end-one-short:
+        - "slice[^.\\n]{0,80}exclu(sive|des?|ding)"
+        - "exclu(sive|des?|ding)[^.\\n]{0,60}(end|slice)"
+        - "(one|1) (item |element |entry )?(fewer|short|less|too few)"
+        - "size ?- ?1`? (items|elements|entries)"
+        - "(last|final) (item|element|entry)"
+        - "start \\+ size`?(?! ?- ?1)"
+  - citation: [[8, 9]]
   - unchanged: [src/pagination.js]
+    dimension: outcome

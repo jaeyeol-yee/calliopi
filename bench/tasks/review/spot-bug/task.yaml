@@ -1,7 +1,18 @@
-version: 1
+version: 2
 prompt: |
   Review src/discount.js against the comment at its top. Do not change any file.
   If you find a bug, end your answer with one line of the form `line N` naming the line of the bug.
+scope: []   # a read-only task: any changed or added file fails the scope dimension
 oracle:
-  - answer: "^line 6$"
+  # The 5 euro discount uses > where the comment says "100 euros or more" (line 6).
+  # Diagnosis and citation are graded apart: a right finding with the wrong line fails only citation.
+  - diagnosis:
+      exclusive-threshold:
+        - ">="
+        - "≥"
+        - "exactly\\W{0,3}(€ ?100|100 ?(€|euros?|eur\\b)|10[,_.]?000)"
+        - "(100 euros?|€ ?100|10[,_.]?000( cents)?) exactly"
+        - "strict(ly)? (greater|comparison|inequality)"
+  - citation: [[6]]
   - unchanged: [src/discount.js]
+    dimension: outcome
