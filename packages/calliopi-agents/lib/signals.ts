@@ -37,9 +37,11 @@ export function collectSessions(sessionsDir: string, opts: { sinceMs?: number; s
       if (opts.session && !name.endsWith(`_${opts.session}.jsonl`)) continue; // Pi names the file <time>_<session id>.jsonl
       const entries = readLines(path.join(dir, name));
       if (!entries.some(e => e?.type === 'session')) continue;
-      const info = sessionInfo(entries);
-      if (opts.sinceMs !== undefined && info.startedAt < opts.sinceMs) continue;
-      out.push({ info, smells: sessionSmells(entries) });
+      try {
+        const info = sessionInfo(entries);
+        if (opts.sinceMs !== undefined && info.startedAt < opts.sinceMs) continue;
+        out.push({ info, smells: sessionSmells(entries) });
+      } catch { /* one session that cannot be read does not stop the report */ }
     }
   }
   return out.sort((a, b) => a.info.startedAt - b.info.startedAt);

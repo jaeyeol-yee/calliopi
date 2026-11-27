@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ERROR_STREAK_MIN, HARNESS_ENTRY, JUMP_TOKENS, REPEAT_MIN, RESTATE_MIN_CHARS, SMELL_KINDS, formatSmells, harnessLabel, sessionInfo, sessionSmells, similarity, summarizeSmells, undoCommand, type SessionEntry, type SessionSmells } from '#lib/smells.ts';
+import { ERROR_STREAK_MIN, HARNESS_ENTRY, JUMP_TOKENS, REPEAT_MIN, RESTATE_MIN_CHARS, SMELL_KINDS, formatSmells, harnessLabel, sessionInfo, sessionSmells, shipsCommand, similarity, summarizeSmells, undoCommand, type SessionEntry, type SessionSmells } from '#lib/smells.ts';
 
 let seq = 0;
 const id = () => `e${++seq}`;
@@ -53,8 +53,9 @@ test('context-jump: the prompt grows by JUMP_TOKENS between two requests of one 
   assert.deepEqual(kinds([user(), assistant([], 5000), result('bash'), assistant([], 5000 + JUMP_TOKENS - 1)]), []);
   // the first request of a run has no baseline, however long the user's message was
   assert.deepEqual(kinds([user(), assistant([], 5000), user(), assistant([], 5000 + 2 * JUMP_TOKENS)]), []);
-  // a request without usage (aborted) neither jumps nor resets the baseline
-  assert.deepEqual(kinds([user(), assistant([], 5000), assistant([], 0, 'error'), assistant([], 5000 + JUMP_TOKENS)]), ['context-jump']);
+  // a request without usage (aborted) neither jumps nor resets the baseline, and the tools before it are still named
+  const afterGap = sessionSmells([user(), assistant([], 5000), result('read'), assistant([], 0, 'error'), assistant([], 5000 + JUMP_TOKENS)]);
+  assert.deepEqual(afterGap.map(s => [s.kind, s.tool]), [['context-jump', 'read']]);
   // shrinking (a compaction) is not a jump
   assert.deepEqual(kinds([user(), assistant([], 5000 + JUMP_TOKENS), assistant([], 5000)]), []);
   assert.match(sessionSmells([user(), assistant([], 5000), assistant([], 5000 + JUMP_TOKENS)])[0]!.detail, /after no tool result$/);
@@ -75,6 +76,19 @@ test('sessionSmells: other entries are ignored, and no detail carries what was w
     { type: 'message', message: { role: 'assistant', content: [null, 1, { type: 'toolCall' }, { type: 'toolCall', name: 'a' }] } }, { type: 'message', message: { role: 'toolResult' } }] as unknown as SessionEntry[];
   assert.deepEqual(sessionSmells(odd), []);
   assert.equal(sessionInfo(odd).requests, 2);
+  // fields of another type than Pi writes: nothing throws, no number is made of strings, and no such value reaches a detail or a label
+  const evil = '/secret/path | x\ninjected';
+  const wrong = [
+    { type: 'session', id: { a: 1 }, cwd: 9, timestamp: 12345 }, user(),
+    ...Array.from({ length: ERROR_STREAK_MIN }, () => ({ type: 'message', id: evil, message: { role: 'toolResult', toolName: { x: 1 }, isError: true } })),
+    { type: 'message', message: { role: 'toolResult', toolName: evil, isError: true } },
+    { type: 'message', message: { role: 'assistant', provider: evil, model: evil, content: [], usage: { input: '5000' } } },
+    { type: 'message', message: { role: 'assistant', model: { m: 1 }, content: Array.from({ length: REPEAT_MIN }, () => ({ type: 'toolCall', id: 7, name: evil, arguments: 'x' })), usage: { input: '99999', cacheRead: -5, cacheWrite: Infinity } } },
+  ] as unknown as SessionEntry[];
+  const found = sessionSmells(wrong);
+  assert.deepEqual(found.map(s => [s.kind, s.tool, s.entry]), [['error-streak', 'unknown', undefined], ['repeat', 'unknown', undefined]]);
+  assert.deepEqual(sessionInfo(wrong), { id: 'unknown', cwd: '', startedAt: 0, model: 'unknown/unknown', runs: 1, requests: 2, outcome: 'other', harness: 'unrecorded' });
+  assert.doesNotMatch(JSON.stringify(found) + formatSmells([{ info: sessionInfo(wrong), smells: found }]), /secret|injected/);
 });
 
 test('sessionInfo: the header, the model that answered most, runs and requests', () => {
@@ -131,8 +145,15 @@ test('restate: a user message that says nearly the same as the one before it; sh
   assert.deepEqual(kinds([user('로그인 실패하면 재시도하게 해줄 수 있어요?'), assistant(), user('로그인이 실패하면 재시도하게 해 줄 수 있어요')]), ['restate']); // no word list: any language
   // compared with the previous user message only, not with every earlier one
   assert.deepEqual(kinds([user(long), assistant(), user('something entirely unrelated to that request'), assistant(), user(long)]), []);
-  // a plain string body is read too
-  assert.deepEqual(kinds([{ type: 'message', message: { role: 'user', content: long } }, { type: 'message', message: { role: 'user', content: long } }]), ['restate']);
+  // a plain string body is read too; the very same text is said to be identical
+  const same = sessionSmells([{ type: 'message', message: { role: 'user', content: long } }, { type: 'message', message: { role: 'user', content: ` ${long.toUpperCase()}\n` } }]);
+  assert.deepEqual(same.map(s => [s.kind, s.detail]), [['restate', 'user message identical to the previous one']]);
+  // a slash command, a skill or template, or a message the harness wrote is not a sentence the person typed: never compared, never the baseline
+  const slash = '/cl-note the agent reran the whole suite again';
+  const tagged = '<skill name="commit">a long body that is always the same</skill>';
+  const bracket = '[Active goal] keep going until the done condition is met';
+  assert.deepEqual(kinds([user(slash), user(slash), user(tagged), user(tagged), user(bracket), user(bracket)]), []);
+  assert.deepEqual(kinds([user(long), assistant(), user(slash), user(bracket), user(long)]), ['restate']); // the baseline is the last typed message
 });
 
 test('similarity: 1 for the same text, 0 for nothing shared or nothing to compare', () => {
@@ -146,8 +167,16 @@ test('similarity: 1 for the same text, 0 for nothing shared or nothing to compar
 test('backtrack: a git command that throws work away, by the agent or by the user; the detail names the subcommand only', () => {
   assert.deepEqual(['git restore src/a.ts', 'cd x && git -C /r reset --hard HEAD~1', 'git checkout -- a.ts', 'git checkout .', 'echo hi; git revert abc', '(git restore .)', 'true\ngit restore a'].map(undoCommand),
     ['restore', 'reset --hard', 'checkout --', 'checkout --', 'revert', 'restore', 'restore']);
-  // switching branches, a soft reset, stashing, or the words inside another command are not undoing
-  assert.deepEqual(['git checkout main', 'git checkout -b x', 'git checkout ./a', 'git reset HEAD a', 'git stash', 'git commit -m "note: git restore was used"', 'echo git revert', undefined, 7].map(undoCommand), Array(9).fill(undefined));
+  // however the command is led into: indentation, an assignment, sudo, a shell keyword, git's own options
+  assert.deepEqual(['  git restore a', 'FOO=1 git restore a', 'sudo git restore a', 'if x; then git restore a; fi', 'git -c core.x=1 restore a', 'git --no-pager restore a', 'git -C "/a b" restore a'].map(undoCommand), Array(7).fill('restore'));
+  assert.deepEqual(['git reset -q --hard', 'git reset HEAD~1 --hard', 'git checkout HEAD -- a.ts', 'git checkout -q -- a.ts', 'git checkout .; ls', '(git checkout .)', 'git restore --staged --worktree a'].map(undoCommand),
+    ['reset --hard', 'reset --hard', 'checkout --', 'checkout --', 'checkout --', 'checkout --', 'restore']);
+  // switching branches, a soft reset, stashing, unstaging and giving a revert up are not undoing
+  assert.deepEqual(['git checkout main', 'git checkout -b x', 'git checkout ./a', 'git reset HEAD a', 'git stash', 'git restore --staged a.ts', 'git revert --abort', 'git restore-mtime', 'git revert-thing', undefined, 7].map(undoCommand), Array(11).fill(undefined));
+  // nor are the words inside a quoted string or a heredoc, whatever separators they hold
+  assert.deepEqual(['git commit -m "note: git restore was used"', 'echo git revert', 'git commit -m "line1\ngit reset --hard was wrong"', 'git commit -m "x (git restore y)"', "git commit -m 'a; git revert b'", 'grep -rE "foo|git restore" .',
+    'git commit -F - <<\'EOF\'\nsubject\n\ngit restore . was wrong; git revert too\nEOF', 'cat > /tmp/m <<EOF\ngit reset --hard\nEOF\ngit status'].map(undoCommand), Array(8).fill(undefined));
+  assert.equal(undoCommand('cat <<EOF\nbody\nEOF\ngit restore a'), 'restore'); // a command after the heredoc is still read
 
   const agent = bash('git restore secret/path.ts');
   const mine: SessionEntry = { type: 'message', id: id(), message: { role: 'bashExecution', command: 'git reset --hard HEAD~1' } };
@@ -164,6 +193,12 @@ test('sessionInfo outcome: shipped when a commit or PR the agent ran succeeded; 
   assert.equal(outcome([user(), bash('git commit -m x', 'c4'), result('bash', false, 'other-call'), assistant()]), 'other'); // no result for that call
   assert.equal(outcome([user(), bash('echo "then run git commit"', 'c5'), result('bash', false, 'c5'), assistant()]), 'other'); // only mentioned
   assert.equal(outcome([user(), assistant([call('write', { command: 'git commit' }, 'c6')]), result('write', false, 'c6'), assistant()]), 'other'); // not bash
+  assert.deepEqual(['git commit -m x', 'git add -A && git commit -q -m x', 'HUSKY=0 git commit -m x', 'git -c user.name=x -c user.email=y commit -m x', ' git commit -m x', 'sudo git commit', 'gh pr create --fill', 'git commit -F /tmp/m.txt && git push'].map(shipsCommand), Array(8).fill(true));
+  assert.deepEqual(['git commit --dry-run', 'git commit --help', 'git commit-graph write', 'echo "x; git commit"', 'git log --grep="a|gh pr create"', 'gh pr view', 'gh pr', 'git', '', undefined].map(shipsCommand), Array(10).fill(false));
+  // a commit the user ran with ! counts when it exited 0
+  const mine = (command: string, exitCode: number | undefined): SessionEntry => ({ type: 'message', id: id(), message: { role: 'bashExecution', command, exitCode } });
+  assert.equal(outcome([user(), assistant(), mine('git commit -m x', 0)]), 'shipped');
+  assert.equal(outcome([user(), assistant(), mine('git commit -m x', 1), mine('git commit -m x', undefined), mine('git status', 0)]), 'other');
   assert.equal(outcome([user(), assistant(), user(), assistant([], 0, 'aborted')]), 'aborted');
   assert.equal(outcome([user(), assistant([], 0, 'aborted'), user(), assistant()]), 'other'); // an abort earlier on is not how it ended
   assert.equal(outcome([user(), assistant([], 0, 'error')]), 'error');

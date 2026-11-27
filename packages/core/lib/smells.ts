@@ -9,9 +9,10 @@
 //   error-streak  ERROR_STREAK_MIN or more tool results in a row that are errors, in one run
 //   interrupted   an assistant message the user aborted
 //   context-jump  the prompt grew by JUMP_TOKENS or more between two requests of one run
-//   restate       a user message that says nearly the same as the one before it
+//   restate       a user message the person typed that says nearly the same as the one before it
 //   backtrack     a git command that throws work away (restore, revert, reset --hard, checkout -- …)
-// The first four are what the agent did; the last two and `interrupted` are what the person did.
+// repeat, error-streak and context-jump are what the agent did; interrupted and restate are what the
+// person did; backtrack is either's.
 // Entries are read in file order; a session with branches (/tree, /fork) is read as one sequence.
 //
 // A session also gets an outcome, a rough stand-in for "did it end well", and the harness version it
@@ -35,7 +36,7 @@ export const harnessLabel = (v: HarnessVersion) => `${v.sha}${v.dirty ? '-dirty'
 
 /**
  * How a session ended, as far as its entries show:
- *   shipped  a `git commit` or `gh pr create` the agent ran succeeded
+ *   shipped  a `git commit` or `gh pr create` succeeded, run by the agent or by the user with !
  *   aborted  otherwise, the last reply was aborted by the user
  *   error    otherwise, the last reply ended in an error
  *   other    none of these (answered and left, still open, or not about code)
@@ -60,8 +61,8 @@ export interface SessionEntry {
   customType?: string; data?: unknown;
   message?: {
     role?: string; content?: unknown; isError?: boolean; toolName?: string; toolCallId?: string; stopReason?: string; provider?: string; model?: string; usage?: Usage;
-    /** A command the user ran with ! (role "bashExecution"). */
-    command?: string;
+    /** A command the user ran with ! (role "bashExecution"), and how it exited. */
+    command?: string; exitCode?: number;
   };
 }
 
@@ -80,28 +81,69 @@ export interface SessionInfo {
   harness: string;
 }
 
-const most = (counts: Map<string, number>): string | undefined => [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+const most = (counts: Map<string, number>): string | undefined => [...counts].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0]?.[0];
 const bump = (counts: Map<string, number>, key: string) => counts.set(key, (counts.get(key) ?? 0) + 1);
 /** A session file may hold anything on a line (null, a number): only objects are entries. */
 const objects = (entries: SessionEntry[]) => entries.filter(e => !!e && typeof e === 'object');
-const promptSize = (u: Usage | null | undefined) => (u ? (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) : 0);
+const promptSize = (u: Usage | null | undefined) => (u && typeof u === 'object' ? num(u.input) + num(u.cacheRead) + num(u.cacheWrite) : 0);
 
-// A git or gh command at the start of a command line or after a shell separator, so the words inside a
-// quoted message (a commit body that mentions "git restore") are less often taken for a command.
-const AT_COMMAND = String.raw`(?:^|[;&|(\n]\s*)`;
-const GIT = String.raw`git\s+(?:-C\s+\S+\s+)?`;
-const SHIPS = new RegExp(`${AT_COMMAND}(?:${GIT}commit\\b|gh\\s+pr\\s+create\\b)`);
-const UNDOES = new RegExp(`${AT_COMMAND}${GIT}(restore|revert|reset\\s+--hard|checkout\\s+(?:--(?=\\s)|\\.(?=\\s|$)))`);
-/** The undoing git subcommand in a shell command, if any: "restore", "revert", "reset --hard" or "checkout --". */
-export function undoCommand(command: unknown): string | undefined {
-  const m = typeof command === 'string' ? UNDOES.exec(command) : null;
-  if (!m) return undefined;
-  const sub = m[1]!.replace(/\s+/g, ' ');
-  return sub.startsWith('checkout') ? 'checkout --' : sub;
+// Shell commands are read just far enough to tell which git or gh command runs: heredoc bodies and
+// quoted strings are dropped first (a commit message that mentions "git restore" is not a command),
+// then the line is cut at ; & | ( ) and newlines, and each piece is read as words.
+const HEREDOC = /<<-?\s*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g;
+const QUOTED = /"(?:[^"\\]|\\[\s\S])*"|'[^']*'/g;
+/** Words before a command that are not it: assignments (A=1), sudo and the like, shell keywords. */
+const PREFIX = /^(?:[A-Za-z_]\w*=.*|sudo|command|exec|time|nohup|env|then|do|else|elif|if|while|until|!|\{)$/;
+/** git's own options that take a value as the next word. */
+const GIT_VALUE_OPTION = /^(?:-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/;
+
+/** The git and gh commands in a shell command line: the subcommand words and the arguments after them. */
+function vcsCommands(command: unknown): { tool: 'git' | 'gh'; sub: string; args: string[] }[] {
+  if (typeof command !== 'string') return [];
+  const out: { tool: 'git' | 'gh'; sub: string; args: string[] }[] = [];
+  for (const piece of command.replace(HEREDOC, ' ').replace(QUOTED, ' Q ').split(/[;&|()\n]+/)) {
+    const words = piece.trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    while (i < words.length && PREFIX.test(words[i]!)) i++;
+    const tool = words[i++];
+    if (tool === 'git') {
+      while (i < words.length && words[i]!.startsWith('-')) i += GIT_VALUE_OPTION.test(words[i]!) ? 2 : 1;
+      if (words[i]) out.push({ tool, sub: words[i]!, args: words.slice(i + 1) });
+    } else if (tool === 'gh' && words[i] && words[i + 1]) {
+      out.push({ tool, sub: `${words[i]} ${words[i + 1]}`, args: words.slice(i + 2) });
+    }
+  }
+  return out;
 }
 
+/** Whether a command line makes a commit or opens a pull request (not --dry-run or --help). */
+export const shipsCommand = (command: unknown): boolean =>
+  vcsCommands(command).some(c => !c.args.some(a => a === '--dry-run' || a === '--help' || a === '-h') && ((c.tool === 'git' && c.sub === 'commit') || (c.tool === 'gh' && c.sub === 'pr create')));
+
+/** The git subcommand in a command line that throws work away, if any: "restore", "revert", "reset --hard" or "checkout --". */
+export function undoCommand(command: unknown): string | undefined {
+  for (const c of vcsCommands(command)) {
+    if (c.tool !== 'git') continue;
+    const has = (...flags: string[]) => c.args.some(a => flags.includes(a));
+    // restore --staged alone only unstages; revert --abort and --quit give a revert up
+    if (c.sub === 'restore' && (!has('--staged', '-S') || has('--worktree', '-W'))) return 'restore';
+    if (c.sub === 'revert' && !has('--abort', '--quit')) return 'revert';
+    if (c.sub === 'reset' && has('--hard')) return 'reset --hard';
+    if (c.sub === 'checkout' && has('--', '.')) return 'checkout --';
+  }
+  return undefined;
+}
+
+// What a session file holds is not trusted to have the shape Pi writes: a name that is not a plain
+// name becomes "unknown", so nothing else (a path, a line break) can reach the report through one.
+const NAME = /^[\w.:/@-]{1,80}$/;
+const name = (v: unknown, fallback = 'unknown') => (typeof v === 'string' && NAME.test(v) && !v.includes('..') ? v : fallback);
+const TOOL = /^[\w.:-]{1,64}$/;
+const toolName = (v: unknown) => (typeof v === 'string' && TOOL.test(v) ? v : 'unknown');
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+
 const toolCalls = (content: unknown): { id?: string; name: string; arguments?: { command?: unknown } }[] =>
-  (Array.isArray(content) ? content : []).filter(b => b?.type === 'toolCall').map(b => ({ id: b.id, name: String(b.name), arguments: b.arguments }));
+  (Array.isArray(content) ? content : []).filter(b => b?.type === 'toolCall').map(b => ({ id: typeof b.id === 'string' ? b.id : undefined, name: toolName(b.name), arguments: b.arguments && typeof b.arguments === 'object' ? b.arguments : undefined }));
 
 export function sessionInfo(entries: SessionEntry[]): SessionInfo {
   entries = objects(entries);
@@ -113,23 +155,24 @@ export function sessionInfo(entries: SessionEntry[]): SessionInfo {
   for (const e of entries) {
     if (e.type === 'custom' && e.customType === HARNESS_ENTRY) {
       const v = e.data as Partial<HarnessVersion> | null | undefined;
-      if (v && typeof v.sha === 'string') version = harnessLabel({ sha: v.sha, dirty: v.dirty === true });
+      if (v && typeof v === 'object' && /^[0-9a-f]{3,40}$/.test(String(v.sha))) version = harnessLabel({ sha: String(v.sha), dirty: v.dirty === true });
       continue;
     }
     const m = e.message;
     if (e.type !== 'message' || !m) continue;
     if (m.role === 'user') runs++;
-    if (m.role === 'toolResult' && m.toolCallId && shipping.has(m.toolCallId) && !m.isError) shipped = true;
+    if (m.role === 'toolResult' && typeof m.toolCallId === 'string' && shipping.has(m.toolCallId) && !m.isError) shipped = true;
+    if (m.role === 'bashExecution' && m.exitCode === 0 && shipsCommand(m.command)) shipped = true;
     if (m.role !== 'assistant') continue;
     requests++; lastStop = m.stopReason;
-    if (m.model) bump(models, `${m.provider ?? 'unknown'}/${m.model}`);
+    if (typeof m.model === 'string') bump(models, `${name(m.provider)}/${name(m.model)}`);
     if (version) bump(versions, version);
-    for (const c of toolCalls(m.content)) if (c.id && c.name === 'bash' && typeof c.arguments?.command === 'string' && SHIPS.test(c.arguments.command)) shipping.add(c.id);
+    for (const c of toolCalls(m.content)) if (c.id && c.name === 'bash' && shipsCommand(c.arguments?.command)) shipping.add(c.id);
   }
-  const startedAt = Date.parse(header?.timestamp ?? '');
+  const startedAt = typeof header?.timestamp === 'string' ? Date.parse(header.timestamp) : NaN;
   const outcome: Outcome = shipped ? 'shipped' : lastStop === 'aborted' ? 'aborted' : lastStop === 'error' ? 'error' : 'other';
   return {
-    id: header?.id ?? 'unknown', cwd: header?.cwd ?? '', startedAt: Number.isNaN(startedAt) ? 0 : startedAt, model: most(models) ?? 'unknown', runs, requests,
+    id: name(header?.id), cwd: typeof header?.cwd === 'string' ? header.cwd : '', startedAt: Number.isNaN(startedAt) ? 0 : startedAt, model: most(models) ?? 'unknown', runs, requests,
     outcome, harness: most(versions) ?? version ?? 'unrecorded',
   };
 }
@@ -145,6 +188,9 @@ export function similarity(a: string, b: string): number {
   const total = Math.max(0, a.length - 1) + Math.max(0, b.length - 1);
   return total ? (2 * shared) / total : 0;
 }
+
+/** An entry's id, when it is a plain one. */
+const id = (e: SessionEntry) => (typeof e.id === 'string' && NAME.test(e.id) ? e.id : undefined);
 
 export function sessionSmells(entries: SessionEntry[]): Smell[] {
   const smells: Smell[] = [];
@@ -170,43 +216,46 @@ export function sessionSmells(entries: SessionEntry[]): Smell[] {
     if (m.role === 'user') {
       endRun();
       const text = userText(m.content);
+      // A slash command, or a message that starts with a tag or a bracket (a skill, a template, a
+      // message the harness wrote), was not typed as a sentence: it is neither compared nor kept.
+      if (/^[/<[]/.test(text)) continue;
       if (text.length >= RESTATE_MIN_CHARS && lastUser.length >= RESTATE_MIN_CHARS) {
-        const sim = similarity(text, lastUser);
-        if (sim >= RESTATE_SIMILARITY) smells.push({ kind: 'restate', entry: e.id, detail: `user message ${Math.round(sim * 100)}% similar to the previous one` });
+        const sim = text === lastUser ? 1 : similarity(text, lastUser);
+        if (sim >= RESTATE_SIMILARITY) smells.push({ kind: 'restate', entry: id(e), detail: text === lastUser ? 'user message identical to the previous one' : `user message ${Math.round(sim * 100)}% similar to the previous one` });
       }
       lastUser = text;
       continue;
     }
     if (m.role === 'bashExecution') {
       const undo = undoCommand(m.command);
-      if (undo) smells.push({ kind: 'backtrack', entry: e.id, detail: `git ${undo} run by the user` });
+      if (undo) smells.push({ kind: 'backtrack', entry: id(e), detail: `git ${undo} run by the user` });
       continue;
     }
     if (m.role === 'toolResult') {
-      const tool = m.toolName ?? 'unknown';
+      const tool = toolName(m.toolName);
       bump(since, tool);
-      if (m.isError) { streak.n++; bump(streak.tools, tool); streak.entry = e.id; } else endStreak();
+      if (m.isError) { streak.n++; bump(streak.tools, tool); streak.entry = id(e); } else endStreak();
       continue;
     }
     if (m.role !== 'assistant') continue;
-    if (m.stopReason === 'aborted') smells.push({ kind: 'interrupted', entry: e.id, detail: 'the user aborted the reply' });
+    if (m.stopReason === 'aborted') smells.push({ kind: 'interrupted', entry: id(e), detail: 'the user aborted the reply' });
     const prompt = promptSize(m.usage);
     // An aborted or failed request may report no usage: it neither jumps nor resets the baseline.
     if (prompt > 0) {
       if (lastPrompt > 0 && prompt - lastPrompt >= JUMP_TOKENS) {
         const tool = most(since);
-        smells.push({ kind: 'context-jump', entry: e.id, tool, detail: `prompt grew by ${prompt - lastPrompt} tokens after ${[...since].map(([t, n]) => `${t} ${n}`).join(', ') || 'no tool result'}` });
+        smells.push({ kind: 'context-jump', entry: id(e), tool, detail: `prompt grew by ${prompt - lastPrompt} tokens after ${[...since].map(([t, n]) => `${t} ${n}`).join(', ') || 'no tool result'}` });
       }
       lastPrompt = prompt;
+      since = new Map();
     }
-    since = new Map();
     for (const call of toolCalls(m.content)) {
       const tool = call.name;
       const key = `${tool}\0${JSON.stringify(call.arguments)}`;
       const c = calls.get(key) ?? { n: 0, tool };
-      calls.set(key, { n: c.n + 1, tool, entry: e.id });
+      calls.set(key, { n: c.n + 1, tool, entry: id(e) });
       const undo = tool === 'bash' ? undoCommand(call.arguments?.command) : undefined;
-      if (undo) smells.push({ kind: 'backtrack', entry: e.id, tool, detail: `git ${undo} run by the agent` });
+      if (undo) smells.push({ kind: 'backtrack', entry: id(e), tool, detail: `git ${undo} run by the agent` });
     }
   }
   endRun();

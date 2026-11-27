@@ -68,11 +68,13 @@ function fakePi(entries: unknown[] = []) {
   return { pi, appended, sent, entries, start: () => handlers.get('agent_start')!({}, ctx) };
 }
 
-test('harness stamp: written before a run when the session has no version or another one; read once per load', async () => {
+test('harness stamp: written before a run when the session has no version or another one; read once, when loaded', async () => {
   let reads = 0;
   let current: { sha: string; dirty: boolean } | undefined = { sha: 'aaa', dirty: false };
   const f = fakePi([{ type: 'message' }, null]);
   installHarnessStamp(f.pi as never, async () => { reads++; return current; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 1); // read at load, before any run
   await f.start();
   await f.start();
   await f.start();
@@ -99,13 +101,14 @@ test('harness stamp: written before a run when the session has no version or ano
   assert.deepEqual([h.appended, broken.appended], [[], []]);
 });
 
-test('readHarnessVersion: the commit of a checkout and whether tracked files changed; undefined outside a checkout', async t => {
+test('readHarnessVersion: the commit of the Calliopi checkout and whether tracked files changed; undefined outside one', async t => {
   const dir = tmp(t);
   assert.equal(await readHarnessVersion(dir), undefined);
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'calliopi' }));
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } }).toString().trim();
   git('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one');
-  git('add', 'a.txt');
+  git('add', 'a.txt', 'package.json');
   git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'one');
   const sha = git('rev-parse', '--short=12', 'HEAD');
   fs.mkdirSync(path.join(dir, 'sub'));
@@ -114,4 +117,16 @@ test('readHarnessVersion: the commit of a checkout and whether tracked files cha
   assert.deepEqual(await readHarnessVersion(dir), { sha, dirty: false }); // untracked files do not make it dirty
   fs.writeFileSync(path.join(dir, 'a.txt'), 'two');
   assert.deepEqual(await readHarnessVersion(path.join(dir, 'sub')), { sha, dirty: true });
+  // a checkout of something else around the code (Calliopi copied into another repository) is not its version
+  assert.equal(await readHarnessVersion(dir, 'another-package'), undefined);
+  fs.rmSync(path.join(dir, 'package.json'));
+  assert.equal(await readHarnessVersion(dir), undefined);
+});
+
+test('collectSessions: a session the detectors cannot read is left out, the rest is reported', t => {
+  const sessions = path.join(tmp(t), 'sessions');
+  writeSession(sessions, 'app', 'good', '2026-11-20T00:00:00.000Z', [user, aborted]);
+  // a getter cannot come out of JSON; a very deep value is the nearest thing to a line that breaks a reader
+  writeSession(sessions, 'app', 'deep', '2026-11-21T00:00:00.000Z', [user, `{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"a","arguments":${'['.repeat(20000)}${']'.repeat(20000)}}]}}`]);
+  assert.ok(collectSessions(sessions).some(s => s.info.id === 'good'));
 });
