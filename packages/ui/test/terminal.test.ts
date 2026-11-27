@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import xterm, { type Terminal } from '@xterm/headless';
 import { terminalInput } from '#lib/terminal-input.ts';
-import { TerminalOverlay, screenLines, type OverlayUi } from '#lib/terminal-overlay.ts';
+import { TerminalOverlay, TerminalPane, screenLines, type OverlayUi } from '#lib/terminal-overlay.ts';
 
 const ui: OverlayUi = { CURSOR_MARKER: '<cursor>', renderFakeCursor: text => `<fake>${text}</fake>`, truncateToWidth: (s, n, _ellipsis, pad) => s.slice(0, n).padEnd(pad ? n : 0) };
 const theme = { fg: (_name: string, text: string) => text };
@@ -53,6 +53,28 @@ test('screen rendering preserves styles, wide characters and cursor; never forwa
     assert.match(lines[1], /<cursor><fake> <\/fake>/);
     assert.doesNotMatch(lines.join('\n'), /52;c|c2VjcmV0/);
   } finally { terminal.dispose(); }
+});
+
+test('pane scrollback: scroll back, keep the place while output comes, no cursor there, back to the bottom', async () => {
+  let renders = 0;
+  const pane = new TerminalPane({ getCwd: () => process.cwd(), requestRender: () => { renders++; } });
+  try {
+    pane.resize(20, 3);
+    await write(pane.terminal, Array.from({ length: 10 }, (_, i) => `line ${i}`).join('\r\n'));
+    const text = () => pane.lines(false, ui).map(l => l.replace(/\x1b\[[0-9;]*m/g, '').trimEnd());
+    assert.equal(pane.scrolledBack, 0);
+    assert.deepEqual(text().slice(0, 2), ['line 7', 'line 8']);
+    pane.scrollBy(-4);
+    assert.equal(pane.scrolledBack, 4);
+    assert.deepEqual(text(), ['line 3', 'line 4', 'line 5']);
+    assert.ok(!pane.lines(true, ui).join('').includes('<cursor>'), 'no cursor while scrolled back');
+    await write(pane.terminal, '\r\nline 10');
+    assert.deepEqual(text(), ['line 3', 'line 4', 'line 5'], 'new output keeps a scrolled-back view');
+    pane.scrollToBottom();
+    assert.equal(pane.scrolledBack, 0);
+    assert.deepEqual(text(), ['line 8', 'line 9', 'line 10']);
+    assert.ok(renders > 0);
+  } finally { pane.dispose(); }
 });
 
 test('PTY run, resize, alternate screen, parser replies and disposal', { timeout: 12_000 }, async t => {

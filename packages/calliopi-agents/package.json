@@ -1,0 +1,41 @@
+{
+  "name": "@calliopi/calliopi-agents",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Subagents: a model delegates a task to a child Pi that runs in a pseudo-terminal of the parent, with a contract, a budget and a result it reports through finish; /cl-agents shows them.",
+  "type": "module",
+  "calliopi": {
+    "layer": "app"
+  },
+  "imports": {
+    "#lib/*": "./lib/*",
+    "#extensions/*": "./extensions/*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@calliopi/core": "*",
+    "@calliopi/ui": "*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@types/node": "^22",
+    "typescript": "^5.9",
+    "@earendil-works/pi-tui": "1.5.2"
+  }
+}

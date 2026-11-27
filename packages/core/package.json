@@ -2,7 +2,7 @@
   "name": "@calliopi/core",
   "version": "0.0.0",
   "private": true,
-  "description": "Execution primitives and primitive tools shared by Calliopi layers: fzf selection, program runners, workflows, PR lookup, subscription usage, web_fetch. No runtime dependencies besides Pi.",
+  "description": "Execution primitives and primitive tools shared by Calliopi layers: fzf selection, program runners, workflows, PR lookup, subscription usage, terminal multiplexers, subagent records, web_fetch. No runtime dependencies besides Pi.",
   "type": "module",
   "calliopi": {
     "layer": "core"
@@ -20,6 +20,7 @@
     "./pr-lookup": "./lib/pr-lookup.ts",
     "./usage": "./lib/usage/index.ts",
     "./multiplexer": "./lib/multiplexer/index.ts",
+    "./agents": "./lib/agents/index.ts",
     "./web": "./lib/web/index.ts",
     "./package.json": "./package.json"
   },
