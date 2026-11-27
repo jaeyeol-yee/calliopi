@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CATALOG, loadPi, versionAtLeast } from '../lib/catalog.ts';
-import { cells, formatReport, lineages, saturation, thresholds } from '../lib/report.ts';
+import { cells, formatReport, lineages, median, saturation, thresholds } from '../lib/report.ts';
 import type { RunRecord } from '../lib/run.ts';
 import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
 import { loadTasks, runOracle, snapshot } from '../lib/task.ts';
@@ -24,11 +24,12 @@ test('spec: effort lists expand, replicates need labels, harness and efforts are
   assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, effort: medium }\n  - { model: a/b, effort: medium }\n`), /appears twice/);
   assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, effort: huge }\n`), /unknown effort/);
   assert.throws(() => parseSpec(`name: t\narms: []\n`), /non-empty/);
+  assert.equal(parseSpec(`name: t\nbudgetUsd: 2.5\narms:\n  - { model: a/b }\n`).budgetUsd, 2.5);
   const tasks = loadTasks();
   const problems = checkSpec(spec, await loadPi(), tasks);
   assert.deepEqual(problems, ['claude-fable-5-2@off-bare: anthropic/claude-fable-5-2 does not accept effort off (minimal, low, medium, high, xhigh, max)']);
   const runs = plan(spec, tasks);
-  assert.equal(runs.length, 2 * 4 * 4); // runs × non-smoke tasks × arms
+  assert.equal(runs.length, 2 * 8 * 4); // runs × non-smoke tasks × arms
   assert.equal(runs[0]!.rep, 1); assert.equal(runs.at(-1)!.rep, 2);
 });
 
@@ -47,6 +48,19 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
     answer: 'Renamed.',
   },
   'review/spot-bug': { answer: 'The 5 euro discount uses > instead of >= 100 euros.\nline 6' },
+  'search/trace-port': { answer: 'The staging profile sets 8100 and PORT_OFFSET=2 shifts it.\n8102' },
+  'small-fix/thousands': { edits: [['src/parse.js', ".replace(',', '')", ".replaceAll(',', '')"]], answer: 'Fixed.' },
+  'multi-file/locale': {
+    edits: [
+      ['src/format.js', 'function formatPrice(cents) {\n  return `€${(cents / 100).toFixed(2)}`;', "function formatPrice(cents, locale = 'en') {\n  const [whole, frac] = (cents / 100).toFixed(2).split('.');\n  if (locale === 'de') return `${whole.replace(/\\B(?=(\\d{3})+$)/g, '.')},${frac} €`;\n  return `€${whole}.${frac}`;"],
+      ['src/cart.js', 'function summary(items) {', "function summary(items, locale = 'en') {"],
+      ['src/cart.js', 'formatPrice(cents)', 'formatPrice(cents, locale)'],
+      ['src/invoice.js', 'function invoiceLine(item) {', "function invoiceLine(item, locale = 'en') {"],
+      ['src/invoice.js', 'formatPrice(item.cents * item.qty)', 'formatPrice(item.cents * item.qty, locale)'],
+    ],
+    answer: 'Done.',
+  },
+  'review/pagination': { answer: 'slice already excludes its end, so the last item of each page is lost.\nline 8' },
   'smoke/faux-fix': { edits: [['src/greet.js', "return 'Hello, ';", 'return `Hello, ${name}`;']], answer: 'ok' },
 };
 
@@ -89,6 +103,7 @@ test('report: worst–best repetition, threshold, saturation and lineage deltas'
     rec('opus5@low', 'anthropic/claude-opus-5', 'low', 'small-fix', 2, false, 0.3),
     rec('bare', 'anthropic/claude-sonnet-5-5', 'low', 'small-fix', 1, true, 0.01, 'off'),
   ];
+  assert.deepEqual([median([3, 1, 2]), median([1, 3, 2, 10]), median([])], [2, 2.5, 0]);
   const cs = cells(records);
   const sonnet = cs.find(c => c.arm === 'sonnet@medium')!;
   assert.deepEqual([sonnet.passes, sonnet.runs, sonnet.min, sonnet.max], [1, 2, 0, 1]);

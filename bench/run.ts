@@ -38,7 +38,7 @@ async function main(argv: string[]) {
   const pi = await loadPi();
   const problems = checkSpec(spec, pi, tasks);
   const runs = plan(spec, tasks);
-  console.log(`${spec.name}: ${spec.arms.length} arms × ${runs.length / spec.arms.length / spec.runs} tasks × ${spec.runs} runs = ${runs.length} runs (Pi ${pi.version})`);
+  console.log(`${spec.name}: ${spec.arms.length} arms × ${runs.length / spec.arms.length / spec.runs} tasks × ${spec.runs} runs = ${runs.length} runs (Pi ${pi.version})${spec.budgetUsd !== undefined ? ` · budget $${spec.budgetUsd}` : ''}`);
   for (const arm of spec.arms) {
     const m = pi.get(arm.model);
     console.log(`  ${arm.id}: ${arm.model} effort ${arm.effort} harness ${arm.harness}${m ? ` · $${m.cost.input}/$${m.cost.output} per M` : ''}`);
@@ -52,8 +52,12 @@ async function main(argv: string[]) {
   const harnessSha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim() + (dirty ? '-dirty' : '');
   const installed: PiBinary = { command: 'pi', version: pi.version };
   const dev: PiBinary = { command: path.join(ROOT, 'node_modules', '.bin', 'pi'), version: JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), 'utf8')).version };
+  if (spec.budgetUsd === undefined && runs.some(r => !isFaux(r.arm.model))) throw new Error(`${spec.name}: real models need budgetUsd in the spec`);
+  let spent = 0;
   for (const [i, run] of runs.entries()) {
+    if (spec.budgetUsd !== undefined && spent >= spec.budgetUsd) { console.log(`budget reached: $${spent.toFixed(2)} of $${spec.budgetUsd}; ${runs.length - i} runs not started`); break; }
     const record = runOne(run, { spec: spec.name, harnessSha, outDir, timeoutMinutes: spec.timeoutMinutes, pi: r => (isFaux(r.arm.model) ? dev : installed) });
+    spent += record.signals.cost;
     fs.appendFileSync(path.join(outDir, 'runs.jsonl'), `${JSON.stringify(record)}\n`);
     console.log(`[${i + 1}/${runs.length}] ${record.pass ? 'pass' : 'FAIL'} ${run.task.id} · ${run.arm.id} · rep ${run.rep} · ${(record.ms / 1000).toFixed(0)}s · $${record.signals.cost.toFixed(4)}`);
   }

@@ -4,6 +4,7 @@ name: s1-coarse
 runs: 3
 target: 0.9
 timeoutMinutes: 10
+budgetUsd: 30
 tasks: all
 arms:
   - { model: anthropic/claude-opus-5-5, effort: medium }

@@ -9,9 +9,17 @@ export interface Cell {
   runs: number; passes: number;
   /** Pass rate of the worst and best repetition. */
   min: number; max: number;
-  costPerRun: number; turns: number; tokens: number; cacheHit: number;
+  /** Medians per run, with the range: caching makes one run's cost a poor estimate. */
+  costPerRun: number; costMin: number; costMax: number;
+  turns: number; tokens: number; tokensMin: number; tokensMax: number; cacheHit: number;
   toolErrors: number; parallelShare: number; outOfScope: number; timeouts: number;
 }
+
+export const median = (xs: number[]) => {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b), mid = s.length >> 1;
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+};
 
 const groupBy = <T>(xs: T[], key: (x: T) => string) => {
   const m = new Map<string, T[]>();
@@ -26,11 +34,13 @@ export function cells(records: RunRecord[]): Cell[] {
     const sum = (f: (r: RunRecord) => number) => rs.reduce((a, r) => a + f(r), 0);
     const prompt = sum(r => r.signals.input + r.signals.cacheRead + r.signals.cacheWrite);
     const turns = sum(r => r.signals.turns);
+    const costs = rs.map(r => r.signals.cost), tokens = rs.map(r => r.signals.input + r.signals.output + r.signals.cacheRead + r.signals.cacheWrite);
     return {
       arm: r0.arm, model: r0.model, effort: r0.effort, harness: r0.harness, taskClass: r0.taskClass,
       runs: rs.length, passes: rs.filter(r => r.pass).length, min: Math.min(...byRep), max: Math.max(...byRep),
-      costPerRun: sum(r => r.signals.cost) / rs.length, turns: turns / rs.length,
-      tokens: sum(r => r.signals.input + r.signals.output + r.signals.cacheRead + r.signals.cacheWrite) / rs.length,
+      costPerRun: median(costs), costMin: Math.min(...costs), costMax: Math.max(...costs),
+      turns: median(rs.map(r => r.signals.turns)),
+      tokens: median(tokens), tokensMin: Math.min(...tokens), tokensMax: Math.max(...tokens),
       cacheHit: prompt ? sum(r => r.signals.cacheRead) / prompt : 0,
       toolErrors: sum(r => r.signals.toolErrors), parallelShare: turns ? sum(r => r.signals.parallelCalls) / turns : 0,
       outOfScope: rs.filter(r => r.outOfScope.length).length, timeouts: rs.filter(r => r.timedOut).length,
@@ -38,7 +48,7 @@ export function cells(records: RunRecord[]): Cell[] {
   }).sort((a, b) => a.taskClass.localeCompare(b.taskClass) || a.costPerRun - b.costPerRun);
 }
 
-/** Per class: the cheapest arm (harness on) whose worst repetition reaches the target. */
+/** Per class: the arm (harness on) with the lowest median cost whose worst repetition reaches the target. */
 export function thresholds(cs: Cell[], target: number): Map<string, Cell | undefined> {
   const out = new Map<string, Cell | undefined>();
   for (const [cls, g] of groupBy(cs, c => c.taskClass))
@@ -84,11 +94,12 @@ export function formatReport(records: RunRecord[], target: number): string {
   const prov = [...new Set(records.map(r => `Pi ${r.piVersion} · harness ${r.harnessSha} · tasks ${[...new Set(records.map(x => `${x.task}@v${x.taskVersion}`))].join(', ')}`))];
   const lines = [`# Benchmark: ${[...new Set(records.map(r => r.spec))].join(', ')}`, '', ...prov.map(p => `- ${p}`), `- ${records.length} runs, ${usd(records.reduce((a, r) => a + r.signals.cost, 0))} total`, '',
     '## By arm and task class', '',
-    '| class | arm | harness | pass | worst–best rep | $/run | turns | tokens | cache hit | tool errors | parallel | out of scope | timeouts |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
+    'Cost, turns and tokens are medians per run; ranges are min–max.', '',
+    '| class | arm | harness | pass | worst–best rep | $/run | $ range | turns | tokens | tokens range | cache hit | tool errors | parallel | out of scope | timeouts |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
   for (const c of cs)
-    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${usd(c.costPerRun)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${pct(c.cacheHit)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} |`);
-  lines.push('', `## Threshold per class (cheapest arm whose worst repetition reaches ${pct(target)})`, '');
+    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} |`);
+  lines.push('', `## Threshold per class (lowest median cost among arms whose worst repetition reaches ${pct(target)})`, '');
   for (const [cls, c] of thresholds(cs, target)) lines.push(`- ${cls}: ${c ? `${c.arm} at ${usd(c.costPerRun)}/run` : 'none reaches the target'}`);
   const sat = saturation(cs);
   if (sat.length) { lines.push('', '## Effort saturation (lowest effort with the best pass rate)', ''); for (const s of sat) lines.push(`- ${s.taskClass} · ${s.model}: ${s.effort} (${pct(s.rate)})`); }

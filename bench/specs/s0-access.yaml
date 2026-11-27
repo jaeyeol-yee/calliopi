@@ -2,6 +2,7 @@
 name: s0-access
 runs: 1
 timeoutMinutes: 5
+budgetUsd: 2
 tasks: [search/find-default]
 arms:
   - { model: anthropic/claude-opus-5-5, effort: medium }
