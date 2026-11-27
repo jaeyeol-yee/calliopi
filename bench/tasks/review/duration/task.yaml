@@ -1,0 +1,8 @@
+version: 1
+prompt: |
+  Review src/duration.js against its comments. Do not change any file.
+  List every bug you find. End your answer with one line of the form `lines N, M` naming the line of
+  each bug in ascending order (or `line N` for a single bug).
+oracle:
+  - answer: "^lines 5, 12$"   # a shared /g regex keeps lastIndex after a throw; "<" lets a unit repeat
+  - unchanged: [src/duration.js]

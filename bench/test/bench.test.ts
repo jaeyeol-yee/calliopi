@@ -30,7 +30,7 @@ test('spec: effort lists expand, replicates need labels, harness and efforts are
   const problems = checkSpec(spec, await loadPi(), tasks);
   assert.deepEqual(problems, ['claude-fable-5-2@off-bare: anthropic/claude-fable-5-2 does not accept effort off (minimal, low, medium, high, xhigh, max)']);
   const runs = plan(spec, tasks);
-  assert.equal(runs.length, 2 * 8 * 4); // runs × non-smoke tasks × arms
+  assert.equal(runs.length, 2 * 12 * 4); // runs × non-smoke tasks × arms
   assert.equal(runs[0]!.rep, 1); assert.equal(runs.at(-1)!.rep, 2);
 });
 
@@ -62,6 +62,25 @@ const SOLUTIONS: Record<string, { edits?: [string, string, string][]; answer: st
     answer: 'Done.',
   },
   'review/pagination': { answer: 'slice already excludes its end, so the last item of each page is lost.\nline 8' },
+  'search/direct-callers': { answer: 'reminders.js (mail.sendEmail), signup.js (deliver), broadcast.js (send).\n3' },
+  'small-fix/lru': {
+    edits: [
+      ['src/lru.js', '    return this.map.get(key);', '    if (!this.map.has(key)) return undefined;\n    const value = this.map.get(key);\n    this.map.delete(key);\n    this.map.set(key, value);\n    return value;'],
+      ['src/lru.js', '    this.map.set(key, value);\n    if', '    this.map.delete(key);\n    this.map.set(key, value);\n    if'],
+    ],
+    answer: 'Fixed.',
+  },
+  'multi-file/promisify': {
+    edits: [
+      ['src/store.js', 'function read(key, cb) {\n  setImmediate(() => {\n    if (failNext > 0) { failNext--; return cb(new Error(\'transient\')); }\n    if (!data.has(key)) return cb(new Error(`missing ${key}`));\n    cb(null, data.get(key));\n  });\n}',
+        'function read(key) {\n  return new Promise((resolve, reject) => setImmediate(() => {\n    if (failNext > 0) { failNext--; return reject(new Error(\'transient\')); }\n    if (!data.has(key)) return reject(new Error(`missing ${key}`));\n    resolve(data.get(key));\n  }));\n}'],
+      ['src/retry.js', '*', "const store = require('./store');\nasync function readWithRetry(key, times) {\n  try { return await store.read(key); }\n  catch (err) { if (err.message === 'transient' && times > 1) return readWithRetry(key, times - 1); throw err; }\n}\nmodule.exports = { readWithRetry };\n"],
+      ['src/greet.js', '*', "const { readWithRetry } = require('./retry');\nasync function greeting(name) { return `${await readWithRetry('greeting', 3)}, ${name}`; }\nmodule.exports = { greeting };\n"],
+      ['src/counter.js', '*', "const { readWithRetry } = require('./retry');\nasync function nextCount() { return Number(await readWithRetry('count', 2)) + 1; }\nmodule.exports = { nextCount };\n"],
+    ],
+    answer: 'Done.',
+  },
+  'review/duration': { answer: 'TOKEN is a shared /g regex: after a throw its lastIndex is left set. `<` lets a unit repeat.\nlines 5, 12' },
   'smoke/faux-fix': { edits: [['src/greet.js', "return 'Hello, ';", 'return `Hello, ${name}`;']], answer: 'ok' },
 };
 
@@ -76,6 +95,7 @@ test('each task: a no-op fails its oracle and the reference solution passes it',
       assert.ok(runOracle(task, dir, 'I looked at it.', before).some(c => !c.pass), `${task.id}: a no-op passes`);
       for (const [file, from, to] of solution.edits ?? []) {
         const p = path.join(dir, file), text = fs.readFileSync(p, 'utf8');
+        if (from === '*') { fs.writeFileSync(p, to); continue; } // the whole file
         assert.ok(text.includes(from), `${task.id}: ${file} lacks ${from}`);
         fs.writeFileSync(p, text.replace(from, to));
       }

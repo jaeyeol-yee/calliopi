@@ -1,0 +1,8 @@
+version: 1
+prompt: |
+  How many call sites in src/ call sendEmail directly rather than through notify()? Count each place
+  in the code that invokes sendEmail (under any name), not counting notify() itself, comments or strings.
+  Do not change any file. End your answer with the number alone on the last line.
+oracle:
+  - answer: "^3$"
+  - unchanged: [src/mail/mailer.js, src/jobs/reminders.js, src/api/signup.js, src/admin/broadcast.js]
