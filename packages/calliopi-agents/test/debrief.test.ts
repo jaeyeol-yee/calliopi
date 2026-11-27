@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { debriefFiles, listDebriefs, readDebrief } from '@calliopi/core/debrief';
 import { TerminalPane } from '@calliopi/ui/terminal-overlay';
-import { DEBRIEF_ENV, SYSTEM_PROMPT, debriefConfig, debriefRoot, debriefSpawn, installDebrief, setDebriefConfig, startDebrief, type DebriefSpawn } from '#lib/debrief.ts';
+import { DEBRIEF_ENV, STOP_GRACE_SECONDS, SYSTEM_PROMPT, debriefConfig, debriefRoot, debriefSpawn, installDebrief, setDebriefConfig, startDebrief, type DebriefSpawn } from '#lib/debrief.ts';
 import { CONFIG_FILE } from '#lib/gc.ts';
 import { AGENT_DIR_ENV } from '#lib/launch.ts';
 import { signalsReport } from '#lib/signals.ts';
@@ -78,17 +78,22 @@ test('startDebrief: only when on, saved, flagged, with a model, and not reviewed
   assert.match(prompt, /# Flagged points\n\n## restate at entry u2\n/);
   assert.equal(fs.statSync(files.prompt).mode & 0o777, 0o600);
 
-  // what runs: sh with a time limit, the answer and exit files, then pi without tools or a session
+  // what runs: sh with a time limit and the prompt, answer and exit files, then pi without tools, a session
+  // or discovered extensions. The prompt is a file for its stdin, not an argument anyone can list.
   const s = spawned[0]!;
   assert.equal(s.command, 'sh');
-  assert.deepEqual(s.args.slice(2), ['sh', '300', files.answer, files.exit, 'node', '/pi/cli.js', '-p', '--no-session', '--no-tools', '--no-mcp', '--no-skills', '--no-context-files', '--no-prompt-templates',
-    '-e', '/x/faux.ts', '--model', 'p/m', '--system-prompt', SYSTEM_PROMPT, prompt]);
+  assert.deepEqual(s.args.slice(2), ['sh', '300', String(STOP_GRACE_SECONDS), files.prompt, files.answer, files.exit, 'node', '/pi/cli.js', '-p', '--no-session', '--no-tools', '--no-mcp', '--no-skills', '--no-context-files', '--no-prompt-templates', '--no-extensions',
+    '-e', '/x/faux.ts', '--model', 'p/m', '--system-prompt', SYSTEM_PROMPT]);
+  assert.ok(!s.args.some(a => a.includes(SAME)));
   assert.equal(s.env[DEBRIEF_ENV], '1');
   assert.equal(s.cwd, root);
 
-  // the same session again: not while it has not grown; again once it has, with the old answer cleared
-  assert.deepEqual(start(SMELLY, {}, 2000), { skipped: 'already' });
+  // the same session again: not while the first run goes on, nor after it while the session has not grown;
+  // again once it has, with the old answer cleared
+  const longer0 = [...SMELLY, user('u3', 'and one more unrelated request about the tests'), reply('a3')];
+  assert.deepEqual(start(longer0, {}, 2000), { skipped: 'running' });
   fs.writeFileSync(files.answer, 'old'); fs.writeFileSync(files.exit, '0\n');
+  assert.deepEqual(start(SMELLY, {}, 2000), { skipped: 'already' });
   const longer = [...SMELLY, user('u3', 'and one more unrelated request about the tests'), reply('a3')];
   const second = start(longer, {}, 3000);
   assert.ok('started' in second && second.started.entries === 6);
@@ -97,31 +102,61 @@ test('startDebrief: only when on, saved, flagged, with a model, and not reviewed
 
   // a configured model reviews instead of the session's own
   setDebriefConfig(agentDir, { enabled: true, model: 'other/reviewer' });
+  fs.writeFileSync(files.exit, '0\n');
   const third = start([...longer, user('u4', 'x'), reply('a4')], {}, 4000);
   assert.ok('started' in third && third.started.model === 'other/reviewer');
+
+  // a run that cannot be started leaves no record behind, so the session is tried again next time
+  fs.writeFileSync(files.exit, '0\n');
+  const failed = startDebrief(fakeCtx([...longer, user('u4', 'x'), reply('a4'), user('u5', 'y'), reply('a5')]).ctx as never, { agentDir, spawn: () => { throw new Error('no sh'); }, now: () => 5000, launch: LAUNCH });
+  assert.deepEqual(failed, { skipped: 'not-started' });
+  assert.deepEqual([fs.existsSync(files.record), fs.existsSync(files.prompt)], [false, false]);
 });
 
-test('the runner: the answer and the exit status are written; a run over its time is stopped and nothing is left behind', { timeout: 30_000 }, t => {
+test('the runner: the prompt arrives on stdin and the answer and exit status are written, for this user only; a run over its time is stopped, even one that ignores TERM, and nothing is left behind', { timeout: 60_000 }, async t => {
   const root = tmp(t);
-  const record = { session: 's', sessionFile: '/s', cwd: '/w', model: 'p/m', startedAt: 0, timeoutMs: 1000, entries: 1, points: [] };
   const files = debriefFiles(root, 's')!;
-  // `pi` here is a stand-in script: it gets pi's arguments and prints the last one (the prompt) or sleeps
+  const record = (timeoutMs: number) => ({ session: 's', sessionFile: '/s', cwd: '/w', model: 'p/m', startedAt: 0, timeoutMs, entries: 1, points: [] });
+  // `pi` here is a stand-in script: it reads the prompt from stdin and answers, fails, hangs, or hangs and ignores TERM
   const stand = path.join(root, 'pi.sh');
-  fs.writeFileSync(stand, '#!/bin/sh\nfor a; do last=$a; done\nif [ "$last" = hang ]; then echo started; echo $$ > "$PWD/pid"; exec sleep 30; fi\necho "got: $last"; echo warn >&2; [ "$last" = fail ] && exit 3; exit 0\n', { mode: 0o755 });
-  const run = (prompt: string) => { const s = debriefSpawn(root, record, prompt, { pi: [stand], extensions: [] }, { PATH: process.env.PATH }); return spawnSync(s.command, s.args, { cwd: s.cwd, env: s.env }); };
+  fs.writeFileSync(stand, `#!/bin/sh
+read -r first
+case "$first" in
+  hang) echo started; echo $$ > "${root}/pid"; sleep 300 & echo $! > "${root}/grandchild"; wait ;;
+  stubborn) trap '' TERM; echo started; echo $$ > "${root}/pid"; while :; do sleep 1; done ;;
+  fail) echo warn >&2; exit 3 ;;
+  *) echo "got: $first"; echo warn >&2 ;;
+esac
+`, { mode: 0o755 });
+  const spawnOf = (prompt: string, timeoutMs = 60_000) => { fs.writeFileSync(files.prompt, `${prompt}\n`); return debriefSpawn(root, record(timeoutMs), { pi: [stand], extensions: [] }, { PATH: process.env.PATH }); };
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const until = async (what: string, ok: () => boolean, ms = 20_000) => { for (const end = Date.now() + ms; Date.now() < end && !ok();) await new Promise(r => setTimeout(r, 100)); assert.ok(ok(), what); };
 
-  run('hello there');
+  // not detached here: the shell does not lead a process group, so it sweeps nothing (it would stop this test)
+  const direct = (prompt: string) => { const s = spawnOf(prompt); return spawnSync(s.command, s.args, { cwd: s.cwd, env: s.env }); };
+  direct('hello there');
   assert.deepEqual([fs.readFileSync(files.answer, 'utf8'), fs.readFileSync(files.exit, 'utf8'), fs.readFileSync(files.log, 'utf8')], ['got: hello there\n', '0\n', 'warn\n']);
-  run('fail');
+  assert.deepEqual([files.answer, files.exit, files.log].map(f => fs.statSync(f).mode & 0o777), [0o600, 0o600, 0o600]);
+  direct('fail');
   assert.equal(fs.readFileSync(files.exit, 'utf8'), '3\n');
+  const gone = spawnSync('sh', [...spawnOf('x').args.slice(0, 8), path.join(root, 'no-such-pi')], { cwd: root });
+  assert.equal(gone.status, 0);
+  assert.equal(fs.readFileSync(files.exit, 'utf8'), '127\n'); // a pi that is not there is an error, not a hang
 
-  const before = Date.now();
-  run('hang');
-  assert.ok(Date.now() - before < 10_000, 'stopped at its time limit, not after the 30 seconds it wanted');
-  assert.equal(fs.readFileSync(files.exit, 'utf8'), '143\n');
+  // detached, as the harness starts it: over its time it is asked to stop, and what it started goes with it
+  const runDetached = (prompt: string) => { fs.rmSync(files.exit, { force: true }); const s = spawnOf(prompt, 1000); const child = spawn(s.command, s.args, { cwd: s.cwd, env: s.env, detached: true, stdio: 'ignore' }); child.unref(); return child.pid!; };
+  let runner = runDetached('hang');
+  await until('stopped at its time limit', () => fs.existsSync(files.exit));
+  assert.equal(fs.readFileSync(files.exit, 'utf8'), 'timeout\n');
   assert.equal(fs.readFileSync(files.answer, 'utf8'), 'started\n');
-  const pid = Number(fs.readFileSync(path.join(root, 'pid'), 'utf8'));
-  assert.throws(() => process.kill(pid, 0), /ESRCH/); // the stand-in is gone
+  const pids = () => ['pid', 'grandchild'].map(f => Number(fs.readFileSync(path.join(root, f), 'utf8')));
+  await until('the stand-in, the sleep it started and the runner are gone', () => ![...pids(), runner].some(alive));
+
+  // one that ignores TERM is killed after the grace
+  runner = runDetached('stubborn');
+  await until('killed', () => fs.existsSync(files.exit), (1 + STOP_GRACE_SECONDS + 10) * 1000);
+  assert.equal(fs.readFileSync(files.exit, 'utf8'), 'timeout\n');
+  await until('nothing left', () => !alive(pids()[0]!) && !alive(runner));
 });
 
 /** A Pi stand-in: handlers and commands by name. */
@@ -147,6 +182,8 @@ test('installDebrief: starts on quit, /new and /resume of an interactive session
   assert.equal(spawned.length, 0);
   shutdown('quit', SMELLY);
   assert.equal(spawned.length, 1);
+  shutdown('new', SMELLY); // its review is still going
+  fs.writeFileSync(debriefFiles(debriefRoot(agentDir), 'sess-1')!.exit, '0\n');
   shutdown('new', SMELLY); // reviewed already
   assert.equal(spawned.length, 1);
   shutdown('resume', [...SMELLY, user('u3', 'something else entirely, long enough'), reply('a3')]);

@@ -6,7 +6,7 @@
 //   <root>/<session id>.json       the record: which session, which smells, the model, when it started
 //   <root>/<session id>.prompt.md  what the model was sent
 //   <root>/<session id>.md         its answer (stdout of the run)
-//   <root>/<session id>.exit       the run's exit status, written last; absent while it runs
+//   <root>/<session id>.exit       how the run ended, written last: its exit status, or "timeout"; absent while it runs
 //   <root>/<session id>.md.log     its stderr
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,10 +15,14 @@ import type { SessionEntry, Smell } from '#lib/smells.ts';
 /** Entries shown before and after a flagged one, and characters kept of each piece of text. */
 export const AROUND = 3;
 export const TEXT_CHARS = 400;
+/** Characters kept of a tool call's arguments or a command, and tool calls shown of one reply. */
+export const CALL_CHARS = 200;
+export const MAX_CALLS = 4;
 /** At most this many flagged points go into one debrief (the first ones). */
 export const MAX_POINTS = 8;
 
-const clip = (text: string, n = TEXT_CHARS) => { const t = text.replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}… (+${t.length - n} chars)` : t; };
+// Control characters go too: session text can hold anything a tool printed.
+const clip = (text: string, n = TEXT_CHARS) => { const t = text.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}… (+${t.length - n} chars)` : t; };
 const textOf = (content: unknown): string =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map(b => (typeof b?.text === 'string' ? b.text : '')).filter(Boolean).join(' ') : '';
 
@@ -28,13 +32,15 @@ function entryLines(e: SessionEntry): string[] {
   if (!m) return [];
   const id = typeof e.id === 'string' ? e.id : '?';
   if (m.role === 'user') return [`[${id}] user: ${clip(textOf(m.content))}`];
-  if (m.role === 'bashExecution') return [`[${id}] user ran: ${clip(String(m.command ?? ''), 200)}`];
-  if (m.role === 'toolResult') return [`[${id}] result of ${String(m.toolName ?? 'tool')}${m.isError ? ' (error)' : ''}: ${clip(textOf(m.content))}`];
+  if (m.role === 'bashExecution') return [`[${id}] user ran: ${clip(String(m.command ?? ''), CALL_CHARS)}`];
+  if (m.role === 'toolResult') return [`[${id}] result of ${clip(String(m.toolName ?? 'tool'), 64)}${m.isError ? ' (error)' : ''}: ${clip(textOf(m.content))}`];
   if (m.role !== 'assistant') return [];
   const lines: string[] = [];
   const said = clip(textOf(m.content));
   if (said) lines.push(`[${id}] assistant: ${said}`);
-  for (const b of Array.isArray(m.content) ? m.content : []) if (b?.type === 'toolCall') lines.push(`[${id}] assistant calls ${String(b.name)}: ${clip(JSON.stringify(b.arguments ?? {}), 200)}`);
+  const calls = (Array.isArray(m.content) ? m.content : []).filter(b => b?.type === 'toolCall');
+  for (const b of calls.slice(0, MAX_CALLS)) lines.push(`[${id}] assistant calls ${clip(String(b.name), 64)}: ${clip(JSON.stringify(b.arguments ?? {}), CALL_CHARS)}`);
+  if (calls.length > MAX_CALLS) lines.push(`[${id}] (+${calls.length - MAX_CALLS} more calls)`);
   if (m.stopReason === 'aborted' || m.stopReason === 'error') lines.push(`[${id}] (the reply ended: ${m.stopReason})`);
   return lines;
 }
@@ -116,7 +122,7 @@ export function readDebrief(root: string, session: string, now = Date.now()): De
   let exit: string | undefined;
   try { exit = fs.readFileSync(files.exit, 'utf8').trim(); } catch { /* still running, or lost */ }
   const status: DebriefStatus = exit === undefined ? (now - record.startedAt > (record.timeoutMs || 0) + LOST_GRACE_MS ? 'lost' : 'running')
-    : exit === '0' && text ? 'done' : exit === '143' || exit === '137' ? 'timeout' : 'error';
+    : exit === '0' && text ? 'done' : exit === 'timeout' || exit === '143' || exit === '137' ? 'timeout' : 'error';
   return { record, status, text };
 }
 

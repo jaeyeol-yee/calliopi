@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AROUND, DEBRIEF_INSTRUCTIONS, LOST_GRACE_MS, MAX_POINTS, TEXT_CHARS, debriefFiles, debriefPrompt, debriefSummary, excerpt, formatDebriefs, listDebriefs, readDebrief, type DebriefRecord } from '#lib/debrief.ts';
+import { AROUND, CALL_CHARS, DEBRIEF_INSTRUCTIONS, MAX_CALLS, LOST_GRACE_MS, MAX_POINTS, TEXT_CHARS, debriefFiles, debriefPrompt, debriefSummary, excerpt, formatDebriefs, listDebriefs, readDebrief, type DebriefRecord } from '#lib/debrief.ts';
 import type { SessionEntry, Smell } from '#lib/smells.ts';
 
 const tmp = (t: { after: (fn: () => void) => void }) => {
@@ -39,6 +39,13 @@ test('excerpt: a few entries around each flagged one, cut short, the flagged one
   const many = excerpt(entries, Array.from({ length: MAX_POINTS + 3 }, (_, i) => smell('restate', `u${i % 10}`)));
   assert.equal(many.points.length, MAX_POINTS);
   assert.deepEqual(excerpt([], [smell('restate', 'u1')]), { text: '', points: [] });
+  // control characters never reach the prompt; a reply with many calls shows the first few, each cut short
+  const noisy = [msg('n1', { role: 'assistant', content: [{ type: 'text', text: 'a\u0000b\u001b[31mc\u007f' }, ...Array.from({ length: MAX_CALLS + 2 }, () => ({ type: 'toolCall', name: 'bash', arguments: { command: 'y'.repeat(CALL_CHARS * 2) } }))] })];
+  const shown = excerpt(noisy, [smell('repeat', 'n1')]).text;
+  assert.doesNotMatch(shown, /[\u0000-\u0009\u000b-\u001f\u007f]/);
+  assert.equal(shown.split('\n').filter(l => l.includes('assistant calls bash')).length, MAX_CALLS);
+  assert.ok(shown.endsWith('>> [n1] (+2 more calls)'));
+  assert.ok(shown.split('\n').every(l => l.length < CALL_CHARS + 80));
 });
 
 test('debriefPrompt: the instructions, then the points; the instructions ask for a verdict and a summary line', () => {
@@ -69,7 +76,7 @@ test('readDebrief: the status comes from the exit file, the answer and the time'
   write(root, record(), { answer: ' ### restate\nSummary: 1 problems of 1 flagged\n', exit: '0' });
   const done = readDebrief(root, 's-1')!;
   assert.deepEqual([done.status, done.text, done.record.model], ['done', '### restate\nSummary: 1 problems of 1 flagged', 'p/m']);
-  for (const [answer, exit, status] of [['', '0', 'error'], ['partial', '143', 'timeout'], ['partial', '137', 'timeout'], ['', '1', 'error'], ['text', '2', 'error']] as const) {
+  for (const [answer, exit, status] of [['', '0', 'error'], ['partial', '143', 'timeout'], ['partial', '137', 'timeout'], ['partial', 'timeout', 'timeout'], ['', '1', 'error'], ['text', '2', 'error']] as const) {
     write(root, record(), { answer, exit });
     assert.equal(readDebrief(root, 's-1')!.status, status, `${exit} with ${answer ? 'an' : 'no'} answer`);
   }

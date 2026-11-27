@@ -1,7 +1,7 @@
 // Debriefs: when a top-level session ends with a smell, a separate `pi -p` reviews short excerpts
 // around the flagged points and writes its reading to a file (@calliopi/core/debrief). The run is
-// detached from this Pi, so it goes on after Pi quits, has no tools and saves no session, is stopped
-// after a time limit, and ends by itself; nothing waits for it. It is off until turned on with
+// detached from this Pi, so it goes on after Pi quits, has no tools, loads no discovered extension and
+// saves no session, is stopped after a time limit, and ends by itself; nothing waits for it. It is off until turned on with
 // /cl-debrief on: every run is a model call, and it sends excerpts of the session to that model.
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -24,7 +24,7 @@ export interface DebriefConfig { enabled: boolean; model?: string; timeoutMinute
 /** `<Pi agent dir>/calliopi-agents.json`: `{ "debrief": { "enabled": true, "model": "provider/id", "timeoutMinutes": 5 } }`. */
 export function debriefConfig(agentDir: string): DebriefConfig {
   const c = readJson<{ debrief?: { enabled?: unknown; model?: unknown; timeoutMinutes?: unknown } }>(path.join(agentDir, CONFIG_FILE))?.debrief ?? {};
-  const minutes = typeof c.timeoutMinutes === 'number' && Number.isFinite(c.timeoutMinutes) && c.timeoutMinutes > 0 ? Math.min(c.timeoutMinutes, 60) : DEFAULT_TIMEOUT_MINUTES;
+  const minutes = typeof c.timeoutMinutes === 'number' && Number.isFinite(c.timeoutMinutes) && c.timeoutMinutes > 0 ? Math.min(Math.max(c.timeoutMinutes, 1), 60) : DEFAULT_TIMEOUT_MINUTES;
   return { enabled: c.enabled === true, model: typeof c.model === 'string' && /^[\w.:@-]+\/[\w.:@/-]+$/.test(c.model) ? c.model : undefined, timeoutMinutes: minutes };
 }
 /** Changes the debrief settings and leaves the rest of the file as it is. */
@@ -39,18 +39,32 @@ export function setDebriefConfig(agentDir: string, change: { enabled: boolean; m
 export interface DebriefSpawn { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }
 export type Spawn = (s: DebriefSpawn) => void;
 
-// Runs the command given after `sh` with its output in the answer file, stops it after $1 seconds, and
-// writes its exit status last (143 when it was stopped). The timer's own sleep is ended with it, so no
-// process is left behind either way.
+/** Seconds between asking a run over its time to stop (TERM) and stopping it (KILL): Pi's print mode cleans up on TERM. */
+export const STOP_GRACE_SECONDS = 5;
+
+// Runs the command given after the first arguments with the prompt file on its stdin (so the excerpts
+// are not on a command line for `ps` to show) and its output in the answer file, and writes how it
+// ended last: its exit status, or "timeout" when it had to be stopped after $1 seconds (TERM, then KILL
+// after a grace). Files are made for this user only. The timer counts in one-second sleeps and holds
+// none of this shell's streams, so stopping it leaves at most a sleep that ends within a second. When
+// this shell leads its own process group, as it does when started detached, whatever is left in the
+// group at the end (anything the command started) is stopped too.
 const RUNNER = [
-  'secs=$1; answer=$2; exitfile=$3; shift 3',
-  '"$@" > "$answer" 2> "$answer.log" < /dev/null &',
+  'umask 077',
+  'secs=$1; grace=$2; prompt=$3; answer=$4; exitfile=$5; shift 5',
+  'rm -f "$exitfile.timeout"',
+  '"$@" < "$prompt" > "$answer" 2> "$answer.log" &',
   'pid=$!',
-  '( sleep "$secs" & s=$!; trap \'kill $s 2>/dev/null; exit 0\' TERM; wait $s; kill $pid 2>/dev/null ) &',
+  '( i=0; while [ $i -lt "$secs" ]; do sleep 1; i=$((i+1)); done',
+  '  : > "$exitfile.timeout"; kill -TERM $pid 2>/dev/null',
+  '  i=0; while [ $i -lt "$grace" ]; do sleep 1; i=$((i+1)); done',
+  '  kill -KILL $pid 2>/dev/null ) < /dev/null > /dev/null 2>&1 &',
   'timer=$!',
   'wait $pid; code=$?',
   'kill $timer 2>/dev/null',
+  'if [ -f "$exitfile.timeout" ]; then code=timeout; rm -f "$exitfile.timeout"; fi',
   'echo $code > "$exitfile"',
+  'if [ "$(ps -o pgid= -p $$ 2>/dev/null | tr -d \' \')" = "$$" ]; then trap \'\' TERM; kill -TERM 0 2>/dev/null; sleep 1; kill -KILL 0 2>/dev/null; fi',
 ].join('\n');
 
 const detached: Spawn = s => {
@@ -59,21 +73,25 @@ const detached: Spawn = s => {
   child.unref();
 };
 
-/** What starts a review of `record`, whose prompt is already in its file. */
-export function debriefSpawn(root: string, record: DebriefRecord, prompt: string, launch: { pi: string[]; extensions: string[] }, env: NodeJS.ProcessEnv = process.env): DebriefSpawn {
+/**
+ * What starts a review of `record`, whose prompt is already in its file. The reviewing Pi loads no
+ * extension it would discover or find in settings (--no-extensions): only those this Pi was given on
+ * its command line, which is how a model that an extension provides can still review.
+ */
+export function debriefSpawn(root: string, record: DebriefRecord, launch: { pi: string[]; extensions: string[] }, env: NodeJS.ProcessEnv = process.env): DebriefSpawn {
   const files = debriefFiles(root, record.session)!;
   return {
     command: 'sh',
-    args: ['-c', RUNNER, 'sh', String(Math.round(record.timeoutMs / 1000)), files.answer, files.exit,
-      ...launch.pi, '-p', '--no-session', '--no-tools', '--no-mcp', '--no-skills', '--no-context-files', '--no-prompt-templates',
-      ...launch.extensions.flatMap(e => ['-e', e]), '--model', record.model, '--system-prompt', SYSTEM_PROMPT, prompt],
+    args: ['-c', RUNNER, 'sh', String(Math.max(1, Math.round(record.timeoutMs / 1000))), String(STOP_GRACE_SECONDS), files.prompt, files.answer, files.exit,
+      ...launch.pi, '-p', '--no-session', '--no-tools', '--no-mcp', '--no-skills', '--no-context-files', '--no-prompt-templates', '--no-extensions',
+      ...launch.extensions.flatMap(e => ['-e', e]), '--model', record.model, '--system-prompt', SYSTEM_PROMPT],
     cwd: root, // not the project: nothing of it is read
     env: { ...env, [DEBRIEF_ENV]: '1' },
   };
 }
 
 /** Why no debrief was started, or the record of the one that was. */
-export type Started = { started: DebriefRecord } | { skipped: 'off' | 'no-session-file' | 'no-smell' | 'no-model' | 'already' | 'bad-id' };
+export type Started = { started: DebriefRecord } | { skipped: 'off' | 'no-session-file' | 'no-smell' | 'no-model' | 'already' | 'running' | 'bad-id' | 'not-started' };
 
 /** Starts a debrief of the session in `ctx` if it is due. Never throws; nothing is awaited. */
 export function startDebrief(ctx: Pick<ExtensionContext, 'sessionManager' | 'model' | 'cwd'>, opts: { agentDir: string; spawn?: Spawn; now?: () => number; launch?: { pi: string[]; extensions: string[] } }): Started {
@@ -93,16 +111,21 @@ export function startDebrief(ctx: Pick<ExtensionContext, 'sessionManager' | 'mod
   const now = (opts.now ?? Date.now)();
   // Reviewed already and not grown since (a session that was resumed and went on is reviewed again).
   const before = readDebrief(root, session, now);
+  if (before?.status === 'running') return { skipped: 'running' }; // two runs would write the same files
   if (before && before.record.entries >= entries.length) return { skipped: 'already' };
   const record: DebriefRecord = {
     session, sessionFile, cwd: ctx.cwd, model, startedAt: now, timeoutMs: config.timeoutMinutes * 60_000, entries: entries.length,
     points: points.map(p => ({ kind: p.kind, entry: p.entry, detail: p.detail })),
   };
-  const prompt = debriefPrompt(text);
-  for (const f of [files.answer, files.exit, files.log]) fs.rmSync(f, { force: true });
-  fs.writeFileSync(files.prompt, prompt, { mode: 0o600 });
+  for (const f of [files.answer, files.exit, files.log, files.prompt]) fs.rmSync(f, { force: true });
+  fs.writeFileSync(files.prompt, debriefPrompt(text), { mode: 0o600 });
   writeJson(files.record, record);
-  (opts.spawn ?? detached)(debriefSpawn(root, record, prompt, opts.launch ?? { pi: piInvocation(), extensions: extensionArgs() }));
+  try { (opts.spawn ?? detached)(debriefSpawn(root, record, opts.launch ?? { pi: piInvocation(), extensions: extensionArgs() })); }
+  catch {
+    // Nothing runs: leave no record that would read as running and keep the session from being tried again.
+    for (const f of [files.record, files.prompt]) fs.rmSync(f, { force: true });
+    return { skipped: 'not-started' };
+  }
   return { started: record };
 }
 
