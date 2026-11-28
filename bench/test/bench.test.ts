@@ -8,7 +8,7 @@ import { cells, drops, formatReport, lineages, median, saturation, thresholds } 
 import { formatRescore, rescore } from '../rescore.ts';
 import { collectChildren, sessionSignals, type RunRecord } from '../lib/run.ts';
 import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
-import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
+import { checkSpec, parseSpec, plan, selectArms } from '../lib/spec.ts';
 import { nextRun } from '../lib/schedule.ts';
 import { createRequire } from 'node:module';
 import { answerBlocks, citedLines, contentSize, loadTasks, parseTask, runOracle, snapshot, taskGroup, type Task } from '../lib/task.ts';
@@ -494,4 +494,15 @@ test('drops: strict passes per effort in order, against the best, paired by task
   const [noisy] = drops([...records, ...replicate]);
   assert.deepEqual([noisy!.noise, noisy!.cells[0]!.cliff], [2, false]);
   assert.match(formatReport(records, 0.9), /- review · anthropic\/claude-sonnet-5-5: low 1\/3 \(-67pp, lost 2 ▼; citation −2\) │ medium 3\/3 ★ │ high 2\/3 \(-33pp, lost 1; citation −1\)/);
+});
+
+test('arms: a run can keep to some providers, and leaves optional arms out unless asked', () => {
+  const spec = parseSpec(`name: t\narms:\n  - { model: anthropic/a }\n  - { model: openai/b }\n  - { model: openai/c, optional: true }\n`);
+  const ids = (f: Parameters<typeof selectArms>[1]) => selectArms(spec, f).spec.arms.map(a => a.id);
+  assert.deepEqual(ids({}), ['a@medium', 'b@medium']);
+  assert.deepEqual(ids({ optional: true }), ['a@medium', 'b@medium', 'c@medium']);
+  assert.deepEqual(ids({ providers: ['openai'] }), ['b@medium']);
+  assert.deepEqual(ids({ providers: ['openai'], optional: true }), ['b@medium', 'c@medium']);
+  assert.deepEqual(selectArms(spec, { providers: ['anthropic'] }).left, [{ arm: 'b@medium', why: 'provider openai' }, { arm: 'c@medium', why: 'provider openai' }]);
+  assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, optional: yes please }\n`), /optional/);
 });

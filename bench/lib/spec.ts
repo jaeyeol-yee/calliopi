@@ -16,6 +16,7 @@
 //     - { model: openai/gpt-6.2-sol, effort: [low, medium, high] }
 //     - { model: anthropic/claude-fable-5-2, effort: medium, harness: off }
 //     - { model: openai/gpt-6.2-sol, effort: medium, harnessRef: main }   # Calliopi as of a git ref
+//     - { model: openai/gpt-6.2-astra, effort: medium, optional: true }   # runs only with --optional
 import YAML from 'yaml';
 import { EFFORTS, catalogModel, type PiCatalog } from './catalog.ts';
 import type { Task } from './task.ts';
@@ -30,6 +31,8 @@ export interface Arm {
   harness: Harness;
   /** With harness on: run Calliopi as of this git ref (a worktree) instead of the working tree. */
   harnessRef?: string;
+  /** Left out unless the run asks for optional arms (--optional): costly flagships, for instance. */
+  optional?: boolean;
   /** For faux/* models: the scripted replies (see bench/faux-extension.ts). */
   faux?: unknown[];
 }
@@ -75,6 +78,7 @@ export function parseSpec(text: string): Spec {
   for (const [i, a] of (raw.arms as Record<string, unknown>[]).entries()) {
     if (!a || typeof a.model !== 'string') throw new Error(`spec: arms[${i}] needs a model`);
     const harness = a.harness === undefined || a.harness === 'on' ? 'on' : a.harness === 'off' ? 'off' : (() => { throw new Error(`spec: arms[${i}].harness must be on or off`); })();
+    if (a.optional !== undefined && typeof a.optional !== 'boolean') throw new Error(`spec: arms[${i}].optional must be true or false`);
     const ref = a.harnessRef === undefined ? undefined : String(a.harnessRef);
     if (ref !== undefined && (harness === 'off' || !/^[\w./-]+$/.test(ref) || ref.startsWith('-'))) throw new Error(`spec: arms[${i}].harnessRef must be a plain git ref, with harness on`);
     const efforts = (Array.isArray(a.effort) ? a.effort : [a.effort ?? 'medium']).map(String);
@@ -83,7 +87,7 @@ export function parseSpec(text: string): Spec {
       const base = a.label ? String(a.label) : `${short(a.model)}@${effort}${harness === 'off' ? '-bare' : ''}${ref ? `@${ref}` : ''}`;
       const id = a.label && efforts.length > 1 ? `${base}@${effort}` : base;
       if (arms.some(x => x.id === id)) throw new Error(`spec: arm "${id}" appears twice; give a replicate a label`);
-      arms.push({ id, model: a.model, effort, harness, ...(ref ? { harnessRef: ref } : {}), ...(Array.isArray(a.faux) ? { faux: a.faux } : {}) });
+      arms.push({ id, model: a.model, effort, harness, ...(ref ? { harnessRef: ref } : {}), ...(a.optional ? { optional: true } : {}), ...(Array.isArray(a.faux) ? { faux: a.faux } : {}) });
     }
   }
   const concurrency = num(raw.concurrency, 1, 'concurrency'), perProvider = raw.perProvider === undefined ? undefined : num(raw.perProvider, 1, 'perProvider');
@@ -104,6 +108,25 @@ export function checkSpec(spec: Spec, pi: PiCatalog, tasks: Task[]): string[] {
   }
   if (spec.tasks !== 'all') for (const id of spec.tasks) if (!tasks.some(t => t.id === id)) problems.push(`unknown task ${id}`);
   return problems;
+}
+
+export interface ArmFilter {
+  /** Run only arms of these providers (the part of the model before the slash). */
+  providers?: string[];
+  /** Include arms marked optional. */
+  optional?: boolean;
+}
+
+/** The arms a run uses: within the providers asked for, optional ones only when asked. */
+export function selectArms(spec: Spec, filter: ArmFilter): { spec: Spec; left: { arm: string; why: string }[] } {
+  const left: { arm: string; why: string }[] = [];
+  const arms = spec.arms.filter(arm => {
+    const provider = arm.model.split('/')[0]!;
+    if (filter.providers?.length && !filter.providers.includes(provider)) { left.push({ arm: arm.id, why: `provider ${provider}` }); return false; }
+    if (arm.optional && !filter.optional) { left.push({ arm: arm.id, why: 'optional' }); return false; }
+    return true;
+  });
+  return { spec: { ...spec, arms }, left };
 }
 
 export const selectTasks = (spec: Spec, tasks: Task[]) =>

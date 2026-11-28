@@ -9,10 +9,10 @@ tasks: all
 arms:
   - { model: anthropic/claude-opus-5-5, effort: medium }
   - { model: anthropic/claude-opus-5-5, effort: medium, label: opus-5-5@medium-replicate }
-  - { model: anthropic/claude-fable-5-2, effort: medium }
+  - { model: anthropic/claude-fable-5-2, effort: medium, optional: true }
   - { model: anthropic/claude-sonnet-5-5, effort: medium }
-  - { model: openai/gpt-6.2-astra, effort: medium }
+  - { model: openai/gpt-6.2-astra, effort: medium, optional: true }
   - { model: openai/gpt-6.2-sol, effort: medium }
   - { model: openai/gpt-6.1-terra, effort: medium }
-  - { model: anthropic/claude-fable-5-2, effort: medium, harness: off }
-  - { model: openai/gpt-6.2-astra, effort: medium, harness: off }
+  - { model: anthropic/claude-fable-5-2, effort: medium, harness: off, optional: true }
+  - { model: openai/gpt-6.2-astra, effort: medium, harness: off, optional: true }

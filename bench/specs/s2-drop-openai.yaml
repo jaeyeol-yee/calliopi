@@ -11,4 +11,4 @@ tasks: all
 arms:
   - { model: openai/gpt-6.1-terra, effort: [low, medium, high, xhigh] }
   - { model: openai/gpt-6.2-sol, effort: [low, medium, high, xhigh] }
-  - { model: openai/gpt-6.2-astra, effort: [low, medium, high, xhigh] }
+  - { model: openai/gpt-6.2-astra, effort: [low, medium, high, xhigh], optional: true }
