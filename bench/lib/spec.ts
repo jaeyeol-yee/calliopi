@@ -7,6 +7,8 @@
 //   target: 0.9            # pass rate a class threshold must reach in every repetition
 //   timeoutMinutes: 10
 //   budgetUsd: 30          # stop starting runs once this invocation has spent this much
+//   concurrency: 4         # runs at once (default 1); --jobs N overrides it
+//   perProvider: 2         # runs at once per provider (default: as many as at once)
 //   tasks: all             # or a list of task ids (class/name)
 //   arms:
 //     - { model: anthropic/claude-opus-5-5, effort: medium }
@@ -37,8 +39,11 @@ export interface Spec {
   runs: number;
   target: number;
   timeoutMinutes: number;
-  /** Dollars this invocation may spend; no new run starts once it is reached. */
+  /** Dollars this invocation may spend; no new run starts once it is reached (runs already going finish). */
   budgetUsd?: number;
+  /** Runs at once, and at once per provider (absent: as many as at once). */
+  concurrency: number;
+  perProvider?: number;
   /** 'all' or task ids. */
   tasks: 'all' | string[];
   arms: Arm[];
@@ -81,7 +86,9 @@ export function parseSpec(text: string): Spec {
       arms.push({ id, model: a.model, effort, harness, ...(ref ? { harnessRef: ref } : {}), ...(Array.isArray(a.faux) ? { faux: a.faux } : {}) });
     }
   }
-  return { name, runs, target, timeoutMinutes: num(raw.timeoutMinutes, 10, 'timeoutMinutes'), ...(raw.budgetUsd !== undefined ? { budgetUsd: num(raw.budgetUsd, 0, 'budgetUsd') } : {}), tasks, arms };
+  const concurrency = num(raw.concurrency, 1, 'concurrency'), perProvider = raw.perProvider === undefined ? undefined : num(raw.perProvider, 1, 'perProvider');
+  if (!Number.isInteger(concurrency) || (perProvider !== undefined && !Number.isInteger(perProvider)) || concurrency > 16) throw new Error('spec: concurrency and perProvider are whole numbers, concurrency at most 16');
+  return { name, runs, target, timeoutMinutes: num(raw.timeoutMinutes, 10, 'timeoutMinutes'), concurrency, ...(perProvider !== undefined ? { perProvider } : {}), ...(raw.budgetUsd !== undefined ? { budgetUsd: num(raw.budgetUsd, 0, 'budgetUsd') } : {}), tasks, arms };
 }
 
 /** Problems that would make runs fail or mean something else than the spec says. */
