@@ -174,9 +174,10 @@ pi install ~/agent-labs/calliopi
 | 명령 | 내용 |
 |---|---|
 | `npm run check:imports` | import 규칙·계층 검사 |
+| `npm run check:version` | 모든 패키지 버전이 같고 고정된 Pi 버전을 따르는지 검사 ([CONTRIBUTING.md](CONTRIBUTING.md#버전)) |
 | `npm run typecheck` | 각 패키지 `tsc -p .` |
 | `npm test` | 각 패키지 `node --test` |
-| `npm run check` | 위 세 가지를 순서대로, 첫 실패에서 중단 |
+| `npm run check` | 위 검사와 demo·bench 테스트를 순서대로, 첫 실패에서 중단 |
 
 한 패키지만 돌리려면 `npm test -w @calliopi/ui`처럼 `-w`를 붙입니다.
 

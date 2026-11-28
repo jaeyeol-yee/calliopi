@@ -1,6 +1,6 @@
 {
   "name": "@calliopi/core",
-  "version": "0.0.0",
+  "version": "1.7.0",
   "private": true,
   "description": "Execution primitives and primitive tools shared by Calliopi layers: fzf selection, program runners, workflows, PR lookup, subscription usage, terminal multiplexers, subagent records, web_fetch. No runtime dependencies besides Pi.",
   "type": "module",

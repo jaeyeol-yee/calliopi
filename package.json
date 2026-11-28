@@ -1,6 +1,6 @@
 {
   "name": "calliopi",
-  "version": "0.0.0",
+  "version": "1.7.0",
   "private": true,
   "description": "A modular, local-first harness for Pi.",
   "type": "module",
@@ -37,9 +37,12 @@
   },
   "scripts": {
     "check:imports": "node scripts/check-imports.ts",
+    "check:version": "node scripts/version.ts check",
+    "version:bump": "node scripts/version.ts bump",
+    "version:sync": "node scripts/version.ts sync",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "check": "npm run check:imports && npm run typecheck && npm test && npm run demo:test && npm run bench:test",
+    "check": "npm run check:imports && npm run check:version && npm run typecheck && npm test && npm run demo:test && npm run bench:test",
     "demo": "node demo/build.ts",
     "demo:check": "node demo/build.ts --check",
     "demo:test": "tsc -p demo && node --test demo/test/*.test.ts",
