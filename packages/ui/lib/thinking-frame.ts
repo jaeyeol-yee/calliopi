@@ -32,7 +32,7 @@ export class ThinkingFrame implements Component {
     this.region = region; this.hidden = hidden; this.pad = pad; this.paint = paint;
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     const p = this.paint();
     const indent = ' '.repeat(this.pad + 1);
     const box = width - indent.length - this.pad; // frame spans indent … right padding
