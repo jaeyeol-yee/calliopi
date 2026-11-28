@@ -7,8 +7,8 @@ runs: 2
 target: 0.9
 timeoutMinutes: 10
 budgetUsd: 30
-concurrency: 6
-perProvider: 4
+concurrency: 10
+perProvider: 6
 tasks: all
 arms:
   - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, max] }

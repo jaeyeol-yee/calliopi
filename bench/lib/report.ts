@@ -117,6 +117,75 @@ export function saturation(cs: Cell[]): { taskClass: string; model: string; effo
 }
 
 /** Same lineage, same effort and harness: versions side by side, newest last, with the change in pass rate. */
+/** Lost tasks that count as a drop when no replicate measured the noise. */
+export const DROP_MIN = 2;
+
+export interface DropCell {
+  effort: string; passes: number; runs: number;
+  /** The best effort of the row (highest strict pass, the lowest effort among ties). */
+  best: boolean;
+  /** Runs passed at the best effort and failed here, paired by task and repetition. */
+  lost: number;
+  /** Strict pass rate here minus at the best effort. */
+  delta: number;
+  /** A drop beyond the noise: lost at least max(DROP_MIN, the noise + 1). */
+  cliff: boolean;
+  /** Dimensions that passed fewer paired runs here than at the best effort, with how many fewer; extra findings and timeouts likewise. */
+  worse: string[];
+}
+
+export interface DropRow { model: string; taskClass: string; noise?: number; cells: DropCell[] }
+
+/**
+ * How far the strict pass falls from each model's best effort, per task class, efforts in order (low →
+ * max). Runs are paired by task and repetition, so a drop counts the tasks an effort lost, not a rate of
+ * different samples. The noise is the most runs two replicate arms (same model, effort and harness) of
+ * the class disagreed on; without replicates a drop needs DROP_MIN lost runs.
+ */
+export function drops(records: RunRecord[]): DropRow[] {
+  const ok = records.filter(r => !r.error && r.harness === 'on');
+  const order = (e: string) => EFFORTS.indexOf(e as never);
+  const key = (r: RunRecord) => `${r.task}\0${r.rep}`;
+  const out: DropRow[] = [];
+  for (const g of groupBy(ok, r => `${r.model}\0${r.taskClass}`).values()) {
+    const byArm = groupBy(g, r => r.arm);
+    // replicates: arms of one effort; the noise is the most paired runs any two disagree on
+    let noise: number | undefined;
+    for (const same of groupBy([...byArm.values()], rs => rs[0]!.effort).values()) {
+      for (let i = 0; i < same.length; i++) for (let j = i + 1; j < same.length; j++) {
+        const b = new Map(same[j]!.map(r => [key(r), r.pass]));
+        const flips = same[i]!.filter(r => b.has(key(r)) && b.get(key(r)) !== r.pass).length;
+        noise = Math.max(noise ?? 0, flips);
+      }
+    }
+    const byEffort = [...groupBy(g, r => r.effort).values()]
+      .map(rs => (rs.some(r => r.arm !== rs[0]!.arm) ? rs.filter(r => r.arm === rs[0]!.arm) : rs)) // one arm per effort
+      .sort((a, b) => order(a[0]!.effort) - order(b[0]!.effort));
+    if (byEffort.length < 2) continue;
+    const rate = (rs: RunRecord[]) => rs.filter(r => r.pass).length / rs.length;
+    const top = byEffort.reduce((best, rs) => (rate(rs) > rate(best) ? rs : best));
+    const at = new Map(top.map(r => [key(r), r]));
+    const cells = byEffort.map(rs => {
+      const paired = rs.filter(r => at.has(key(r)));
+      const lost = paired.filter(r => at.get(key(r))!.pass && !r.pass).length;
+      const worse: string[] = [];
+      for (const d of DIMENSIONS) {
+        const here = paired.filter(r => r.dimensions?.[d] !== undefined);
+        const fewer = here.filter(r => at.get(key(r))!.dimensions?.[d] === true).length - here.filter(r => r.dimensions?.[d] === true).length;
+        if (here.length && fewer > 0) worse.push(`${d} −${fewer}`);
+      }
+      const extra = paired.reduce((a, r) => a + (r.extraFindings ?? 0) - (at.get(key(r))!.extraFindings ?? 0), 0);
+      if (extra > 0) worse.push(`extra findings +${extra}`);
+      const timeouts = paired.filter(r => r.timedOut).length - paired.filter(r => at.get(key(r))!.timedOut).length;
+      if (timeouts > 0) worse.push(`timeouts +${timeouts}`);
+      const best = rs === top;
+      return { effort: rs[0]!.effort, passes: rs.filter(r => r.pass).length, runs: rs.length, best, lost, delta: rate(rs) - rate(top), cliff: !best && lost >= Math.max(DROP_MIN, (noise ?? -1) + 1), worse: best ? [] : worse };
+    });
+    out.push({ model: g[0]!.model, taskClass: g[0]!.taskClass, ...(noise !== undefined ? { noise } : {}), cells });
+  }
+  return out.sort((a, b) => a.taskClass.localeCompare(b.taskClass) || a.model.localeCompare(b.model));
+}
+
 export function lineages(cs: Cell[]): { lineage: string; taskClass: string; effort: string; versions: { model: string; rate: number; delta?: number }[] }[] {
   const known = cs.filter(c => catalogModel(c.model));
   const out = [];
@@ -154,6 +223,14 @@ export function formatReport(records: RunRecord[], target: number): string {
     lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${dims(c)} | ${c.dimensions.citation ? `${c.extraFindings} (${c.extraRuns})` : '–'} | ${c.answerWords === undefined ? '–' : Math.round(c.answerWords)} | ${c.surplusShare === undefined ? '–' : `${pct(c.neededShare!)} / ${pct(c.allowedShare!)} / ${pct(c.surplusShare)}`} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.tokPerSec === undefined ? '–' : c.tokPerSec.toFixed(0)} | ${c.modelShare === undefined ? '–' : pct(c.modelShare)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} | ${c.delegations} (${c.childrenStopped}) | ${c.errors} |`);
   lines.push('', `## Threshold per class (lowest median cost among arms whose worst repetition reaches ${pct(target)} in strict passes)`, '');
   for (const [cls, c] of thresholds(cs, target)) lines.push(`- ${cls}: ${c ? `${c.arm} at ${usd(c.costPerRun)}/run` : 'none reaches the target'}`);
+  const dr = drops(records);
+  if (dr.length) {
+    lines.push('', '## Drops by effort', '', `Strict passes per effort, low → max; ★ the best effort of the row. Against it, paired by task and repetition: the change in pass rate, the runs lost, ▼ when the loss is beyond the noise (replicate arms) or at least ${DROP_MIN} runs without replicates, and what got worse with it.`, '');
+    for (const r of dr) {
+      const cell = (c: DropCell) => `${c.effort} ${c.passes}/${c.runs}${c.best ? ' ★' : c.lost || c.delta < 0 ? ` (${Math.round(c.delta * 100)}pp, lost ${c.lost}${c.cliff ? ' ▼' : ''}${c.worse.length ? `; ${c.worse.join(', ')}` : ''})` : ''}`;
+      lines.push(`- ${r.taskClass} · ${r.model}${r.noise !== undefined ? ` (noise ${r.noise})` : ''}: ${r.cells.map(cell).join(' │ ')}`);
+    }
+  }
   const sat = saturation(cs);
   if (sat.length) { lines.push('', '## Effort saturation (lowest effort with the best strict pass rate)', ''); for (const s of sat) lines.push(`- ${s.taskClass} · ${s.model}: ${s.effort} (${pct(s.rate)})`); }
   const lin = lineages(cs);

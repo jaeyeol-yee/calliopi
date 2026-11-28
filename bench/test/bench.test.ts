@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CATALOG, loadPi, versionAtLeast } from '../lib/catalog.ts';
-import { cells, formatReport, lineages, median, saturation, thresholds } from '../lib/report.ts';
+import { cells, drops, formatReport, lineages, median, saturation, thresholds } from '../lib/report.ts';
 import { formatRescore, rescore } from '../rescore.ts';
 import { collectChildren, sessionSignals, type RunRecord } from '../lib/run.ts';
 import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
@@ -473,4 +473,25 @@ test('speed: the median output tokens per second of responses long enough to cou
     fs.writeFileSync(file, line(10, 500));
     assert.deepEqual([sessionSignals(file).tokPerSec, sessionSignals(file).modelMs], [undefined, 500]);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('drops: strict passes per effort in order, against the best, paired by task and repetition', () => {
+  const r = (arm: string, effort: string, task: string, pass: boolean, extra: Partial<RunRecord> = {}): RunRecord =>
+    ({ ...rec(arm, 'anthropic/claude-sonnet-5-5', effort, 'review', 1, pass, 0.01), task, dimensions: { outcome: true, citation: pass }, ...extra });
+  const records = [
+    ...['a', 'b', 'c'].map(t => r('s@high', 'high', t, t !== 'c')),                 // 2/3, lost c
+    ...['a', 'b', 'c'].map(t => r('s@low', 'low', t, t === 'a')),                   // 1/3, lost b and c
+    ...['a', 'b', 'c'].map(t => r('s@medium', 'medium', t, true)),                  // 3/3, the best
+    r('s@max', 'max', 'a', false, { timedOut: true, extraFindings: 2 }),
+  ];
+  const [row] = drops(records);
+  assert.deepEqual(row!.cells.map(c => [c.effort, c.passes, c.runs, c.best, c.lost, c.cliff]),
+    [['low', 1, 3, false, 2, true], ['medium', 3, 3, true, 0, false], ['high', 2, 3, false, 1, false], ['max', 0, 1, false, 1, false]]);
+  assert.deepEqual(row!.cells[0]!.worse, ['citation −2']);
+  assert.deepEqual(row!.cells[3]!.worse, ['citation −1', 'extra findings +2', 'timeouts +1']);
+  // a replicate that disagrees on two runs raises the bar: losing two is noise
+  const replicate = ['a', 'b', 'c'].map(t => r('s@medium-replicate', 'medium', t, t === 'a'));
+  const [noisy] = drops([...records, ...replicate]);
+  assert.deepEqual([noisy!.noise, noisy!.cells[0]!.cliff], [2, false]);
+  assert.match(formatReport(records, 0.9), /- review · anthropic\/claude-sonnet-5-5: low 1\/3 \(-67pp, lost 2 ▼; citation −2\) │ medium 3\/3 ★ │ high 2\/3 \(-33pp, lost 1; citation −1\)/);
 });
