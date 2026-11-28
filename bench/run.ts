@@ -4,6 +4,8 @@
 //   npm run bench -- bench/specs/<name>.yaml             run them (real models cost money)
 //   npm run bench -- bench/specs/<name>.yaml --jobs 4    up to 4 at once (the spec's concurrency otherwise)
 //   npm run bench -- bench/specs/<name>.yaml --minutes 25  start no run after 25 minutes (the ones going finish)
+//   npm run bench -- bench/specs/<name>.yaml --provider openai   only arms of these providers (comma-separated)
+//   npm run bench -- bench/specs/<name>.yaml --optional          include arms marked optional (costly flagships)
 //   npm run bench -- --report bench/.out/<name>          report from recorded runs
 //
 // Each run copies a task's fixture, runs `pi -p` with the arm's model and effort in it, applies the
@@ -17,7 +19,7 @@ import { loadPi } from './lib/catalog.ts';
 import { formatReport } from './lib/report.ts';
 import { EXHAUSTED, ROOT, harnessWorktree, runCost, runOne, type PiBinary, type RunRecord } from './lib/run.ts';
 import { nextRun, providerOf } from './lib/schedule.ts';
-import { checkSpec, isFaux, parseSpec, plan, type PlannedRun } from './lib/spec.ts';
+import { checkSpec, isFaux, parseSpec, plan, selectArms, type PlannedRun } from './lib/spec.ts';
 import { loadTasks } from './lib/task.ts';
 
 const OUT = path.join(ROOT, 'bench', '.out');
@@ -34,9 +36,15 @@ async function main(argv: string[]) {
     console.log(formatReport(readRecords(dir), target));
     return;
   }
-  const file = argv.find(a => !a.startsWith('--'));
+  const file = argv.find((a, i) => !a.startsWith('--') && !['--jobs', '--minutes', '--provider', '--target', '--report'].includes(argv[i - 1] ?? ''));
   if (!file) throw new Error('usage: npm run bench -- <spec.yaml> [--dry-run] | --report <dir>');
-  const spec = parseSpec(fs.readFileSync(file, 'utf8'));
+  const providerAt = argv.indexOf('--provider');
+  if (providerAt >= 0 && !argv[providerAt + 1]) throw new Error('--provider takes provider names, comma-separated');
+  const providers = providerAt >= 0 ? argv[providerAt + 1]!.split(',').map(p => p.trim()).filter(Boolean) : undefined;
+  const parsed = parseSpec(fs.readFileSync(file, 'utf8'));
+  const { spec, left } = selectArms(parsed, { providers, optional: argv.includes('--optional') });
+  if (left.length) console.log(`left out: ${left.map(l => `${l.arm} (${l.why})`).join(', ')}`);
+  if (!spec.arms.length) throw new Error(`${parsed.name}: no arm left to run${providers ? ` for ${providers.join(', ')}` : ''}`);
   const tasks = loadTasks();
   const pi = await loadPi();
   const problems = checkSpec(spec, pi, tasks);
