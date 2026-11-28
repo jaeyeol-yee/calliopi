@@ -1,4 +1,6 @@
-# S2 (drop): where each model's strict pass falls as effort goes low → medium → high → max, on all 20
+# S2 (drop): where each model's strict pass falls as effort goes low → medium → high → xhigh, on all 20
+# tasks. max is left out: in S2's first sweep it cost 5–8× medium and took 8–10× as long for the same
+# passes, and it held slots long enough to halve the runs a time limit allows.
 # tasks. Three models across families and price (opus, sonnet, terra), two runs: 10 runs per model ×
 # effort × class. Repetition 1 finishes for every arm before repetition 2 starts, so a time limit
 # (--minutes) leaves every arm with the same tasks done.
@@ -11,6 +13,6 @@ concurrency: 10
 perProvider: 6
 tasks: all
 arms:
-  - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, max] }
-  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, max] }
-  - { model: openai/gpt-6.1-terra, effort: [low, medium, high, max] }
+  - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, xhigh] }
+  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, xhigh] }
+  - { model: openai/gpt-6.1-terra, effort: [low, medium, high, xhigh] }
