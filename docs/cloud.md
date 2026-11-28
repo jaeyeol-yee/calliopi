@@ -41,7 +41,7 @@ claude.ai/code → 메시지 입력창 아래 환경 선택기 → 환경 추가
 | VHS, ttyd, ffmpeg, fd, CJK 폰트 | `npm run demo` 녹화 | 없음 | apt 설치, VHS는 버전을 고정해 GitHub release `.deb`로 설치 (`api.github.com`은 차단, release 다운로드는 허용). `DEMO_FONT_FAMILY`는 `/etc/profile.d/calliopi-demo.sh` |
 | `gh` 로그인, API 키 | 불필요 | — | 테스트는 가짜 실행기와 faux 모델 사용 |
 
-`npm ci`는 루트와 workspace의 의존성(Pi 1.5.2, `@cursor/sdk`, `node-pty`, `@xterm/headless`, TypeScript 등 144개)을
+`npm ci`는 루트와 workspace의 의존성(Pi 1.7.0, `@cursor/sdk`, `node-pty`, `@xterm/headless`, TypeScript 등 144개)을
 lock 그대로 설치하고, `node-pty` 빌드와 `@calliopi/ui`의 `postinstall`(spawn-helper 실행 권한)을 실행합니다.
 
 ## 4. 운영

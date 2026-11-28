@@ -7,7 +7,7 @@ import { frameThinking, installAfterUpdate, uninstallAfterUpdate, ThinkingFrame 
 
 initTheme('dark');
 const strip = (s: string) => s.replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b_[^\x07]*\x07/g, '').replace(/\x1b\[[0-9;]*m/g, '');
-const view = (c: { render(w: number): string[] }, w: number) => c.render(w).map(strip);
+const view = (c: { render(w: number): readonly string[] }, w: number) => c.render(w).map(strip);
 
 type View = { outputPad?: number; hasToolCalls?: boolean; contentContainer?: { children?: never[] } };
 function install() {
