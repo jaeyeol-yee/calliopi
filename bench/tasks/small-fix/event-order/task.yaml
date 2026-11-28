@@ -1,4 +1,4 @@
-version: 3
+version: 4
 tier: hard
 prompt: |
   `node --test` fails: the stock that is free to sell is wrong once a release follows a reservation.
@@ -17,7 +17,8 @@ oracle:
   # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
   - content:
       required:
-        change: ["(as|were|are|being) strings?", "string (compar|sort|order)", "lexic(al|ograph)", "numeric(ally)?", "Number\\(", "parseInt", "as numbers?"]
+        # v4: "as a string", "as text", "to a number", "alphabetically" were missed (13 runs of opus and sonnet that said what changed).
+        change: ["(as|were|are|being) (a )?(strings?|text)", "string (compar|sort|order)", "(text|alphabetical|lexic(al|ograph))(al)? ?(order|sort)?", "alphabetically", "numeric(ally)?", "Number\\(", "parseInt", "(as|to|into) (a )?numbers?"]
       allowed:
         verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
         constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]

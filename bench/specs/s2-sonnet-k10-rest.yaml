@@ -1,0 +1,11 @@
+# Six more runs of claude-sonnet-5-5 on the 14 tasks s2-sonnet-k10 did not repeat: with s2-drop's two
+# runs (twice) each cell has ten.
+name: s2-sonnet-k10-rest
+runs: 6
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 10
+concurrency: 5
+tasks: [multi-file/cents, multi-file/locale, multi-file/promisify, multi-file/rename-option, multi-file/soft-delete, review/bounds, search/direct-callers, search/find-default, search/purge-routes, search/trace-port, small-fix/lru, small-fix/off-by-one, small-fix/task-queue, small-fix/thousands]
+arms:
+  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, xhigh] }

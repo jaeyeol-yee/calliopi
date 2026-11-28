@@ -1,0 +1,12 @@
+# Six more runs of claude-sonnet-5-5 on the tasks where its strict passes moved with effort in two
+# s2-drop runs (k=4 together), plus review/pagination as a control: with them each of these cells has
+# ten runs. opus passed all 160 of its runs in both and is not repeated.
+name: s2-sonnet-k10
+runs: 6
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 6
+concurrency: 10
+tasks: [review/spot-bug, review/duration, review/token-bucket, review/pagination, search/unused-flags, small-fix/event-order]
+arms:
+  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, xhigh] }

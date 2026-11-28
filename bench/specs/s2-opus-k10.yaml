@@ -1,0 +1,11 @@
+# Six more runs of claude-opus-5-5 on all 20 tasks, low → xhigh: with s2-drop's two runs (twice) each
+# cell has ten. Run alongside s2-sonnet-k10-rest (five at once each, ten on Anthropic).
+name: s2-opus-k10
+runs: 6
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 25
+concurrency: 5
+tasks: all
+arms:
+  - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, xhigh] }
