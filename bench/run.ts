@@ -6,6 +6,9 @@
 //   npm run bench -- bench/specs/<name>.yaml --minutes 25  start no run after 25 minutes (the ones going finish)
 //   npm run bench -- bench/specs/<name>.yaml --provider openai   only arms of these providers (comma-separated)
 //   npm run bench -- bench/specs/<name>.yaml --optional          include arms marked optional (costly flagships)
+//   npm run bench -- bench/specs/<name>.yaml --model opus,sonnet --effort low,xhigh --task review,search/unused-flags
+//                                                            only those arms and tasks (a task is an id or a class)
+//   npm run bench -- bench/specs/<name>.yaml --runs 10 --budget 60   repetitions and dollars instead of the spec's
 //   npm run bench -- --report bench/.out/<name>          report from recorded runs
 //
 // Each run copies a task's fixture, runs `pi -p` with the arm's model and effort in it, applies the
@@ -19,7 +22,7 @@ import { loadPi } from './lib/catalog.ts';
 import { formatReport } from './lib/report.ts';
 import { EXHAUSTED, ROOT, harnessWorktree, runCost, runOne, type PiBinary, type RunRecord } from './lib/run.ts';
 import { nextRun, providerOf } from './lib/schedule.ts';
-import { checkSpec, isFaux, parseSpec, plan, selectArms, type PlannedRun } from './lib/spec.ts';
+import { checkSpec, isFaux, parseSpec, plan, selectArms, taskList, type PlannedRun } from './lib/spec.ts';
 import { loadTasks } from './lib/task.ts';
 
 const OUT = path.join(ROOT, 'bench', '.out');
@@ -36,14 +39,38 @@ async function main(argv: string[]) {
     console.log(formatReport(readRecords(dir), target));
     return;
   }
-  const file = argv.find((a, i) => !a.startsWith('--') && !['--jobs', '--minutes', '--provider', '--target', '--report'].includes(argv[i - 1] ?? ''));
+  const file = argv.find((a, i) => !a.startsWith('--') && !['--jobs', '--minutes', '--provider', '--model', '--effort', '--task', '--runs', '--budget', '--target', '--report'].includes(argv[i - 1] ?? ''));
   if (!file) throw new Error('usage: npm run bench -- <spec.yaml> [--dry-run] | --report <dir>');
-  const providerAt = argv.indexOf('--provider');
-  if (providerAt >= 0 && !argv[providerAt + 1]) throw new Error('--provider takes provider names, comma-separated');
-  const providers = providerAt >= 0 ? argv[providerAt + 1]!.split(',').map(p => p.trim()).filter(Boolean) : undefined;
+  const list = (flag: string) => {
+    const at = argv.indexOf(flag);
+    if (at < 0) return undefined;
+    if (!argv[at + 1] || argv[at + 1]!.startsWith('--')) throw new Error(`${flag} takes a comma-separated list`);
+    return argv[at + 1]!.split(',').map(p => p.trim()).filter(Boolean);
+  };
+  const number = (flag: string) => {
+    const at = argv.indexOf(flag);
+    if (at < 0) return undefined;
+    const n = Number(argv[at + 1]);
+    if (!(n > 0)) throw new Error(`${flag} takes a positive number`);
+    return n;
+  };
+  const providers = list('--provider');
   const parsed = parseSpec(fs.readFileSync(file, 'utf8'));
-  const { spec, left } = selectArms(parsed, { providers, optional: argv.includes('--optional') });
-  if (left.length) console.log(`left out: ${left.map(l => `${l.arm} (${l.why})`).join(', ')}`);
+  const selected = selectArms(parsed, { providers, models: list('--model'), efforts: list('--effort'), optional: argv.includes('--optional') });
+  const { left } = selected;
+  const taskNames = list('--task'), runsOver = number('--runs'), budgetOver = number('--budget');
+  if (runsOver !== undefined && !Number.isInteger(runsOver)) throw new Error('--runs takes a whole number');
+  const spec = {
+    ...selected.spec,
+    ...(taskNames ? { tasks: taskList(taskNames, loadTasks()) } : {}),
+    ...(runsOver ? { runs: runsOver } : {}),
+    ...(budgetOver ? { budgetUsd: budgetOver } : {}),
+  };
+  if (left.length) {
+    const by = new Map<string, number>();
+    for (const l of left) by.set(l.why, (by.get(l.why) ?? 0) + 1);
+    console.log(`left out ${left.length} arms: ${[...by].map(([why, n]) => `${n} by ${why}`).join(', ')}`);
+  }
   if (!spec.arms.length) throw new Error(`${parsed.name}: no arm left to run${providers ? ` for ${providers.join(', ')}` : ''}`);
   const tasks = loadTasks();
   const pi = await loadPi();

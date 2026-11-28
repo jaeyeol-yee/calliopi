@@ -113,20 +113,36 @@ export function checkSpec(spec: Spec, pi: PiCatalog, tasks: Task[]): string[] {
 export interface ArmFilter {
   /** Run only arms of these providers (the part of the model before the slash). */
   providers?: string[];
+  /** Run only arms whose model contains one of these (e.g. "opus", "gpt-6.2-sol"). */
+  models?: string[];
+  /** Run only arms at these efforts. */
+  efforts?: string[];
   /** Include arms marked optional. */
   optional?: boolean;
 }
 
-/** The arms a run uses: within the providers asked for, optional ones only when asked. */
+/** The arms a run uses: within the providers, models and efforts asked for, optional ones only when asked. */
 export function selectArms(spec: Spec, filter: ArmFilter): { spec: Spec; left: { arm: string; why: string }[] } {
   const left: { arm: string; why: string }[] = [];
   const arms = spec.arms.filter(arm => {
     const provider = arm.model.split('/')[0]!;
-    if (filter.providers?.length && !filter.providers.includes(provider)) { left.push({ arm: arm.id, why: `provider ${provider}` }); return false; }
-    if (arm.optional && !filter.optional) { left.push({ arm: arm.id, why: 'optional' }); return false; }
-    return true;
+    const why = filter.providers?.length && !filter.providers.includes(provider) ? `provider ${provider}`
+      : filter.models?.length && !filter.models.some(m => arm.model.includes(m)) ? 'model'
+      : filter.efforts?.length && !filter.efforts.includes(arm.effort) ? 'effort'
+      : arm.optional && !filter.optional ? 'optional' : undefined;
+    if (why) left.push({ arm: arm.id, why });
+    return !why;
   });
   return { spec: { ...spec, arms }, left };
+}
+
+/** Tasks named by id (class/name) or by class (every task of it). Unknown names fail. */
+export function taskList(names: string[], tasks: Task[]): string[] {
+  return names.flatMap(n => {
+    const hit = tasks.filter(t => t.id === n || t.class === n).map(t => t.id);
+    if (!hit.length) throw new Error(`no task or class "${n}"`);
+    return hit;
+  });
 }
 
 export const selectTasks = (spec: Spec, tasks: Task[]) =>

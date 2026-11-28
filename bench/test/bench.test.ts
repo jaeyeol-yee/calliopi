@@ -8,7 +8,7 @@ import { cells, drops, formatReport, lineages, median, saturation, thresholds } 
 import { formatRescore, rescore } from '../rescore.ts';
 import { collectChildren, sessionSignals, type RunRecord } from '../lib/run.ts';
 import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
-import { checkSpec, parseSpec, plan, selectArms } from '../lib/spec.ts';
+import { checkSpec, parseSpec, plan, selectArms, taskList } from '../lib/spec.ts';
 import { nextRun } from '../lib/schedule.ts';
 import { createRequire } from 'node:module';
 import { answerBlocks, citedLines, contentSize, loadTasks, parseTask, runOracle, snapshot, taskGroup, type Task } from '../lib/task.ts';
@@ -42,8 +42,9 @@ test('spec: effort lists expand, replicates need labels, harness and efforts are
 
 test('the shipped specs parse and check clean', async () => {
   const pi = await loadPi(), tasks = loadTasks();
-  for (const f of fs.readdirSync(path.join(import.meta.dirname, '..', 'specs')))
-    assert.deepEqual(checkSpec(parseSpec(fs.readFileSync(path.join(import.meta.dirname, '..', 'specs', f), 'utf8')), pi, tasks), [], f);
+  const dir = path.join(import.meta.dirname, '..', 'specs');
+  for (const f of fs.readdirSync(dir, { recursive: true }).map(String).filter(f => f.endsWith('.yaml')))
+    assert.deepEqual(checkSpec(parseSpec(fs.readFileSync(path.join(dir, f), 'utf8')), pi, tasks), [], f);
 });
 
 // Every task: doing nothing fails its oracle, the reference solution passes it.
@@ -505,4 +506,16 @@ test('arms: a run can keep to some providers, and leaves optional arms out unles
   assert.deepEqual(ids({ providers: ['openai'], optional: true }), ['b@medium', 'c@medium']);
   assert.deepEqual(selectArms(spec, { providers: ['anthropic'] }).left, [{ arm: 'b@medium', why: 'provider openai' }, { arm: 'c@medium', why: 'provider openai' }]);
   assert.throws(() => parseSpec(`name: t\narms:\n  - { model: a/b, optional: yes please }\n`), /optional/);
+});
+
+test('one spec, narrowed on the command line: models, efforts and tasks by id or class', () => {
+  const spec = parseSpec(fs.readFileSync(path.join(import.meta.dirname, '..', 'specs', 'bench.yaml'), 'utf8'));
+  const ids = (f: Parameters<typeof selectArms>[1]) => selectArms(spec, f).spec.arms.map(a => a.id);
+  assert.deepEqual(ids({ models: ['sonnet'], efforts: ['low', 'xhigh'] }), ['claude-sonnet-5-5@low', 'claude-sonnet-5-5@xhigh']);
+  assert.equal(ids({}).length, 16);
+  assert.equal(ids({ optional: true }).length, 24);
+  const tasks = loadTasks();
+  assert.deepEqual(taskList(['review'], tasks).length, 5);
+  assert.deepEqual(taskList(['search/unused-flags', 'small-fix/lru'], tasks), ['search/unused-flags', 'small-fix/lru']);
+  assert.throws(() => taskList(['reviews'], tasks), /no task or class "reviews"/);
 });
