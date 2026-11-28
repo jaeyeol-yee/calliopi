@@ -1,0 +1,5 @@
+[
+  { "path": "/", "handler": "home" },
+  { "path": "/search", "handler": "search" },
+  { "path": "/checkout", "handler": "checkout", "blockedBy": "maintenance" }
+]

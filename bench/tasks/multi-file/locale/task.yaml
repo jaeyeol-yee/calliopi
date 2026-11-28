@@ -1,4 +1,4 @@
-version: 1
+version: 3
 prompt: |
   Add an optional `locale` argument ('en' or 'de', default 'en') to formatPrice, summary and invoiceLine,
   passed through from summary and invoiceLine to formatPrice. Do not add dependencies or use Intl.
@@ -6,6 +6,20 @@ prompt: |
 scope: [src/format.js, src/cart.js, src/invoice.js]
 oracle:
   - command: node --test
+    dimension: outcome
   - unchanged: [test/locale.test.js]
+    dimension: outcome
   - file: src/format.js
     absent: "Intl\\."
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      required:
+        change: ["locale"]
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        per-file-detail: ["\\b(src|test)/[\\w./-]+"]

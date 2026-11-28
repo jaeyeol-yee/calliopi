@@ -1,8 +1,21 @@
-version: 1
+version: 3
 prompt: |
   When this project is started with `npm start`, which TCP port does the server listen on?
   The server cannot be run from this checkout. Do not change any file.
   End your answer with the port number alone on the last line.
+scope: []   # a read-only task: any changed or added file fails the scope dimension
 oracle:
   - answer: "^8102$"
+    dimension: outcome
   - unchanged: [src/config/load.js, src/main.js, package.json, config/base.json, config/profiles/staging.json]
+    dimension: outcome
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      required:
+        staging-port: ["8100", "staging"]
+        offset: ["PORT_OFFSET", "offset", "\\+ ?2\\b", "(add(s|ed|ing)?|plus) (an? \\w+ of )?2\\b"]
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        on-topic: ["\\bport\\b|profile"]
+        evidence: ["\\b[\\w/-]+\\.(js|json|md)\\b"]

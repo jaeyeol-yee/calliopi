@@ -1,0 +1,27 @@
+# S3: are the hard tasks hard? Each model of S1 at medium effort on the eight tier-hard tasks, three
+# times. The tasks were written without running a model, so this is their first calibration: a task
+# every arm passes every time separates nothing and should be made harder or dropped, and a task no
+# arm passes should be read for a flaw in the task before it is trusted. Read every review answer of
+# this run by hand: the diagnosis regexes of review/token-bucket have not met a model's answer.
+# 120 runs. At S1's cost per run (about $0.01–0.06 by model) this is about $3; allow for harder tasks
+# costing a few times more. Real models: approve the cost cap first.
+name: s3-hard
+runs: 3
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 12
+tasks:
+  - search/unused-flags
+  - search/purge-routes
+  - small-fix/event-order
+  - small-fix/task-queue
+  - multi-file/soft-delete
+  - multi-file/cents
+  - review/bounds
+  - review/token-bucket
+arms:
+  - { model: anthropic/claude-opus-5-5, effort: medium }
+  - { model: anthropic/claude-fable-5-2, effort: medium }
+  - { model: anthropic/claude-sonnet-5-5, effort: medium }
+  - { model: openai/gpt-6.2-sol, effort: medium }
+  - { model: openai/gpt-6.1-terra, effort: medium }

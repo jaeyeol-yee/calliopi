@@ -1,7 +1,17 @@
-version: 1
+version: 3
 prompt: |
   In this project, which file and line set the default request timeout that the HTTP client uses?
   Do not change any file. End your answer with one line of the form path:line, for example src/x.js:12.
+scope: []   # a read-only task: any changed or added file fails the scope dimension
 oracle:
   - answer: "^(\\./)?src/config/defaults\\.js:5$"
+    dimension: outcome
   - unchanged: [src/config/defaults.js, src/http/client.js, src/http/legacy.js]
+    dimension: outcome
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        on-topic: ["timeout"]
+        evidence: ["\\b[\\w/-]+\\.(js|json|md)\\b"]

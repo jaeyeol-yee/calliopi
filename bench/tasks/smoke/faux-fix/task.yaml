@@ -1,10 +1,15 @@
 # Checks the runner, oracle and report with the scripted faux/bench model: no API key, no cost.
-version: 1
+version: 2
 prompt: Make `node --test` pass.
 scope: [src/greet.js]
 oracle:
   - command: node --test
+    dimension: outcome
   - unchanged: [test/greet.test.js]
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden
 faux:
   - tool: edit
     args:

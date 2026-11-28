@@ -1,7 +1,20 @@
-version: 1
+version: 3
 prompt: |
   `node --test` fails in this project. Fix the bug in the source. Do not change the tests.
 scope: [src/range.js]
 oracle:
   - command: node --test
+    dimension: outcome
   - unchanged: [test/range.test.js]
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      required:
+        change: ["<=", "inclu(de|des|ded|ding|sive)", "off[- ]by[- ]one", "(left|leav\\w+|dropp?\\w*|miss\\w*|skip\\w*) (out )?(the )?(end|last)"]
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        per-file-detail: ["\\b(src|test)/[\\w./-]+"]

@@ -1,12 +1,12 @@
 // One benchmark run: a fresh copy of the task's fixture, `pi -p` with the arm's model and effort in it,
-// the oracle on what is left, and counts from the Pi session. Nothing here grades with a model.
+// the oracle on what is left (a pass or fail per dimension), and counts from the Pi session. Nothing here grades with a model.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { listAgents, sessionFile, treeDir } from '@calliopi/core/agents';
 import { isFaux, type PlannedRun } from './spec.ts';
-import { changedFiles, runOracle, snapshot, type CheckResult } from './task.ts';
+import { runOracle, snapshot, taskGroup, type CheckResult, type ContentSize, type Dimension } from './task.ts';
 
 export const ROOT = path.resolve(import.meta.dirname, '..', '..');
 const FAUX = path.join(ROOT, 'bench', 'faux-extension.ts');
@@ -43,6 +43,7 @@ export interface RunRecord {
   /** The Calliopi commit the run loaded (the working tree's, or its arm's harnessRef). */
   harnessCommit?: string;
   task: string;
+  /** The task's class, or <class>-hard for a hard task. */
   taskClass: string;
   taskVersion: number;
   rep: number;
@@ -52,7 +53,14 @@ export interface RunRecord {
   ms: number;
   exit: number | null;
   timedOut: boolean;
+  /** Strict pass: every dimension that applies to the task passed, and the run did not time out. */
   pass: boolean;
+  /** Pass per dimension. Absent in records from before dimensions, whose `pass` was the outcome alone. */
+  dimensions?: Partial<Record<Dimension, boolean>>;
+  /** Precision on review tasks: cited findings that are no bug. */
+  extraFindings?: number;
+  /** The answer's words, and those in blocks the task neither needs nor allows. */
+  content?: ContentSize;
   /** The run ended on a provider error (limit, outage): it says nothing about the model or the task. */
   error?: string;
   checks: CheckResult[];
@@ -184,9 +192,8 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   fs.writeFileSync(path.join(dir, 'answer.txt'), answer);
   fs.writeFileSync(path.join(dir, 'stderr.txt'), r.stderr ?? '');
   const session = fs.readdirSync(sessions).filter(n => n.endsWith('.jsonl')).map(n => path.join(sessions, n)).at(0);
-  const checks = runOracle(task, work, answer, before);
+  const grade = runOracle(task, work, answer, before);
   const signals = sessionSignals(session);
-  const changed = changedFiles(before, snapshot(work));
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
   // Keep what the run left for reading later, then drop the temporary copy.
   fs.cpSync(work, path.join(dir, 'work'), { recursive: true, filter: src => !src.split(path.sep).includes('.git') });
@@ -194,10 +201,10 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   return {
     spec: ctx.spec, arm: arm.id, model: arm.model, effort: arm.effort, harness: arm.harness,
     ...(arm.harness === 'on' ? { harnessCommit: at?.commit ?? ctx.harnessSha } : {}),
-    task: task.id, taskClass: task.class, taskVersion: task.version, rep,
+    task: task.id, taskClass: taskGroup(task), taskVersion: task.version, rep,
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
-    exit: r.status, timedOut, pass: !timedOut && checks.every(c => c.pass), ...(providerError(signals) ? { error: providerError(signals) } : {}), checks, changed,
-    outOfScope: task.scope.length ? changed.filter(f => !task.scope.includes(f)) : [],
+    exit: r.status, timedOut, pass: !timedOut && grade.pass, dimensions: grade.dimensions, ...(grade.extraFindings !== undefined ? { extraFindings: grade.extraFindings } : {}), ...(grade.content ? { content: grade.content } : {}),
+    ...(providerError(signals) ? { error: providerError(signals) } : {}), checks: grade.checks, changed: grade.changed, outOfScope: grade.outOfScope,
     signals, children: collectChildren(session, dir, env), answer: answer.slice(-2000),
   };
 }

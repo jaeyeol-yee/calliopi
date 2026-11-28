@@ -1,0 +1,23 @@
+version: 2
+tier: hard
+prompt: |
+  `purge` in src/audit.js drops audit entries for good. Which of the routes in src/routes.js can end up
+  calling it, directly or through other functions, for some request?
+  Do not change any file. End your answer with one line listing those routes as `METHOD path`, separated by
+  commas, in the order they appear in src/routes.js (or `none`).
+scope: []   # a read-only task: any changed or added file fails the scope dimension
+oracle:
+  # anonymize: retention.apply calls it under another name. jobs: the "nightly" task trims the trail.
+  # sessions: only with ?forget=trail. Not: store.purge (another function), admin cleanup (no trim step).
+  - answer: "^`?POST /users/:id/anonymize`?, ?`?POST /jobs/:name/run`?, ?`?DELETE /sessions`?\\.?$"
+    dimension: outcome
+  - unchanged: [src/audit.js, src/routes.js, src/maintenance.js, src/retention.js]
+    dimension: outcome
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        on-topic: ["purge|routes?\\b"]
+        evidence: ["\\b[\\w/-]+\\.(js|json|md)\\b"]
+        per-route-reason: ["anonymize|/jobs|/sessions|nightly|retention|dropAuditTrail|forget"]

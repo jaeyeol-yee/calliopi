@@ -1,0 +1,24 @@
+version: 2
+tier: hard
+prompt: |
+  `node --test` fails: the stock that is free to sell is wrong once a release follows a reservation.
+  Fix the cause. Do not change the tests.
+scope: [src/events.js]
+oracle:
+  # The sequence numbers are compared as strings ("10" < "9"), so the release is applied first.
+  # The cause is in src/events.js; sorting again in src/stock.js or src/report.js is not the fix.
+  - command: node --test
+    dimension: outcome
+  - unchanged: [test/stock.test.js, src/stock.js, src/report.js]
+    dimension: outcome
+  # hidden/ is copied over the work directory after the run; the model never sees it.
+  - hidden: node --test test/hidden.test.js
+    dimension: hidden
+  # What the answer must say (coverage) and may say; other blocks of the answer count as surplus.
+  - content:
+      required:
+        change: ["(as|were|are|being) strings?", "string (compar|sort|order)", "lexic(al|ograph)", "numeric(ally)?", "Number\\(", "parseInt", "as numbers?"]
+      allowed:
+        verification: ["node --test", "tests? (now |all |both )?pass", "\\b(verif|confirm|ran|run)"]
+        constraints-kept: ["(not|n't|no|without|never) (chang|touch|modif|edit|add)", "(unchanged|untouched|as (it|they) (was|were))"]
+        per-file-detail: ["\\b(src|test)/[\\w./-]+"]
