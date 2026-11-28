@@ -1,0 +1,25 @@
+# The benchmark: every model of the catalog that runs today, low → medium → high → xhigh, on every task.
+# Narrow it on the command line rather than writing another spec:
+#
+#   npm run bench -- bench/specs/bench.yaml --provider anthropic --runs 10
+#   npm run bench -- bench/specs/bench.yaml --model sonnet --effort low,xhigh --task review
+#   npm run bench -- bench/specs/bench.yaml --optional            # the costly flagships too
+#
+# max is left out: it cost 5–8× medium and took 8–10× as long for the same passes, and holds slots.
+# Past runs and the specs they used are in bench/specs/history/ (one file per run, kept as run).
+name: bench
+runs: 2
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 40
+concurrency: 10
+perProvider: 6
+tasks: all
+arms:
+  - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, xhigh] }
+  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, xhigh] }
+  - { model: openai/gpt-6.2-sol, effort: [low, medium, high, xhigh] }
+  - { model: openai/gpt-6.1-terra, effort: [low, medium, high, xhigh] }
+  # Flagships, with --optional.
+  - { model: anthropic/claude-fable-5-2, effort: [low, medium, high, xhigh], optional: true }
+  - { model: openai/gpt-6.2-astra, effort: [low, medium, high, xhigh], optional: true }
