@@ -6,7 +6,7 @@ import path from 'node:path';
 import { CATALOG, loadPi, versionAtLeast } from '../lib/catalog.ts';
 import { cells, formatReport, lineages, median, saturation, thresholds } from '../lib/report.ts';
 import { formatRescore, rescore } from '../rescore.ts';
-import { collectChildren, type RunRecord } from '../lib/run.ts';
+import { collectChildren, sessionSignals, type RunRecord } from '../lib/run.ts';
 import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
 import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
 import { nextRun } from '../lib/schedule.ts';
@@ -240,9 +240,13 @@ test('each fix task: a fix special-cased to the provided tests passes them and f
   }
 });
 
-test('scope: a change outside the task\'s scope fails the scope dimension, also on read-only tasks', () => {
+test('scope: changing an existing file outside the scope fails it, a new file does not; on read-only tasks anything does', () => {
+  // a helper split out into a new file is allowed, and listed
   const fix = graded(task('small-fix/off-by-one'), SOLUTIONS['small-fix/off-by-one']!.edits!, 'Fixed.', { 'NOTES.md': 'what I did' });
-  assert.deepEqual([fix.dimensions, fix.outOfScope, fix.pass], [{ outcome: true, coverage: false, scope: false, hidden: true }, ['NOTES.md'], false]);
+  assert.deepEqual([fix.dimensions.scope, fix.outOfScope, fix.added], [true, [], ['NOTES.md']]);
+  // an existing file outside the scope changed: the test the task said not to touch
+  const touched = graded(task('small-fix/off-by-one'), [...SOLUTIONS['small-fix/off-by-one']!.edits!, ['test/range.test.js', "require('../src/range')", "require('../src/range.js')"]], 'Fixed.');
+  assert.deepEqual([touched.dimensions.scope, touched.outOfScope, touched.pass], [false, ['test/range.test.js'], false]);
   const review = graded(task('review/spot-bug'), [], SOLUTIONS['review/spot-bug']!.answer, { 'review.md': 'line 6' });
   assert.deepEqual([review.dimensions, review.outOfScope], [{ outcome: true, diagnosis: true, citation: true, scope: false }, ['review.md']]);
   const search = graded(task('search/trace-port'), [], '8102', { 'scratch.txt': '8100 + 2' });
@@ -455,4 +459,18 @@ test('the scheduler fills slots in plan order, within the total and per-provider
   assert.equal(nextRun(queue, new Map([['openai', 2], ['anthropic', 1]]), limits, new Set()), -1); // total full
   assert.equal(nextRun(queue, new Map([['openai', 1]]), limits, new Set(['openai'])), 1); // openai ran out
   assert.equal(nextRun(queue, new Map([['anthropic', 2]]), limits, new Set(['openai'])), -1);
+});
+
+test('speed: the median output tokens per second of responses long enough to count, and the model time', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-speed-'));
+  try {
+    const file = path.join(dir, 's.jsonl');
+    const line = (output: number, durationMs?: number) => JSON.stringify({ type: 'message', message: { role: 'assistant', content: [], usage: { output }, ...(durationMs ? { durationMs } : {}) } });
+    // 100 tok in 1 s, 300 in 2 s, 20 in 1 s (too short to count), 60 with no duration
+    fs.writeFileSync(file, [line(100, 1000), line(300, 2000), line(20, 1000), line(60)].join('\n'));
+    const s = sessionSignals(file);
+    assert.deepEqual([s.tokPerSec, s.modelMs], [125, 4000]);
+    fs.writeFileSync(file, line(10, 500));
+    assert.deepEqual([sessionSignals(file).tokPerSec, sessionSignals(file).modelMs], [undefined, 500]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -23,7 +23,16 @@ export interface RunSignals {
   stopReason?: string;
   /** The provider's message when the last response ended in an error. */
   errorMessage?: string;
+  /** Milliseconds the model's responses took, request to end (Pi's durationMs), summed. */
+  modelMs?: number;
+  /** Output tokens per second of the run's responses of 50 output tokens or more, median: end to end, so it
+   *  includes waiting for the first token. Absent when no response was that long or Pi gave no duration. */
+  tokPerSec?: number;
 }
+
+const middle = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2; };
+/** Responses shorter than this are mostly latency, not generation. */
+export const SPEED_MIN_TOKENS = 50;
 
 /** Subagents a run started: their work and cost belong to the run. */
 export interface Children {
@@ -68,6 +77,8 @@ export interface RunRecord {
   checks: CheckResult[];
   changed: string[];
   outOfScope: string[];
+  /** New files outside the scope (allowed unless the task is read-only). */
+  added?: string[];
   signals: RunSignals;
   children: Children;
   answer: string;
@@ -106,6 +117,7 @@ export const EXHAUSTED = /usage limit|quota|insufficient_quota|billing|credit ba
 
 export function sessionSignals(file: string | undefined): RunSignals {
   const s: RunSignals = { turns: 0, toolCalls: {}, toolErrors: 0, parallelCalls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  const speeds: number[] = [];
   if (!file) return s;
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     if (!line) continue;
@@ -119,12 +131,17 @@ export function sessionSignals(file: string | undefined): RunSignals {
     const u = m.usage ?? {};
     s.input += u.input ?? 0; s.output += u.output ?? 0; s.cacheRead += u.cacheRead ?? 0; s.cacheWrite += u.cacheWrite ?? 0;
     s.cost += u.cost?.total ?? 0;
+    if (typeof m.durationMs === 'number' && m.durationMs > 0) {
+      s.modelMs = (s.modelMs ?? 0) + m.durationMs;
+      if ((u.output ?? 0) >= SPEED_MIN_TOKENS) speeds.push(u.output / (m.durationMs / 1000));
+    }
     s.stopReason = m.stopReason;
     s.errorMessage = m.stopReason === 'error' ? String(m.errorMessage ?? 'error') : undefined;
     const calls = (Array.isArray(m.content) ? m.content : []).filter((b: any) => b?.type === 'toolCall');
     if (calls.length > 1) s.parallelCalls++;
     for (const c of calls) s.toolCalls[c.name] = (s.toolCalls[c.name] ?? 0) + 1;
   }
+  if (speeds.length) s.tokPerSec = middle(speeds);
   return s;
 }
 
@@ -225,7 +242,7 @@ export async function runOne(run: PlannedRun, ctx: RunContext): Promise<RunRecor
     task: task.id, taskClass: taskGroup(task), taskVersion: task.version, rep,
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
     exit: r.status, timedOut, pass: !timedOut && grade.pass, dimensions: grade.dimensions, ...(grade.extraFindings !== undefined ? { extraFindings: grade.extraFindings } : {}), ...(grade.content ? { content: grade.content } : {}),
-    ...(providerError(signals) ? { error: providerError(signals) } : {}), checks: grade.checks, changed: grade.changed, outOfScope: grade.outOfScope,
+    ...(providerError(signals) ? { error: providerError(signals) } : {}), checks: grade.checks, changed: grade.changed, outOfScope: grade.outOfScope, ...(grade.added.length ? { added: grade.added } : {}),
     signals, children: collectChildren(session, dir, env), answer: answer.slice(-2000),
   };
 }

@@ -20,6 +20,8 @@ export interface Cell {
   /** Medians per run, with the range: caching makes one run's cost a poor estimate. */
   costPerRun: number; costMin: number; costMax: number;
   turns: number; tokens: number; tokensMin: number; tokensMax: number; cacheHit: number;
+  /** Median over runs of each run's median output tokens per second (end to end), and the share of wall time spent waiting on the model. */
+  tokPerSec?: number; modelShare?: number;
   toolErrors: number; parallelShare: number; outOfScope: number; timeouts: number;
   /** Runs that ended on a provider error; they are left out of pass, cost and the rest. */
   errors: number;
@@ -82,6 +84,8 @@ export function cells(records: RunRecord[]): Cell[] {
       turns: median(rs.map(r => r.signals.turns)),
       tokens: median(tokens), tokensMin: Math.min(...tokens), tokensMax: Math.max(...tokens),
       cacheHit: prompt ? sum(r => r.signals.cacheRead) / prompt : 0,
+      ...(() => { const sp = rs.flatMap(r => (r.signals.tokPerSec ? [r.signals.tokPerSec] : [])); return sp.length ? { tokPerSec: median(sp) } : {}; })(),
+      ...(() => { const ms = rs.filter(r => r.signals.modelMs && r.ms); return ms.length ? { modelShare: median(ms.map(r => Math.min(1, r.signals.modelMs! / r.ms))) } : {}; })(),
       toolErrors: sum(r => r.signals.toolErrors), parallelShare: turns ? sum(r => r.signals.parallelCalls) / turns : 0,
       outOfScope: rs.filter(r => r.outOfScope.length).length, timeouts: rs.filter(r => r.timedOut).length,
       delegations: sum(r => r.children?.count ?? 0), childrenStopped: sum(r => r.children?.ends.stopped ?? 0),
@@ -143,11 +147,11 @@ export function formatReport(records: RunRecord[], target: number): string {
     ...(errors.length ? [`- ${errors.length} runs ended on a provider error and are left out: ${[...new Set(errors.map(r => r.error!.slice(0, 120)))].join(' · ')}`] : []), '',
     '## By arm and task class', '',
     'Strict pass: every dimension the task has passed (outcome, diagnosis, citation, coverage, scope, hidden tests). Extra findings (review: cited lines that are no bug) are counted beside it and fail nothing; so are the answer\'s words (median) and how they split: needed (blocks with something the task requires), allowed (justification, verification, what is no bug), surplus (neither).',
-    'Cost includes subagents. Cost, turns and tokens (the run\'s own) are medians per run; ranges are min–max.', '',
-    '| class | arm | harness | strict pass | worst–best rep | by dimension | extra findings (runs) | answer words | needed / allowed / surplus | $/run | $ range | turns | tokens | tokens range | cache hit | tool errors | parallel | out of scope | timeouts | subagents (stopped) | provider errors |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
+    'Cost includes subagents. Cost, turns and tokens (the run\'s own) are medians per run; ranges are min–max. tok/s: output tokens per second of responses of 50 tokens or more, end to end (it includes the wait for the first token), median per run then over runs; model time: the share of a run\'s wall time spent waiting on the model. Both are slower when runs went at once.', '',
+    '| class | arm | harness | strict pass | worst–best rep | by dimension | extra findings (runs) | answer words | needed / allowed / surplus | $/run | $ range | turns | tokens | tokens range | cache hit | tok/s | model time | tool errors | parallel | out of scope | timeouts | subagents (stopped) | provider errors |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
   for (const c of cs)
-    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${dims(c)} | ${c.dimensions.citation ? `${c.extraFindings} (${c.extraRuns})` : '–'} | ${c.answerWords === undefined ? '–' : Math.round(c.answerWords)} | ${c.surplusShare === undefined ? '–' : `${pct(c.neededShare!)} / ${pct(c.allowedShare!)} / ${pct(c.surplusShare)}`} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} | ${c.delegations} (${c.childrenStopped}) | ${c.errors} |`);
+    lines.push(`| ${c.taskClass} | ${c.arm} | ${c.harness} | ${c.passes}/${c.runs} | ${pct(c.min)}–${pct(c.max)} | ${dims(c)} | ${c.dimensions.citation ? `${c.extraFindings} (${c.extraRuns})` : '–'} | ${c.answerWords === undefined ? '–' : Math.round(c.answerWords)} | ${c.surplusShare === undefined ? '–' : `${pct(c.neededShare!)} / ${pct(c.allowedShare!)} / ${pct(c.surplusShare)}`} | ${usd(c.costPerRun)} | ${usd(c.costMin)}–${usd(c.costMax)} | ${c.turns.toFixed(1)} | ${Math.round(c.tokens)} | ${Math.round(c.tokensMin)}–${Math.round(c.tokensMax)} | ${pct(c.cacheHit)} | ${c.tokPerSec === undefined ? '–' : c.tokPerSec.toFixed(0)} | ${c.modelShare === undefined ? '–' : pct(c.modelShare)} | ${c.toolErrors} | ${pct(c.parallelShare)} | ${c.outOfScope} | ${c.timeouts} | ${c.delegations} (${c.childrenStopped}) | ${c.errors} |`);
   lines.push('', `## Threshold per class (lowest median cost among arms whose worst repetition reaches ${pct(target)} in strict passes)`, '');
   for (const [cls, c] of thresholds(cs, target)) lines.push(`- ${cls}: ${c ? `${c.arm} at ${usd(c.costPerRun)}/run` : 'none reaches the target'}`);
   const sat = saturation(cs);
