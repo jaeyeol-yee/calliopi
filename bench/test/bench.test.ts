@@ -9,6 +9,7 @@ import { formatRescore, rescore } from '../rescore.ts';
 import { collectChildren, type RunRecord } from '../lib/run.ts';
 import { createAgent, treeDir, writeResult } from '@calliopi/core/agents';
 import { checkSpec, parseSpec, plan } from '../lib/spec.ts';
+import { nextRun } from '../lib/schedule.ts';
 import { createRequire } from 'node:module';
 import { answerBlocks, citedLines, contentSize, loadTasks, parseTask, runOracle, snapshot, taskGroup, type Task } from '../lib/task.ts';
 
@@ -440,4 +441,18 @@ test('rescore: recorded runs are graded again from answer.txt and work/, with th
     assert.match(text, /`s\/runs\/a@low\/small-fix__thousands\/rep1` \| pass → fail \| now: hidden: exit 1/);
     assert.match(text, /give the recorded result in 2 of 3 runs/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the scheduler fills slots in plan order, within the total and per-provider limits, past providers that ran out', () => {
+  const spec = parseSpec(`name: t\nconcurrency: 3\nperProvider: 2\narms:\n  - { model: openai/a }\n  - { model: anthropic/b }\n  - { model: openai/c }\n`);
+  assert.deepEqual([spec.concurrency, spec.perProvider], [3, 2]);
+  assert.equal(parseSpec(`name: t\narms:\n  - { model: a/b }\n`).concurrency, 1);
+  assert.throws(() => parseSpec(`name: t\nconcurrency: 2.5\narms:\n  - { model: a/b }\n`), /whole numbers/);
+  const queue = plan(spec, loadTasks()).slice(0, 6); // task 1: openai/a, anthropic/b, openai/c; task 2: the same
+  const limits = { total: spec.concurrency, perProvider: spec.perProvider! };
+  assert.equal(nextRun(queue, new Map(), limits, new Set()), 0);
+  assert.equal(nextRun(queue, new Map([['openai', 2]]), limits, new Set()), 1); // openai full: the anthropic run
+  assert.equal(nextRun(queue, new Map([['openai', 2], ['anthropic', 1]]), limits, new Set()), -1); // total full
+  assert.equal(nextRun(queue, new Map([['openai', 1]]), limits, new Set(['openai'])), 1); // openai ran out
+  assert.equal(nextRun(queue, new Map([['anthropic', 2]]), limits, new Set(['openai'])), -1);
 });

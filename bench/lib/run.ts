@@ -1,6 +1,6 @@
 // One benchmark run: a fresh copy of the task's fixture, `pi -p` with the arm's model and effort in it,
 // the oracle on what is left (a pass or fail per dimension), and counts from the Pi session. Nothing here grades with a model.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,6 +42,8 @@ export interface RunRecord {
   harness: 'on' | 'off';
   /** The Calliopi commit the run loaded (the working tree's, or its arm's harnessRef). */
   harnessCommit?: string;
+  /** Runs at once in the invocation (1 when absent). */
+  concurrency?: number;
   task: string;
   /** The task's class, or <class>-hard for a hard task. */
   taskClass: string;
@@ -130,6 +132,8 @@ export function sessionSignals(file: string | undefined): RunSignals {
 export interface PiBinary { command: string; version: string }
 export interface RunContext {
   spec: string; harnessSha: string; outDir: string; timeoutMinutes: number; pi: (run: PlannedRun) => PiBinary;
+  /** Runs at once when this one ran: timings of concurrent runs are not comparable with sequential ones. */
+  concurrency?: number;
   /** Where Calliopi as of a ref is checked out, and its commit. */
   harnessAt?: (ref: string) => { dir: string; commit: string };
 }
@@ -162,7 +166,23 @@ export function piArgs(run: PlannedRun, sessionDir: string, harnessDir = ROOT): 
   ];
 }
 
-export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
+export interface ProcessResult { status: number | null; stdout: string; stderr: string; timedOut: boolean }
+
+/** Runs a process without blocking the event loop (other runs go on meanwhile); TERM at the timeout, KILL 10 seconds later. */
+export function runProcess(command: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }): Promise<ProcessResult> {
+  return new Promise(resolve => {
+    const child = spawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '', timedOut = false, kill: NodeJS.Timeout | undefined;
+    child.stdout.setEncoding('utf8').on('data', (d: string) => { stdout += d; });
+    child.stderr.setEncoding('utf8').on('data', (d: string) => { stderr += d; });
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); kill = setTimeout(() => child.kill('SIGKILL'), 10_000); }, opts.timeoutMs);
+    const done = (status: number | null) => { clearTimeout(timer); if (kill) clearTimeout(kill); resolve({ status, stdout, stderr, timedOut }); };
+    child.on('error', error => { stderr += String(error); done(null); });
+    child.on('close', code => done(code));
+  });
+}
+
+export async function runOne(run: PlannedRun, ctx: RunContext): Promise<RunRecord> {
   const { arm, task, rep } = run;
   const dir = path.join(ctx.outDir, 'runs', `${arm.id}`, task.id.replace('/', '__'), `rep${rep}`);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -186,7 +206,7 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   const pi = ctx.pi(run);
   const at = arm.harnessRef ? ctx.harnessAt?.(arm.harnessRef) : undefined;
   if (arm.harnessRef && !at) throw new Error(`${arm.id}: no checkout for harnessRef ${arm.harnessRef}`);
-  const r = spawnSync(pi.command, piArgs(run, sessions, at?.dir), { cwd: work, env, encoding: 'utf8', timeout: ctx.timeoutMinutes * 60_000, maxBuffer: 64 << 20 });
+  const r = await runProcess(pi.command, piArgs(run, sessions, at?.dir), { cwd: work, env, timeoutMs: ctx.timeoutMinutes * 60_000 });
   const ms = Date.now() - started;
   const answer = r.stdout ?? '';
   fs.writeFileSync(path.join(dir, 'answer.txt'), answer);
@@ -194,13 +214,14 @@ export function runOne(run: PlannedRun, ctx: RunContext): RunRecord {
   const session = fs.readdirSync(sessions).filter(n => n.endsWith('.jsonl')).map(n => path.join(sessions, n)).at(0);
   const grade = runOracle(task, work, answer, before);
   const signals = sessionSignals(session);
-  const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
+  const timedOut = r.timedOut;
   // Keep what the run left for reading later, then drop the temporary copy.
   fs.cpSync(work, path.join(dir, 'work'), { recursive: true, filter: src => !src.split(path.sep).includes('.git') });
   fs.rmSync(work, { recursive: true, force: true });
   return {
     spec: ctx.spec, arm: arm.id, model: arm.model, effort: arm.effort, harness: arm.harness,
     ...(arm.harness === 'on' ? { harnessCommit: at?.commit ?? ctx.harnessSha } : {}),
+    ...((ctx.concurrency ?? 1) > 1 ? { concurrency: ctx.concurrency } : {}),
     task: task.id, taskClass: taskGroup(task), taskVersion: task.version, rep,
     piVersion: pi.version, harnessSha: ctx.harnessSha, at: new Date(started).toISOString(), ms,
     exit: r.status, timedOut, pass: !timedOut && grade.pass, dimensions: grade.dimensions, ...(grade.extraFindings !== undefined ? { extraFindings: grade.extraFindings } : {}), ...(grade.content ? { content: grade.content } : {}),
