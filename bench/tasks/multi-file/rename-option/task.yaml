@@ -1,4 +1,4 @@
-version: 3
+version: 4
 prompt: |
   Rename the `verbose` option to `debug` everywhere in src/, including the CLI flag (--verbose becomes --debug).
   Keep the behavior otherwise. The tests in test/ already expect the new name; do not change them.

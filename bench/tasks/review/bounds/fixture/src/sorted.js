@@ -6,7 +6,7 @@
 function lowerBound(xs, x) {
   let lo = 0, hi = xs.length;
   while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
+    const mid = Math.floor((lo + hi) / 2);
     if (xs[mid] < x) lo = mid + 1;
     else hi = mid;
   }
@@ -16,7 +16,7 @@ function lowerBound(xs, x) {
 function upperBound(xs, x) {
   let lo = 0, hi = xs.length;
   while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
+    const mid = Math.floor((lo + hi) / 2);
     if (xs[mid] <= x) lo = mid + 1;
     else hi = mid;
   }

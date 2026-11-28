@@ -1,4 +1,4 @@
-version: 2
+version: 3
 tier: hard
 prompt: |
   Amounts in src/ are euros as floats, and totals drift. Change every amount to integer cents:

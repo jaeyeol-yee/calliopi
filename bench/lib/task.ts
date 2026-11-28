@@ -5,7 +5,9 @@
 //   tier: hard                 # optional: reported apart from the class's other tasks, as <class>-hard
 //   prompt: |
 //     npm test fails. Fix the bug.
-//   scope: [src/range.js]      # files the task may change ([]: none); any other change fails the scope dimension
+//   scope: [src/range.js]      # existing files the task may change; changing another existing file fails the
+//                              # scope dimension, a new file does not (it is listed in `added`). []: read-only,
+//                              # any change or new file fails it
 //   oracle:                    # every check belongs to a dimension (`dimension:`; outcome unless noted)
 //     - command: node --test   # exit 0
 //     - file: src/range.js
@@ -180,7 +182,10 @@ export interface Grade {
   /** The answer's size against what the task needs; for tasks with a content check. */
   content?: ContentSize;
   changed: string[];
+  /** Existing files changed outside the scope (or, for a read-only task, any change). */
   outOfScope: string[];
+  /** Files the run created outside the scope; allowed unless the task is read-only. */
+  added: string[];
   /** Strict pass: every dimension passes. */
   pass: boolean;
 }
@@ -290,7 +295,11 @@ export function runOracle(task: Task, dir: string, answer: string, before: Map<s
     return { check: `file: ${c.file}`, dimension, pass: ok, ...(ok ? {} : { detail: text === undefined ? 'missing' : 'content does not match' }) };
   }
   const changed = changedFiles(before, snapshot(dir));
-  const outOfScope = task.scope ? changed.filter(f => !task.scope!.includes(f)) : [];
+  // A new file (a helper split out of a change) is not out of scope: the prompt does not list the scope.
+  // Changing an existing file the task did not ask for is; on a read-only task, so is anything.
+  const outside = task.scope ? changed.filter(f => !task.scope!.includes(f)) : [];
+  const added = outside.filter(f => !before.has(f));
+  const outOfScope = task.scope?.length === 0 ? outside : outside.filter(f => before.has(f));
   if (task.scope) checks.push({ check: `scope: ${task.scope.join(', ') || 'no file may change'}`, dimension: 'scope', pass: !outOfScope.length, ...(outOfScope.length ? { detail: `changed: ${outOfScope.join(', ')}` } : {}) });
   const dimensions: Partial<Record<Dimension, boolean>> = {};
   for (const d of DIMENSIONS) { const of = checks.filter(c => c.dimension === d); if (of.length) dimensions[d] = of.every(c => c.pass); }
@@ -299,5 +308,5 @@ export function runOracle(task: Task, dir: string, answer: string, before: Map<s
   const size = content && 'content' in content ? contentSize(answer,
     [...Object.values(content.content.required), ...task.oracle.flatMap(c => ('diagnosis' in c ? Object.values(c.diagnosis) : []))].flat(),
     Object.values(content.content.allowed).flat(), task.oracle.some(c => 'answer' in c || 'citation' in c)) : undefined;
-  return { checks, dimensions, ...(extras.length ? { extraFindings: extras.reduce((a, b) => a + b, 0) } : {}), ...(size ? { content: size } : {}), changed, outOfScope, pass: Object.values(dimensions).every(Boolean) };
+  return { checks, dimensions, ...(extras.length ? { extraFindings: extras.reduce((a, b) => a + b, 0) } : {}), ...(size ? { content: size } : {}), changed, outOfScope, added, pass: Object.values(dimensions).every(Boolean) };
 }

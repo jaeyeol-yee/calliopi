@@ -1,4 +1,4 @@
-version: 2
+version: 3
 tier: hard
 prompt: |
   Review src/limiter.js against its comments. Do not change any file.
@@ -9,7 +9,7 @@ oracle:
   # Three bugs: the refill multiplies milliseconds by a per-second rate (25-26); `>` refuses a bucket
   # holding exactly `cost` (28); retryAfter counts whole tokens only, so it overstates the wait (44-46).
   # Not bugs: deleting from the Map while iterating it, `>` in sweep, the refill on a failed take.
-  # The regexes below have not met a model's answer yet: read the first runs by hand.
+  # Checked against the S3 answers (2026-11-27): 'equals the cost' and 'at least' were missed before v3.
   - diagnosis:
       milliseconds-as-seconds:
         - "/ ?1[_,]?000"
@@ -21,6 +21,8 @@ oracle:
         - "≥"
         - "exactly[^.\\n]{0,40}(cost|enough|as many|the tokens)"
         - "strict(ly)? (greater|comparison|inequality)"
+        - "equal(s|ing)? (to )?(the )?(cost|tokens? needed)"
+        - "\\bat least\\b"
       retry-ignores-fractions:
         - "retryAfter[^\\n]{0,300}(floor|whole|fraction|truncat|round(s|ed|ing)? down|integer|overstat|overestimat|too long|longer than)"
         - "(floor|whole tokens?|fraction|truncat|round(s|ed|ing)? down)[^\\n]{0,300}retryAfter"

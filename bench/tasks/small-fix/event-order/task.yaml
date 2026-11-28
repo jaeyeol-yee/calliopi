@@ -1,4 +1,4 @@
-version: 2
+version: 3
 tier: hard
 prompt: |
   `node --test` fails: the stock that is free to sell is wrong once a release follows a reservation.

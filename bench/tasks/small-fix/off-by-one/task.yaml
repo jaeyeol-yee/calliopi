@@ -1,4 +1,4 @@
-version: 3
+version: 4
 prompt: |
   `node --test` fails in this project. Fix the bug in the source. Do not change the tests.
 scope: [src/range.js]

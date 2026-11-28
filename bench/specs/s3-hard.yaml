@@ -3,13 +3,16 @@
 # every arm passes every time separates nothing and should be made harder or dropped, and a task no
 # arm passes should be read for a flaw in the task before it is trusted. Read every review answer of
 # this run by hand: the diagnosis regexes of review/token-bucket have not met a model's answer.
-# 120 runs. At S1's cost per run (about $0.01–0.06 by model) this is about $3; allow for harder tasks
+# 144 runs (gpt-6.2-astra added, the sixth S1 model). Four at once, two per provider.
+# Originally 120 runs. At S1's cost per run (about $0.01–0.06 by model) this is about $3; allow for harder tasks
 # costing a few times more. Real models: approve the cost cap first.
 name: s3-hard
 runs: 3
 target: 0.9
 timeoutMinutes: 10
-budgetUsd: 12
+budgetUsd: 15
+concurrency: 4
+perProvider: 2
 tasks:
   - search/unused-flags
   - search/purge-routes
@@ -25,3 +28,4 @@ arms:
   - { model: anthropic/claude-sonnet-5-5, effort: medium }
   - { model: openai/gpt-6.2-sol, effort: medium }
   - { model: openai/gpt-6.1-terra, effort: medium }
+  - { model: openai/gpt-6.2-astra, effort: medium }

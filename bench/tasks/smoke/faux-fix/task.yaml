@@ -1,5 +1,5 @@
 # Checks the runner, oracle and report with the scripted faux/bench model: no API key, no cost.
-version: 2
+version: 3
 prompt: Make `node --test` pass.
 scope: [src/greet.js]
 oracle:

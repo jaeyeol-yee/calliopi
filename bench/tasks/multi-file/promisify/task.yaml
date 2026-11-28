@@ -1,4 +1,4 @@
-version: 3
+version: 4
 prompt: |
   Convert the callback APIs in src/ (store.read, readWithRetry, greeting, nextCount) to return promises
   and take no callback. Keep the retry behavior. The tests in test/ describe the result; do not change them.
