@@ -8,6 +8,7 @@ subagent records are left out, and the home directory in stack traces reads `~`.
 |---|---|---|
 | `2026-11-27.tgz` | s0-calib, s0-hard, s1-coarse, s2-effort (partial), pr-delegation | 536 |
 | `2026-11-28.tgz` | everything so far: the above, plus s0-access, s0-cache, pr-delegation-partial-1 (stopped by a usage limit), s3-hard, s3-bounds-v3, s2-drop, s2-drop-openai; and the derived s3-final (s3-hard re-graded with review/bounds v3) and s2-drop-all (s2-drop's Anthropic arms with s2-drop-openai) | 2,524 records, of which 869 are derived (1,655 runs) |
+| `2026-11-28-claude.tgz` | the Claude runs at ten per task and effort: s2-drop-2026-11-28a and s2-drop (Anthropic arms, two runs each), s2-sonnet-k10, s2-sonnet-k10-rest, s2-opus-k10; and the derived s2-claude-k10 (all of them re-graded with small-fix/event-order v4, repetitions renumbered 1–10) | 1,705 runs, 1,600 derived |
 
 Re-grade with the current oracle, no model called:
 
