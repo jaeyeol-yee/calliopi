@@ -225,7 +225,7 @@ export function formatReport(records: RunRecord[], target: number): string {
   for (const [cls, c] of thresholds(cs, target)) lines.push(`- ${cls}: ${c ? `${c.arm} at ${usd(c.costPerRun)}/run` : 'none reaches the target'}`);
   const dr = drops(records);
   if (dr.length) {
-    lines.push('', '## Drops by effort', '', `Strict passes per effort, low → max; ★ the best effort of the row. Against it, paired by task and repetition: the change in pass rate, the runs lost, ▼ when the loss is beyond the noise (replicate arms) or at least ${DROP_MIN} runs without replicates, and what got worse with it.`, '');
+    lines.push('', '## Drops by effort', '', `Strict passes per effort, lowest first; ★ the best effort of the row. Against it, paired by task and repetition: the change in pass rate, the runs lost, ▼ when the loss is beyond the noise (replicate arms) or at least ${DROP_MIN} runs without replicates, and what got worse with it.`, '');
     for (const r of dr) {
       const cell = (c: DropCell) => `${c.effort} ${c.passes}/${c.runs}${c.best ? ' ★' : c.lost || c.delta < 0 ? ` (${Math.round(c.delta * 100)}pp, lost ${c.lost}${c.cliff ? ' ▼' : ''}${c.worse.length ? `; ${c.worse.join(', ')}` : ''})` : ''}`;
       lines.push(`- ${r.taskClass} · ${r.model}${r.noise !== undefined ? ` (noise ${r.noise})` : ''}: ${r.cells.map(cell).join(' │ ')}`);
