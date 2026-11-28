@@ -111,7 +111,7 @@ core          core ◄───────────────────�
 | OS | macOS, Linux | floating terminal(PTY)은 Windows를 지원하지 않습니다 |
 | Node.js | 22.18.0 (23 계열은 23.6.0) | `.ts`를 빌드 없이 실행합니다. type stripping이 기본으로 켜진 버전입니다(Node changelog) |
 | npm | Node에 포함된 버전 | workspaces 설치·실행 |
-| Pi | 1.7.0에서 검증 | 하한은 확인하지 않았습니다. 대화 헤더는 Pi 내부 컴포넌트에 기대므로 Pi를 올리면 `npm run check`로 확인하세요 |
+| Pi | 1.7.0에서 검증 | 최신 Pi 계열 하나만 지원합니다. Calliopi 버전의 major.minor가 그 계열입니다([CONTRIBUTING.md](CONTRIBUTING.md#버전)). 대화 헤더는 Pi 내부 컴포넌트에 기대므로 `pi update` 뒤에는 `npm run version:sync`와 `npm run check`를 돌리세요 |
 | `node-pty` 빌드 | prebuilt 또는 C/C++ 빌드 도구 | 네이티브 의존성입니다. prebuilt가 없는 플랫폼에서는 로컬 빌드합니다 |
 
 ### CLI 도구: `calliopi-workflows` (`/cl-edit`, `/cl-log`)
