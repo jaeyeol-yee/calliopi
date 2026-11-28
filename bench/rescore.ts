@@ -47,7 +47,7 @@ export function rescore(dir: string, tasks: Task[] = loadTasks()): Rescored[] {
       const now: RunRecord = {
         ...rest, taskVersion: task.version, pass: !old.timedOut && grade.pass, dimensions: grade.dimensions,
         ...(grade.extraFindings !== undefined ? { extraFindings: grade.extraFindings } : {}), ...(grade.content ? { content: grade.content } : {}),
-        checks: grade.checks, changed: grade.changed, outOfScope: grade.outOfScope,
+        checks: grade.checks, changed: grade.changed, outOfScope: grade.outOfScope, ...(grade.added.length ? { added: grade.added } : {}),
       };
       const drift = old.checks.flatMap(c => { const same = grade.checks.find(n => n.check === c.check); return same && same.pass !== c.pass ? [c.check] : []; });
       if (old.changed.join('\n') !== grade.changed.join('\n')) drift.push(`changed files: recorded ${old.changed.join(', ') || 'none'}, found ${grade.changed.join(', ') || 'none'}`);

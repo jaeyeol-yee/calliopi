@@ -1,4 +1,4 @@
-version: 2
+version: 3
 tier: hard
 prompt: |
   Review src/sorted.js against its comments. Do not change any file.
@@ -7,6 +7,8 @@ prompt: |
 scope: []   # a read-only task: any changed or added file fails the scope dimension
 oracle:
   # The file has no bug (bench/test checks it against a brute force). Any cited line is an extra finding.
+  # Before v3 the midpoint was `(lo + hi) >>> 1`, which wraps for arrays longer than 2^31: every OpenAI
+  # model cited it, a defensible reading, so the midpoint is now `Math.floor((lo + hi) / 2)`.
   - answer: "^[Nn]o bugs\\.?$"
     dimension: outcome
   - citation: []

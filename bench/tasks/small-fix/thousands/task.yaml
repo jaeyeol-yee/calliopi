@@ -1,4 +1,4 @@
-version: 3
+version: 4
 prompt: |
   `node --test` fails: the report total is wrong for large amounts. Fix the cause. Do not change the tests.
 scope: [src/parse.js]

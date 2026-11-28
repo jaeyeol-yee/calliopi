@@ -1,4 +1,4 @@
-version: 3
+version: 4
 prompt: |
   `node --test` fails. Make src/lru.js behave as its comment describes. Do not change the tests.
 scope: [src/lru.js]
