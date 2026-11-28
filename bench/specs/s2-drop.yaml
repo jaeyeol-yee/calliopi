@@ -1,0 +1,16 @@
+# S2 (drop): where each model's strict pass falls as effort goes low → medium → high → max, on all 20
+# tasks. Three models across families and price (opus, sonnet, terra), two runs: 10 runs per model ×
+# effort × class. Repetition 1 finishes for every arm before repetition 2 starts, so a time limit
+# (--minutes) leaves every arm with the same tasks done.
+name: s2-drop
+runs: 2
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 30
+concurrency: 6
+perProvider: 4
+tasks: all
+arms:
+  - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, max] }
+  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, max] }
+  - { model: openai/gpt-6.1-terra, effort: [low, medium, high, max] }

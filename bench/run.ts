@@ -3,6 +3,7 @@
 //   npm run bench -- bench/specs/<name>.yaml --dry-run   check the spec and list the planned runs
 //   npm run bench -- bench/specs/<name>.yaml             run them (real models cost money)
 //   npm run bench -- bench/specs/<name>.yaml --jobs 4    up to 4 at once (the spec's concurrency otherwise)
+//   npm run bench -- bench/specs/<name>.yaml --minutes 25  start no run after 25 minutes (the ones going finish)
 //   npm run bench -- --report bench/.out/<name>          report from recorded runs
 //
 // Each run copies a task's fixture, runs `pi -p` with the arm's model and effort in it, applies the
@@ -70,6 +71,9 @@ async function main(argv: string[]) {
   const limits = { total, perProvider: Math.min(spec.perProvider ?? total, total) };
   if (total > 1) console.log(`  ${limits.total} at once, ${limits.perProvider} per provider; the budget stops new runs, and the ones going finish`);
   const ctx = { spec: spec.name, harnessSha, outDir, timeoutMinutes: spec.timeoutMinutes, concurrency: limits.total, pi: (r: PlannedRun) => (isFaux(r.arm.model) ? dev : installed), harnessAt: (ref: string) => refs.get(ref)! };
+  const minutesAt = argv.indexOf('--minutes');
+  const deadline = minutesAt >= 0 ? Date.now() + Number(argv[minutesAt + 1]) * 60_000 : Infinity;
+  if (minutesAt >= 0 && !(Number(argv[minutesAt + 1]) > 0)) throw new Error('--minutes takes a positive number');
   const queue = [...runs], active = new Map<string, number>(), going = new Set<Promise<void>>();
   let done = 0, stopped = false;
   const start = (run: PlannedRun) => {
@@ -84,6 +88,7 @@ async function main(argv: string[]) {
     going.add(p);
   };
   for (;;) {
+    if (!stopped && Date.now() >= deadline) { stopped = true; console.log(`time is up: ${queue.length} runs not started`); }
     if (!stopped && spec.budgetUsd !== undefined && spent >= spec.budgetUsd) { stopped = true; console.log(`budget reached: $${spent.toFixed(2)} of $${spec.budgetUsd}; ${queue.length} runs not started`); }
     // Runs of a provider that ran out are dropped, not started.
     for (let i = queue.length - 1; i >= 0; i--) if (exhausted.has(providerOf(queue[i]!))) { queue.splice(i, 1); skipped++; }
