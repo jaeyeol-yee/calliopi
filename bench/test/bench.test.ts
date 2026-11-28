@@ -509,11 +509,11 @@ test('arms: a run can keep to some providers, and leaves optional arms out unles
 });
 
 test('one spec, narrowed on the command line: models, efforts and tasks by id or class', () => {
-  const spec = parseSpec(fs.readFileSync(path.join(import.meta.dirname, '..', 'specs', 'bench.yaml'), 'utf8'));
+  const spec = parseSpec(fs.readFileSync(path.join(import.meta.dirname, '..', 'specs', 's2.yaml'), 'utf8'));
   const ids = (f: Parameters<typeof selectArms>[1]) => selectArms(spec, f).spec.arms.map(a => a.id);
   assert.deepEqual(ids({ models: ['sonnet'], efforts: ['low', 'xhigh'] }), ['claude-sonnet-5-5@low', 'claude-sonnet-5-5@xhigh']);
   assert.equal(ids({}).length, 16);
-  assert.equal(ids({ optional: true }).length, 24);
+  assert.equal(ids({ optional: true }).length, 20);
   const tasks = loadTasks();
   assert.deepEqual(taskList(['review'], tasks).length, 5);
   assert.deepEqual(taskList(['search/unused-flags', 'small-fix/lru'], tasks), ['search/unused-flags', 'small-fix/lru']);

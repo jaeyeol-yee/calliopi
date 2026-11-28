@@ -1,0 +1,24 @@
+# S2: where each model's strict pass falls as effort goes low → medium → high → xhigh, on all 20 tasks.
+# max is left out: in the first sweep it cost 5–8× medium and took 8–10× as long for the same passes.
+#
+# One spec for what ran as five (s2-drop, s2-drop-openai, s2-sonnet-k10, s2-sonnet-k10-rest,
+# s2-opus-k10, 2026-11-28). The Claude arms reached ten runs per task and effort; the OpenAI arms two
+# (a ChatGPT usage limit cut the first try). Run one provider at a time:
+#
+#   npm run bench -- bench/specs/s2.yaml --provider anthropic            # ten runs, as recorded
+#   npm run bench -- bench/specs/s2.yaml --provider openai --runs 2      # as recorded
+#   npm run bench -- bench/specs/s2.yaml --provider openai --optional    # with gpt-6.2-astra
+name: s2
+runs: 10
+target: 0.9
+timeoutMinutes: 10
+budgetUsd: 60
+concurrency: 10
+perProvider: 10
+tasks: all
+arms:
+  - { model: anthropic/claude-opus-5-5, effort: [low, medium, high, xhigh] }
+  - { model: anthropic/claude-sonnet-5-5, effort: [low, medium, high, xhigh] }
+  - { model: openai/gpt-6.1-terra, effort: [low, medium, high, xhigh] }
+  - { model: openai/gpt-6.2-sol, effort: [low, medium, high, xhigh] }
+  - { model: openai/gpt-6.2-astra, effort: [low, medium, high, xhigh], optional: true }
