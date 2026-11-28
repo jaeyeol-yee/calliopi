@@ -248,7 +248,7 @@ test('scope: a change outside the task\'s scope fails the scope dimension, also 
   assert.deepEqual([search.dimensions, search.pass], [{ outcome: true, coverage: false, scope: false }, false]);
 });
 
-// Review answers as models gave them (bench/records/2026-11-27.tgz), and wrong ones made up for the test.
+// Review answers as models gave them (the 2026-11-27 records on the pr-assets branch), and wrong ones made up for the test.
 test('review: diagnosis and citation are graded apart, and extra findings are counted, not failed', () => {
   const dims = (id: string, answer: string) => { const g = graded(task(id), [], answer); return [g.dimensions.diagnosis, g.dimensions.citation, g.extraFindings, g.pass]; };
   // claude-sonnet-5-5@medium, s1-coarse: the right bug, the line before it
@@ -271,7 +271,7 @@ test('review: diagnosis and citation are graded apart, and extra findings are co
   assert.deepEqual(dims('review/duration', '1. Line 11: the check is `order < last`, so a repeated unit such as "1h2h" passes. It should be `order <= last`.\n2. Line 5: `TOKEN` is a global regex that is shared between calls, so `lastIndex` persists.\n\nlines 5, 11'), [true, false, 1, false]);
 });
 
-// Answers as models gave them (bench/records/2026-11-27.tgz), unless noted.
+// Answers as models gave them (the 2026-11-27 records on the pr-assets branch), unless noted.
 test('content: a required item missing fails coverage; the answer splits into needed, allowed and surplus blocks', () => {
   assert.deepEqual(answerBlocks('Intro line\nwrapped onto a second.\n\n- one\n  continued\n- two\n\n1. three\n| a | b |\n|---|---|\n\n***\nlast'),
     ['Intro line wrapped onto a second.', '- one continued', '- two', '1. three', '| a | b |', 'last']);

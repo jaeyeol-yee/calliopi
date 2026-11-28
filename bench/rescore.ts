@@ -1,9 +1,10 @@
 // Re-grades recorded runs with the current oracle. No model is called: each run's answer.txt and the
 // files it left (work/) are graded again, against the task's fixture as the state before the run.
 //
-//   node bench/rescore.ts                                   the archive bench/records/2026-11-27.tgz
 //   node bench/rescore.ts <archive.tgz | dir> [--out <report.md>] [--records <dir>]
 //
+// The records of 2026-11-27 are kept outside the repository, on the pr-assets branch:
+//   git show origin/pr-assets:bench-records/2026-11-27.tgz > /tmp/records.tgz
 // The input holds one directory per spec: runs.jsonl and runs/<arm>/<class>__<name>/rep<N>/{answer.txt,work/}.
 // --out writes the comparison (default: stdout); --records writes the re-graded runs.jsonl per spec, which
 // `npm run bench -- --report <dir>/<spec>` reads.
@@ -117,7 +118,7 @@ export function formatRescore(all: Rescored[], source: string): string {
 
 function main(argv: string[]) {
   const flag = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
-  const input = argv.find((a, i) => !a.startsWith('--') && !['--out', '--records'].includes(argv[i - 1] ?? '')) ?? path.join(import.meta.dirname, 'records', '2026-11-27.tgz');
+  const input = argv.find((a, i) => !a.startsWith('--') && !['--out', '--records'].includes(argv[i - 1] ?? '')) ?? (() => { throw new Error('usage: node bench/rescore.ts <archive.tgz | dir> [--out <report.md>] [--records <dir>]'); })();
   let dir = input, temp: string | undefined;
   if (fs.statSync(input).isFile()) {
     dir = temp = fs.mkdtempSync(path.join(os.tmpdir(), 'calliopi-rescore-'));
