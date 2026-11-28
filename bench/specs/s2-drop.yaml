@@ -1,7 +1,6 @@
 # S2 (drop): where each model's strict pass falls as effort goes low → medium → high → xhigh, on all 20
 # tasks. max is left out: in S2's first sweep it cost 5–8× medium and took 8–10× as long for the same
-# passes, and it held slots long enough to halve the runs a time limit allows.
-# tasks. Three models across families and price (opus, sonnet, terra), two runs: 10 runs per model ×
+# passes, and it held slots long enough to halve the runs a time limit allows. Three models across families and price (opus, sonnet, terra), two runs: 10 runs per model ×
 # effort × class. Repetition 1 finishes for every arm before repetition 2 starts, so a time limit
 # (--minutes) leaves every arm with the same tasks done.
 name: s2-drop
